@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Inbox, Users, Columns3, CalendarDays, FileSignature, FolderCheck, Landmark, CreditCard,
   BarChart3, History, Menu, X, RotateCcw, Plus, Search, CheckCircle2, AlertTriangle, FileText,
   Save, Download, Bell, MessageSquareText, Calculator, Settings, Printer, ChevronRight, ChevronDown, ChevronUp, ArrowRight, UserPlus,
-  Trash2, WalletCards, NotebookTabs
+  Trash2, WalletCards
 } from "lucide-react";
 import {
   AssetItem, BoardPost, CaseProgress, Client, ConsultationLog, DebtItem, DemoDB, DocStatus, Matter,
@@ -13,7 +13,8 @@ import {
   debtTypes, defaultChecklist, matterStatuses, matterTypes, occupationTypes, paymentMethods, seedDemoDB
 } from "@/lib/demo-data";
 
-const STORAGE_KEY = "rehab-bankruptcy-admin-demo-v2";
+const STORAGE_KEY = "maeil-admin-demo-v4-2";
+const LEGACY_STORAGE_KEYS = ["rehab-bankruptcy-admin-demo-v2", "maeil-admin-demo-v4"];
 
 type Section = "dashboard"|"leads"|"clients"|"pipeline"|"schedule"|"contracts"|"payments"|"documents"|"cases"|"analytics"|"calculator"|"settings"|"history"|"board";
 const sections: {id:Section;label:string;icon:React.ComponentType<{size?:number}>}[] = [
@@ -52,7 +53,8 @@ function ModalActions({onCancel,onSave,disabled=false}:{onCancel:()=>void;onSave
 
 function calcMatter(db:DemoDB,m: Matter){
   const totalIncome = (m.monthlyIncome||0)+(m.sideIncome||0)+(m.pensionIncome||0);
-  const living = db.settings.livingCostByHousehold[String(m.householdSize)] ?? db.settings.livingCostByHousehold["6"] ?? 0;
+  const livingCosts = db.settings?.livingCostByHousehold ?? {};
+  const living = livingCosts[String(m.householdSize)] ?? livingCosts["6"] ?? 0;
   const disposable = Math.max(0,totalIncome-living-(m.extraDeduction||0));
   const assets = db.assets.filter(x=>x.matterId===m.id);
   const totalAssets = assets.reduce((a,b)=>a+b.value,0);
@@ -91,8 +93,40 @@ export default function DemoAdmin(){
 
   useEffect(()=>{
     const timer = window.setTimeout(()=>{
-      try{ const raw=localStorage.getItem(STORAGE_KEY); setDb(raw?JSON.parse(raw):seedDemoDB()); }
-      catch{ setDb(seedDemoDB()); }
+      const fresh = seedDemoDB();
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw){ setDb(fresh); return; }
+        const parsed = JSON.parse(raw) as Partial<DemoDB>;
+        const settings = parsed.settings && typeof parsed.settings === "object" ? parsed.settings : undefined;
+        const compatible: DemoDB = {
+          ...fresh,
+          ...parsed,
+          clients: Array.isArray(parsed.clients) ? parsed.clients : fresh.clients,
+          matters: Array.isArray(parsed.matters) ? parsed.matters : fresh.matters,
+          assets: Array.isArray(parsed.assets) ? parsed.assets : fresh.assets,
+          debts: Array.isArray(parsed.debts) ? parsed.debts : fresh.debts,
+          logs: Array.isArray(parsed.logs) ? parsed.logs : fresh.logs,
+          contracts: Array.isArray(parsed.contracts) ? parsed.contracts : fresh.contracts,
+          payments: Array.isArray(parsed.payments) ? parsed.payments : fresh.payments,
+          documents: Array.isArray(parsed.documents) ? parsed.documents : fresh.documents,
+          cases: Array.isArray(parsed.cases) ? parsed.cases : fresh.cases,
+          history: Array.isArray(parsed.history) ? parsed.history : fresh.history,
+          board: Array.isArray(parsed.board) ? parsed.board : fresh.board,
+          settings: {
+            ...fresh.settings,
+            ...(settings ?? {}),
+            livingCostByHousehold: settings?.livingCostByHousehold && typeof settings.livingCostByHousehold === "object"
+              ? settings.livingCostByHousehold : fresh.settings.livingCostByHousehold,
+            pipelineStatuses: Array.isArray(settings?.pipelineStatuses) ? settings.pipelineStatuses : fresh.settings.pipelineStatuses,
+            staffOptions: Array.isArray(settings?.staffOptions) ? settings.staffOptions : fresh.settings.staffOptions,
+            leasePriorityByRegion: settings?.leasePriorityByRegion && typeof settings.leasePriorityByRegion === "object"
+              ? settings.leasePriorityByRegion : fresh.settings.leasePriorityByRegion,
+          }
+        };
+        setDb(compatible);
+      }
+      catch{ setDb(fresh); }
     },0);
     return ()=>window.clearTimeout(timer);
   },[]);
@@ -101,7 +135,7 @@ export default function DemoAdmin(){
   if(!db) return <div className="loading">DEMO Admin 불러오는 중…</div>;
   const update=(fn:(x:DemoDB)=>DemoDB)=>setDb(prev=>prev?fn(prev):prev);
   const addHistory=(category:string,action:string,target:string,detail:string)=>({id:id("h"),createdAt:new Date().toISOString(),category,action,target,detail});
-  const reset=()=>{if(confirm("모든 데모 데이터를 초기 상태로 되돌릴까요?")){localStorage.removeItem(STORAGE_KEY);setDb(seedDemoDB());setSection("dashboard")}};
+  const reset=()=>{if(confirm("모든 데모 데이터를 초기 상태로 되돌릴까요?")){[STORAGE_KEY,...LEGACY_STORAGE_KEYS].forEach(k=>localStorage.removeItem(k));setDb(seedDemoDB());setSection("dashboard")}};
   const exportJson=()=>{const blob=new Blob([JSON.stringify(db,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`rehab-bankruptcy-demo-${today()}.json`;a.click();URL.revokeObjectURL(a.href)};
   const navigate=(s:Section)=>{setSection(s);setMenuOpen(false)};
   const triggerPrint=(matterId:string)=>{setPrintMatterId(matterId);setTimeout(()=>window.print(),60)};
