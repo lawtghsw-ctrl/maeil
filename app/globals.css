@@ -1,7 +1,4 @@
-@import "tailwindcss" source("../");
-@source "../app";
-@source "../components";
-@source "../lib";
+@import "tailwindcss";
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
