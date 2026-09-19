@@ -35,3 +35,8 @@
 
 ## v1.0.1 build fix
 - ClientDetail 내부의 선택 의뢰인/사건 ID를 안전하게 캡처하도록 수정하여 Next.js TypeScript build의 `client is possibly undefined` 오류를 해결했습니다.
+
+
+## v1.3
+- Vercel에서 전역 CSS는 로드되지만 Tailwind 유틸리티 클래스가 생성되지 않던 문제 대응
+- Tailwind v4 소스 스캔 경로를 프로젝트 루트/app/components/lib로 명시
