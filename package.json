@@ -1,16 +1,26 @@
 {
-  "name": "ropower-admin-demo",
-  "version": "1.0.2",
+  "name": "lawpower",
+  "version": "0.1.0",
   "private": true,
+  "description": "로파워(LawPower) — 회생/파산 사건관리 어드민. 로피(LawFee) 디자인 시스템을 참고해 제작.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
-    "lucide-react": "0.468.0",
-    "next": "16.2.12",
-    "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.41",
+    "tailwindcss": "3.4.10",
+    "typescript": "5.4.5"
   }
 }
