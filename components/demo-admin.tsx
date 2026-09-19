@@ -90,8 +90,11 @@ export default function DemoAdmin(){
   const [printMatterId,setPrintMatterId] = useState<string|null>(null);
 
   useEffect(()=>{
-    try{ const raw=localStorage.getItem(STORAGE_KEY); setDb(raw?JSON.parse(raw):seedDemoDB()); }
-    catch{ setDb(seedDemoDB()); }
+    const timer = window.setTimeout(()=>{
+      try{ const raw=localStorage.getItem(STORAGE_KEY); setDb(raw?JSON.parse(raw):seedDemoDB()); }
+      catch{ setDb(seedDemoDB()); }
+    },0);
+    return ()=>window.clearTimeout(timer);
   },[]);
   useEffect(()=>{ if(db)localStorage.setItem(STORAGE_KEY,JSON.stringify(db)); },[db]);
 
