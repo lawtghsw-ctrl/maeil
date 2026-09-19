@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useMemo,useRef,useState} from "react";
+import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {CalendarDays,ChevronLeft,ChevronRight} from "lucide-react";
 import {cn} from "@/lib/utils";
 
@@ -22,13 +22,13 @@ export function DateRangePicker({start,end,onChange,className}:{start:string;end
  const [draftEnd,setDraftEnd]=useState(end);
  const root=useRef<HTMLDivElement>(null);
 
- function closeWithoutApply(){setOpen(false);setAnchor(null);setDraftStart(start);setDraftEnd(end)}
+ const closeWithoutApply=useCallback(()=>{setOpen(false);setAnchor(null);setDraftStart(start);setDraftEnd(end)},[start,end]);
  function toggleOpen(){
   if(open){closeWithoutApply();return}
   setDraftStart(start);setDraftEnd(end);setAnchor(null);setCursor(monthStart(start||end));setOpen(true);
  }
 
- useEffect(()=>{if(!open)return;const close=(e:MouseEvent)=>{if(root.current&&!root.current.contains(e.target as Node))closeWithoutApply()};document.addEventListener("mousedown",close);return()=>document.removeEventListener("mousedown",close)},[open,start,end]);
+ useEffect(()=>{if(!open)return;const close=(e:MouseEvent)=>{if(root.current&&!root.current.contains(e.target as Node))closeWithoutApply()};document.addEventListener("mousedown",close);return()=>document.removeEventListener("mousedown",close)},[open,closeWithoutApply]);
  useEffect(()=>{if(!open){setDraftStart(start);setDraftEnd(end);setAnchor(null)}},[start,end,open]);
 
  const days=useMemo(()=>{const first=new Date(cursor.getFullYear(),cursor.getMonth(),1);const last=new Date(cursor.getFullYear(),cursor.getMonth()+1,0);const list:(Date|null)[]=[];for(let i=0;i<first.getDay();i++)list.push(null);for(let d=1;d<=last.getDate();d++)list.push(new Date(cursor.getFullYear(),cursor.getMonth(),d));while(list.length%7)list.push(null);return list},[cursor]);
