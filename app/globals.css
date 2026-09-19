@@ -224,3 +224,133 @@
   .kpi-card:last-child{border-bottom:0!important}
   .summary-cards span,.calc-cards span{border-right:0!important}
 }
+
+/* =========================================================
+   V4 FLAT BOARD BASE
+   사채 어드민처럼 카드 장식을 최소화하고 표/게시판 중심으로 통일
+   ========================================================= */
+
+/* 메인 섹션은 카드가 아니라 게시판 구획선으로 표현 */
+.dashboard-grid,.analytics-grid,.calculator-layout,.settings-grid{gap:14px}
+.panel{
+  border:0!important;
+  border-top:1px solid var(--line)!important;
+  border-bottom:1px solid var(--line)!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  background:#fff!important;
+}
+.panel>h3,.panel-head{
+  border-radius:0!important;
+  background:#f7f8fa!important;
+  border-bottom:1px solid var(--line)!important;
+}
+
+/* 대시보드 현황도 개별 카드가 아니라 하나의 현황표 */
+.kpi-grid{border-radius:0!important;box-shadow:none!important;background:#fff}
+.kpi-card{border-radius:0!important;box-shadow:none!important;background:#fff!important;min-height:70px}
+.kpi-icon{background:transparent!important;border-radius:0!important;width:auto!important;height:auto!important;margin-right:10px}
+.kpi-card:hover{background:#f8fafc!important}
+
+/* 공통 테이블은 각진 업무 게시판 */
+.table-card{border-radius:0!important;box-shadow:none!important;border:1px solid var(--line)!important}
+.table-card th{background:#eef1f4!important;border-right:1px solid #dde2e8}
+.table-card th:last-child{border-right:0}
+.table-card td{background:#fff;border-right:1px solid #eef0f3}
+.table-card td:last-child{border-right:0}
+.table-card tbody tr:hover td{background:#f8fafc}
+
+/* 신규DB → 고객관리 이관 흐름 */
+.handoff-flow{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:0 0 10px;padding:9px 11px;background:#fff;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  font-size:12px;color:#4b5563;
+}
+.handoff-flow>span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.handoff-flow>span b{display:inline-grid;place-items:center;width:21px;height:21px;border:1px solid #cbd5e1;background:#f8fafc;font-size:11px}
+.handoff-flow>span.accent{font-weight:800;color:#1d4ed8}
+.handoff-flow>span.accent b{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8}
+.handoff-flow>small{flex:1 1 100%;padding-top:6px;border-top:1px dashed #e5e7eb;color:#6b7280}
+.handoff-btn{font-weight:800;border-color:#93c5fd!important;color:#1d4ed8!important;background:#eff6ff!important}
+.handoff-done{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.handoff-done .text-btn{font-size:11px;padding:0}
+.modal-hint{margin-top:12px;padding:10px 0;border-top:1px solid var(--line);font-size:12px;color:#5b6471}
+.board-notice{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 10px;border-left:3px solid #64748b;background:#f8fafc;font-size:12px}
+.board-notice span{color:#6b7280}
+
+/* 파이프라인도 칸반 카드 대신 표 + 단계 필터 */
+.pipeline-counts{display:flex;align-items:center;gap:0;overflow:auto;margin-left:auto;border-left:1px solid var(--line)}
+.pipeline-counts button{border:0;border-right:1px solid var(--line);background:#fff;padding:7px 9px;font-size:11px;white-space:nowrap;color:#4b5563}
+.pipeline-counts button.active{background:#334155;color:#fff}
+.pipeline-counts button b{margin-left:4px}
+.pipeline-board{min-width:1040px}
+
+/* 일정은 세 카드가 아니라 단일 게시판 */
+.schedule-board{min-width:980px}
+.board-date,.board-input{height:32px;border:1px solid #d8dde4;background:#fff;padding:4px 7px;font-size:12px;min-width:125px}
+.board-input{min-width:190px}
+.empty-cell{text-align:center!important;color:#6b7280;padding:28px!important}
+
+/* 서류수합: 의뢰인 선택 + 표 */
+.document-toolbar{
+  display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;
+  padding:10px 0;margin-bottom:8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+}
+.document-toolbar .field{min-width:260px;margin:0}
+.document-context{display:flex;flex-direction:column;gap:4px;min-width:180px;padding:0 12px;border-left:1px solid var(--line)}
+.document-context span,.document-progress-inline>span{font-size:11px;color:#6b7280;font-weight:700}
+.document-context b{font-size:12px}
+.document-progress-inline{display:grid;grid-template-columns:55px minmax(180px,280px) auto;align-items:center;gap:8px;min-width:330px}
+.document-progress-inline .progress{margin:0}
+.documents-board{min-width:980px}
+.documents-board td:nth-child(1){width:58px;text-align:center}
+.documents-board td:nth-child(5),.documents-board td:nth-child(6){white-space:nowrap}
+
+/* 사건진행: 기본은 게시판 한 줄, 펼칠 때만 상세 노출 */
+.cases-board{min-width:820px}
+.cases-board .expand-col{width:70px;text-align:center}
+.expand-btn{width:34px;height:32px;display:inline-grid;place-items:center;border:1px solid #cfd5dc;background:#fff;border-radius:3px;color:#475569}
+.expand-btn:hover{background:#eef2f6}
+.case-main-row.open td{background:#f8fafc!important}
+.case-detail-row>td{padding:0!important;background:#fafbfc!important;border-right:0!important}
+.case-expand{padding:14px 16px 16px;border-top:1px solid #dfe4ea}
+.board-stage{padding:4px 0 14px;margin-bottom:12px;border-bottom:1px solid #e5e7eb}
+.board-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.board-fields .field-wide{grid-column:1/-1}
+
+/* 요약/금액도 장식 카드 대신 표 셀 */
+.summary-strip,.finance-big,.summary-cards,.calc-cards{border-radius:0!important;box-shadow:none!important}
+.summary-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--line);background:#fff;margin-bottom:8px}
+.summary-strip>span{border-right:1px solid var(--line);padding:10px 12px;background:#fff!important;border-radius:0!important}
+.summary-strip>span:last-child{border-right:0}
+.finance-big{display:grid;grid-template-columns:repeat(4,1fr);gap:0!important;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.finance-big>span{border:0!important;border-right:1px solid var(--line)!important;border-radius:0!important;background:#fff!important;padding:14px!important}
+.finance-big>span:last-child{border-right:0!important}
+
+/* 설정·계산기 외곽도 카드형 제거 */
+.settings-grid .panel,.calculator-layout .panel{border-radius:0!important}
+.quick-tools{border-radius:0!important}
+.quick-tools>div{border-radius:0!important}
+.guide-panel,.guide-warning,.calc-disclaimer,.calc-note,.result-banner{border-radius:2px!important;box-shadow:none!important}
+
+/* 게시판/변동내역 */
+.board-list,.timeline{border-radius:0!important;box-shadow:none!important}
+.timeline{border:1px solid var(--line);background:#fff;padding:0!important}
+.timeline-item{margin:0!important;padding:12px 14px!important;border-bottom:1px solid var(--line)}
+.timeline-item:last-child{border-bottom:0}
+
+@media(max-width:900px){
+  .handoff-flow svg{display:none}
+  .handoff-flow>span{flex:1 1 calc(50% - 8px)}
+  .pipeline-counts{width:100%;margin-left:0;border-left:0;border-top:1px solid var(--line);padding-top:6px}
+  .document-progress-inline{min-width:260px;grid-template-columns:50px minmax(120px,1fr) auto}
+  .board-fields{grid-template-columns:1fr 1fr}
+}
+@media(max-width:560px){
+  .handoff-flow>span{flex:1 1 100%}
+  .board-fields{grid-template-columns:1fr}
+  .summary-strip,.finance-big{grid-template-columns:1fr 1fr}
+  .summary-strip>span:nth-child(2n),.finance-big>span:nth-child(2n){border-right:0!important}
+  .document-toolbar .field,.document-progress-inline{min-width:100%;width:100%}
+}
