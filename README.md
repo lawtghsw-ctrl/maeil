@@ -31,3 +31,7 @@
 
 ## 주의
 예상 변제계획과 기준표 값은 기능 테스트용 추정치이며 실제 법률판단 또는 공식 산정값이 아닙니다.
+
+
+## v1.0.1 build fix
+- ClientDetail 내부의 선택 의뢰인/사건 ID를 안전하게 캡처하도록 수정하여 Next.js TypeScript build의 `client is possibly undefined` 오류를 해결했습니다.
