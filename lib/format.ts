@@ -51,8 +51,8 @@ export function ddayLabel(iso: string, today: Date = new Date()): string {
 export function deltaClass(pct: number, invert = false): string {
   const positive = pct >= 0;
   const isNegativeSignal = invert ? positive : !positive;
-  if (pct === 0) return "text-muted";
-  return isNegativeSignal ? "text-danger" : "text-success";
+  if (pct === 0) return "text-slate-500";
+  return isNegativeSignal ? "text-red-600" : "text-emerald-600";
 }
 
 export function fmtDeltaPct(pct: number): string {

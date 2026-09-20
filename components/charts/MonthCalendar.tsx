@@ -1,163 +1,296 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Installment } from "@/lib/types";
-import { fmtMan } from "@/lib/format";
+// 도원 Admin(tg_m) app/(admin)/page.tsx의 MonthCalendar를 그대로 이식한 월간 일정 캘린더.
+// 날짜 칸에 마우스를 올리면 미리보기, 클릭하면 고정(pin) 팝업으로 해당 날짜의 항목을 보여줍니다.
+import { useState, type ChangeEvent, type MouseEvent } from "react";
+import { CalendarDays } from "lucide-react";
+import { Card } from "@/components/ui/Primitives";
+import { fmtWon } from "@/lib/format";
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-
-function isoOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(
-    2,
-    "0"
-  )}`;
+function today(): string {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(
+    t.getDate()
+  ).padStart(2, "0")}`;
 }
 
-interface DayCell {
-  date: Date;
-  iso: string;
-  inMonth: boolean;
-  isToday: boolean;
-  dueAmount: number;
-  dueCount: number;
-  overdueCount: number;
+function shiftMonth(month: string, delta: number): string {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// 분납(입금) 예정일을 월간 달력으로 보여주는 위젯 — 도원 어드민의 분납 캘린더를 참고해
-// 날짜별 예정금액/건수, 연체 여부를 한눈에 볼 수 있게 구성.
-export function MonthCalendar({ installments }: { installments: Installment[] }) {
-  const [cursor, setCursor] = useState(() => {
-    const t = new Date();
-    return new Date(t.getFullYear(), t.getMonth(), 1);
-  });
-  const [selected, setSelected] = useState<string | null>(null);
+export interface CalendarItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  label: string;
+  sub: string;
+  done: boolean;
+  status?: string;
+  amount: number;
+  duplicateTag?: string;
+}
 
-  const todayIso = isoOf(new Date());
+interface DayPreview {
+  date: string;
+  rows: CalendarItem[];
+  top: number;
+  left: number;
+}
 
-  const byDate = useMemo(() => {
-    const map = new Map<string, { amount: number; count: number; overdue: number }>();
-    for (const ins of installments) {
-      const cur = map.get(ins.dueDate) ?? { amount: 0, count: 0, overdue: 0 };
-      cur.amount += ins.amount;
-      cur.count += 1;
-      if (ins.status === "연체" || ins.status === "실패") cur.overdue += 1;
-      map.set(ins.dueDate, cur);
+export function MonthCalendar({
+  title,
+  month,
+  onMonthChange,
+  items,
+  tone,
+  summary,
+}: {
+  title: string;
+  month: string; // YYYY-MM
+  onMonthChange: (month: string) => void;
+  items: CalendarItem[];
+  tone: "blue" | "amber";
+  summary?: { paid: number; expected: number; total: number };
+}) {
+  const [yy, mm] = month.split("-").map(Number);
+  const daysInMonth = new Date(yy, mm, 0).getDate();
+  const firstDay = new Date(yy, mm - 1, 1).getDay();
+  const days = [
+    ...Array(firstDay).fill(""),
+    ...Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`),
+  ];
+  const [hovered, setHovered] = useState<DayPreview | null>(null);
+  const [pinned, setPinned] = useState<DayPreview | null>(null);
+
+  function previewPosition(e: MouseEvent<HTMLDivElement>, date: string, rows: CalendarItem[]): DayPreview {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const popupWidth = 280;
+    const popupHeight = 258;
+    const gap = 8;
+    let left = rect.right + gap;
+    if (typeof window !== "undefined" && left + popupWidth > window.innerWidth - 10) {
+      left = Math.max(10, rect.left - popupWidth - gap);
     }
-    return map;
-  }, [installments]);
-
-  const cells: DayCell[] = useMemo(() => {
-    const year = cursor.getFullYear();
-    const month = cursor.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const startOffset = firstDay.getDay(); // 0=일요일
-    const gridStart = new Date(year, month, 1 - startOffset);
-
-    return Array.from({ length: 42 }, (_, i) => {
-      const d = new Date(gridStart);
-      d.setDate(gridStart.getDate() + i);
-      const iso = isoOf(d);
-      const agg = byDate.get(iso);
-      return {
-        date: d,
-        iso,
-        inMonth: d.getMonth() === month,
-        isToday: iso === todayIso,
-        dueAmount: agg?.amount ?? 0,
-        dueCount: agg?.count ?? 0,
-        overdueCount: agg?.overdue ?? 0,
-      };
-    });
-  }, [cursor, byDate, todayIso]);
-
-  const selectedCell = cells.find((c) => c.iso === selected);
-  const selectedInstallments = selected
-    ? installments.filter((i) => i.dueDate === selected).sort((a, b) => b.amount - a.amount)
-    : [];
+    let top = rect.top;
+    if (typeof window !== "undefined" && top + popupHeight > window.innerHeight - 10) {
+      top = Math.max(10, window.innerHeight - popupHeight - 10);
+    }
+    return { date, rows, top, left };
+  }
+  function showDay(e: MouseEvent<HTMLDivElement>, date: string, rows: CalendarItem[]) {
+    if (pinned || !rows.length) return;
+    setHovered(previewPosition(e, date, rows));
+  }
+  function pinDay(e: MouseEvent<HTMLDivElement>, date: string, rows: CalendarItem[]) {
+    if (!rows.length) return;
+    e.stopPropagation();
+    setHovered(null);
+    setPinned(previewPosition(e, date, rows));
+  }
+  const active = pinned || hovered;
 
   return (
-    <div>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm font-semibold text-ink">
-          {cursor.getFullYear()}년 {cursor.getMonth() + 1}월 분납 일정
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
-            className="flex h-7 w-7 items-center justify-center rounded-md2 border border-line text-muted hover:text-ink"
-          >
-            ‹
-          </button>
-          <button
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth(), 1))}
-            className="rounded-md2 border border-line px-2 py-1 text-xs text-muted hover:text-ink"
-          >
-            오늘
-          </button>
-          <button
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
-            className="flex h-7 w-7 items-center justify-center rounded-md2 border border-line text-muted hover:text-ink"
-          >
-            ›
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-muted2">
-        {WEEKDAYS.map((w) => (
-          <div key={w} className="py-1">
-            {w}
+    <>
+      <Card className="overflow-hidden">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold">{title}</h3>
+              <p className="mt-1 text-xs text-slate-500">{month} 일정</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={yy}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => onMonthChange(`${e.target.value}-${String(mm).padStart(2, "0")}`)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs"
+              >
+                {Array.from({ length: 11 }, (_, i) => yy - 5 + i).map((y) => (
+                  <option key={y} value={y}>
+                    {y}년
+                  </option>
+                ))}
+              </select>
+              <select
+                value={mm}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => onMonthChange(`${yy}-${String(Number(e.target.value)).padStart(2, "0")}`)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {m}월
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => onMonthChange(shiftMonth(month, -1))}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                이전달
+              </button>
+              <button
+                type="button"
+                onClick={() => onMonthChange(today().slice(0, 7))}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                이번달
+              </button>
+              <button
+                type="button"
+                onClick={() => onMonthChange(shiftMonth(month, 1))}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                다음달
+              </button>
+              <span className="grid h-8 w-9 place-items-center rounded-lg border border-slate-200 bg-white">
+                <CalendarDays size={17} className={tone === "blue" ? "text-blue-600" : "text-amber-600"} />
+              </span>
+            </div>
           </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((cell) => (
-          <button
-            key={cell.iso}
-            onClick={() => setSelected(cell.dueCount > 0 ? cell.iso : null)}
-            className={`flex h-16 flex-col items-start rounded-md2 border p-1.5 text-left text-[11px] ${
-              cell.inMonth ? "bg-white" : "bg-bg text-muted2"
-            } ${cell.isToday ? "border-brand" : "border-line"} ${
-              selected === cell.iso ? "ring-2 ring-brand" : ""
-            }`}
-          >
-            <span className={cell.isToday ? "font-bold text-brand" : cell.inMonth ? "text-ink" : "text-muted2"}>
-              {cell.date.getDate()}
-            </span>
-            {cell.dueCount > 0 && (
-              <span
-                className={`mt-auto rounded-sm2 px-1 py-0.5 text-[10px] font-medium ${
-                  cell.overdueCount > 0 ? "bg-danger-tint text-danger" : "bg-brand-pale text-brand"
+          {summary && (
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+                <div className="text-[11px] font-semibold text-emerald-700">해당 달 총 입금액</div>
+                <div className="mt-1 text-lg font-bold text-emerald-900">{fmtWon(summary.paid)}</div>
+                <div className="mt-0.5 text-[10px] text-emerald-700/80">계약금 + 분납 실입금</div>
+              </div>
+              <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
+                <div className="text-[11px] font-semibold text-blue-700">받을 예정 금액</div>
+                <div className="mt-1 text-lg font-bold text-blue-900">{fmtWon(summary.expected)}</div>
+                <div className="mt-0.5 text-[10px] text-blue-700/80">아직 받지 못한 분납 예정액</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-[11px] font-semibold text-slate-600">합산 금액</div>
+                <div className="mt-1 text-lg font-bold text-slate-900">{fmtWon(summary.total)}</div>
+                <div className="mt-0.5 text-[10px] text-slate-500">총 입금액 + 받을 예정 금액</div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
+          {["일", "월", "화", "수", "목", "금", "토"].map((x) => (
+            <div key={x} className="p-2 text-center text-xs font-semibold text-slate-500">
+              {x}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7">
+          {days.map((d, i) => {
+            const rows = d ? items.filter((x) => x.date === d) : [];
+            return (
+              <div
+                key={`${d}-${i}`}
+                onMouseEnter={(e: MouseEvent<HTMLDivElement>) => d && showDay(e, d, rows)}
+                onMouseLeave={() => {
+                  if (!pinned) setHovered(null);
+                }}
+                onClick={(e: MouseEvent<HTMLDivElement>) => d && pinDay(e, d, rows)}
+                className={`min-h-[96px] border-b border-r border-slate-100 p-1.5 sm:min-h-[112px] sm:p-2 ${
+                  rows.length ? "cursor-pointer hover:bg-slate-50/80" : ""
                 }`}
               >
-                {fmtMan(cell.dueAmount)} · {cell.dueCount}건
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+                {d && (
+                  <>
+                    <div className="text-xs font-bold text-slate-600">{Number(d.slice(-2))}</div>
+                    <div className="mt-1.5 space-y-1.5">
+                      {rows.slice(0, 3).map((x) => {
+                        const rowClass = x.done
+                          ? "bg-slate-200 text-slate-500 opacity-75"
+                          : tone === "blue"
+                          ? "bg-blue-50 text-blue-800"
+                          : "bg-amber-50 text-amber-800";
+                        return (
+                          <div key={x.id} className={`rounded-md px-1.5 py-1 text-[10px] font-medium sm:text-[11px] ${rowClass}`}>
+                            <div className="flex min-w-0 items-center gap-1">
+                              <span className="min-w-0 truncate">{x.label}</span>
+                              {x.duplicateTag && (
+                                <span className="shrink-0 rounded bg-white/80 px-1 py-0.5 text-[8px] font-bold text-slate-600 ring-1 ring-inset ring-slate-200">
+                                  {x.duplicateTag}
+                                </span>
+                              )}
+                            </div>
+                            <div className="truncate opacity-90">{x.sub}</div>
+                          </div>
+                        );
+                      })}
+                      {rows.length > 3 && (
+                        <div className="px-1 text-[10px] font-semibold text-slate-500">+{rows.length - 3}건</div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
 
-      {selectedCell && selectedInstallments.length > 0 && (
-        <div className="mt-3 rounded-md2 border border-line p-3">
-          <div className="mb-2 text-xs font-semibold text-ink">
-            {selectedCell.date.getMonth() + 1}월 {selectedCell.date.getDate()}일 분납 예정{" "}
-            {selectedInstallments.length}건
+      {pinned && <div className="fixed inset-0 z-[90]" onClick={() => setPinned(null)} aria-hidden="true" />}
+
+      {active && (
+        <div
+          className={`fixed z-[100] w-[280px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl ${
+            pinned ? "pointer-events-auto" : "pointer-events-none"
+          }`}
+          style={{ top: active.top, left: active.left }}
+          onClick={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
+        >
+          <div className="border-b border-slate-100 bg-slate-50 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="shrink-0 text-[13px] font-bold text-slate-900">
+                {Number(active.date.slice(5, 7))}월 {Number(active.date.slice(-2))}일 일정
+              </div>
+              <div className={`min-w-0 flex-1 truncate text-center text-[10px] font-bold ${tone === "blue" ? "text-blue-700" : "text-amber-700"}`}>
+                합계 {fmtWon(active.rows.reduce((sum, row) => sum + (row.amount || 0), 0))}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <div className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-slate-500 ring-1 ring-slate-200">
+                  {active.rows.length}건
+                </div>
+                {pinned && <div className="text-[9px] font-semibold text-blue-600">고정됨</div>}
+              </div>
+            </div>
+            <div className="mt-0.5 text-[10px] text-slate-500">
+              {title}
+              {!pinned && " · 클릭하면 고정"}
+            </div>
           </div>
-          <ul className="space-y-1 text-xs text-muted">
-            {selectedInstallments.slice(0, 6).map((ins) => (
-              <li key={ins.id} className="flex justify-between">
-                <span>
-                  {ins.caseId} · {ins.seq === 1 ? "계약금" : `${ins.seq - 1}회차`}
-                </span>
-                <span className="font-medium text-ink">{fmtMan(ins.amount)}</span>
-              </li>
-            ))}
-            {selectedInstallments.length > 6 && (
-              <li className="text-muted2">외 {selectedInstallments.length - 6}건</li>
-            )}
-          </ul>
+          <div className="max-h-[174px] space-y-1.5 overflow-y-auto p-2">
+            {active.rows.map((x) => {
+              const rowClass = x.done
+                ? "border-slate-200 bg-slate-100 text-slate-500"
+                : tone === "blue"
+                ? "border-blue-100 bg-blue-50 text-blue-900"
+                : "border-amber-100 bg-amber-50 text-amber-900";
+              return (
+                <div key={x.id} className={`rounded-lg border px-2.5 py-2 ${rowClass}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                      <div className="min-w-0 break-words text-[12px] font-bold leading-4">{x.label}</div>
+                      {x.duplicateTag && (
+                        <span className="shrink-0 rounded-md bg-white px-1.5 py-0.5 text-[8px] font-bold text-slate-600 ring-1 ring-inset ring-slate-200">
+                          {x.duplicateTag}
+                        </span>
+                      )}
+                    </div>
+                    {x.status && (
+                      <span
+                        className={`shrink-0 rounded-full bg-white/80 px-1.5 py-0.5 text-[8px] font-bold ${
+                          x.done ? "text-slate-500" : "text-red-600"
+                        }`}
+                      >
+                        {x.status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 break-words text-[10px] leading-4 opacity-85">{x.sub}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

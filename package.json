@@ -2,7 +2,7 @@
   "name": "lawpower",
   "version": "0.1.0",
   "private": true,
-  "description": "로파워(LawPower) — 회생/파산 사건관리 어드민. 로피(LawFee) 디자인 시스템을 참고해 제작.",
+  "description": "로파워(LawPower) — 회생/파산 사건관리 어드민. 도원 Admin(tg_m)과 동일한 디자인 시스템으로 제작.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,9 +10,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
     "next": "14.2.15",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@types/node": "20.14.10",

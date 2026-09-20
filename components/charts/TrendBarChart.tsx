@@ -15,8 +15,8 @@ export function TrendBarChart({
   buckets,
   labelA,
   labelB,
-  colorA = "#B06A1A",
-  colorB = "#2944AF",
+  colorA = "#d97706",
+  colorB = "#2563eb",
   valueFmt,
   height = 180,
 }: {
@@ -33,7 +33,7 @@ export function TrendBarChart({
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-4 text-xs text-muted">
+      <div className="mb-3 flex items-center gap-4 text-xs text-slate-500">
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full" style={{ background: colorA }} />
           {labelA}
@@ -55,7 +55,7 @@ export function TrendBarChart({
             onMouseLeave={() => setHover((v) => (v === i ? null : v))}
           >
             {hover === i && (
-              <div className="chart-tooltip absolute -top-2 z-10 -translate-y-full">
+              <div className="absolute -top-2 z-10 -translate-y-full whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] text-white shadow-xl">
                 <div className="font-semibold">{b.range ?? b.label}</div>
                 <div>
                   {labelA} {valueFmt(b.a)}
@@ -67,21 +67,21 @@ export function TrendBarChart({
             )}
             <div className="flex h-full items-end gap-1">
               <div
-                className="w-3.5 rounded-t-sm2 sm:w-4"
+                className="w-3.5 rounded-t-md sm:w-4"
                 style={{
                   height: `${Math.max(2, (b.a / max) * 100)}%`,
                   background: colorA,
                 }}
               />
               <div
-                className="w-3.5 rounded-t-sm2 sm:w-4"
+                className="w-3.5 rounded-t-md sm:w-4"
                 style={{
                   height: `${Math.max(2, (b.b / max) * 100)}%`,
                   background: colorB,
                 }}
               />
             </div>
-            <div className="text-[11px] text-muted2 whitespace-nowrap">{b.label}</div>
+            <div className="text-[11px] text-slate-400 whitespace-nowrap">{b.label}</div>
           </div>
         ))}
       </div>

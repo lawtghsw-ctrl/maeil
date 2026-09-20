@@ -1,32 +1,26 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
-import { Sidebar, MobileTabBar } from "@/components/layout/Sidebar";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { Header } from "@/components/layout/Header";
 import { AppStoreProvider } from "@/lib/store";
 
 export const metadata: Metadata = {
   title: "로파워 · LawPower Admin",
-  description: "회생/파산 사건관리 어드민 — 로피(LawFee) 디자인 시스템 참고 제작",
+  description: "회생/파산 사건관리 어드민 — 도원 Admin과 동일한 디자인 시스템으로 제작",
 };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
-export default function RootLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko">
       <body>
         <AppStoreProvider>
-          <div className="flex min-h-screen bg-bg">
-            <Sidebar />
-            <div className="flex min-w-0 flex-1 flex-col pb-14 lg:pb-0">
-              <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-5 sm:px-6 sm:py-6">
-                {children}
-              </main>
-            </div>
+          <Sidebar />
+          <div className="min-h-screen lg:pl-[248px]">
+            <Header />
+            <main className="min-w-0 max-w-full overflow-x-hidden p-3 sm:p-4 lg:p-7">{children}</main>
           </div>
-          <MobileTabBar />
         </AppStoreProvider>
       </body>
     </html>

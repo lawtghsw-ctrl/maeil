@@ -4,11 +4,11 @@
 export type DocumentSourceTag = "주민센터" | "온라인전용" | "직장요청" | "세무사요청" | "기타";
 
 export const DOCUMENT_SOURCE_COLOR: Record<DocumentSourceTag, string> = {
-  주민센터: "#2944AF",
-  온라인전용: "#7C5CD6",
-  직장요청: "#2C7A3F",
-  세무사요청: "#B06A1A",
-  기타: "#6B7280",
+  주민센터: "#2563eb", // blue-600
+  온라인전용: "#7c3aed", // violet-600
+  직장요청: "#059669", // emerald-600
+  세무사요청: "#d97706", // amber-600
+  기타: "#64748b", // slate-500
 };
 
 export interface DocumentItem {

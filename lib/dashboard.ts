@@ -170,21 +170,22 @@ export function getWeekCompare() {
   return { thisWeek, lastWeek, sparkline };
 }
 
+// 색상은 도원 Admin과 동일한 Tailwind 기본 팔레트(slate/blue/emerald/amber)로 통일
 export const STAGE_CHART_COLORS: Record<CaseStage, string> = {
-  상담접수: "#9CA1B0",
-  서류준비: "#6B7280",
-  신청서작성: "#5A72D6",
-  법원접수: "#2944AF",
-  보정대기: "#B06A1A",
-  개시_선고: "#1C3080",
-  변제계획_면책심문: "#B06A1A",
-  면책결정: "#2C7A3F",
-  종결: "#1B1E2B",
+  상담접수: "#cbd5e1", // slate-300
+  서류준비: "#94a3b8", // slate-400
+  신청서작성: "#60a5fa", // blue-400
+  법원접수: "#2563eb", // blue-600
+  보정대기: "#f59e0b", // amber-500
+  개시_선고: "#1d4ed8", // blue-700
+  변제계획_면책심문: "#d97706", // amber-600
+  면책결정: "#059669", // emerald-600
+  종결: "#334155", // slate-700
 };
 
 export const CASE_TYPE_COLORS: Record<CaseType, string> = {
-  개인회생: "#2944AF",
-  개인파산: "#B06A1A",
+  개인회생: "#2563eb", // blue-600
+  개인파산: "#d97706", // amber-600
 };
 
 export const clientCount = clients.length;

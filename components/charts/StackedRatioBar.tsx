@@ -9,7 +9,7 @@ export function StackedRatioBar({ segments }: { segments: RatioSegment[] }) {
   const total = segments.reduce((a, s) => a + s.count, 0);
   return (
     <div>
-      <div className="flex h-3 w-full overflow-hidden rounded-full bg-line">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
         {segments.map((s) => {
           const pct = total > 0 ? (s.count / total) * 100 : 0;
           if (pct <= 0) return null;
@@ -28,8 +28,8 @@ export function StackedRatioBar({ segments }: { segments: RatioSegment[] }) {
           return (
             <div key={s.label} className="flex items-center gap-1.5 text-xs">
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} />
-              <span className="truncate text-muted">{s.label}</span>
-              <span className="ml-auto shrink-0 font-medium text-ink">
+              <span className="truncate text-slate-500">{s.label}</span>
+              <span className="ml-auto shrink-0 font-medium text-slate-900">
                 {s.count}건 · {pct.toFixed(0)}%
               </span>
             </div>

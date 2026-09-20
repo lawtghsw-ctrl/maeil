@@ -39,14 +39,14 @@ export function PeriodControl({
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <div className="flex rounded-md2 border border-line bg-white p-0.5">
+      <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
         {(Object.keys(MODE_LABELS) as PeriodMode[]).map((m) => (
           <button
             key={m}
             type="button"
             onClick={() => onModeChange(m)}
-            className={`rounded-sm2 px-3 py-1.5 text-sm font-medium transition-colors ${
-              mode === m ? "bg-navy text-white" : "text-muted hover:text-ink"
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              mode === m ? "bg-blue-600 text-white" : "text-slate-500 hover:text-slate-900"
             }`}
           >
             {MODE_LABELS[m]}
@@ -58,11 +58,11 @@ export function PeriodControl({
           type="button"
           aria-label="이전 기간"
           onClick={() => onShift(-1)}
-          className="flex h-8 w-8 items-center justify-center rounded-md2 border border-line bg-white text-muted hover:text-ink"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-slate-900"
         >
           ‹
         </button>
-        <div className="min-w-[130px] text-center text-sm font-medium text-ink">
+        <div className="min-w-[130px] text-center text-sm font-medium text-slate-900">
           {formatRangeLabel(mode, bounds)}
         </div>
         <button
@@ -70,8 +70,8 @@ export function PeriodControl({
           aria-label="다음 기간"
           disabled={nextBlocked}
           onClick={() => onShift(1)}
-          className={`flex h-8 w-8 items-center justify-center rounded-md2 border border-line bg-white ${
-            nextBlocked ? "cursor-not-allowed text-muted2/50" : "text-muted hover:text-ink"
+          className={`flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white ${
+            nextBlocked ? "cursor-not-allowed text-slate-300" : "text-slate-500 hover:text-slate-900"
           }`}
         >
           ›
