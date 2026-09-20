@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import "./globals.css";
 import { Sidebar, MobileTabBar } from "@/components/layout/Sidebar";
+import { AppStoreProvider } from "@/lib/store";
 
 export const metadata: Metadata = {
   title: "로파워 · LawPower Admin",
@@ -10,20 +12,22 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <html lang="ko">
       <body>
-        <div className="flex min-h-screen bg-bg">
-          <Sidebar />
-          <div className="flex min-w-0 flex-1 flex-col pb-14 lg:pb-0">
-            <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-5 sm:px-6 sm:py-6">
-              {children}
-            </main>
+        <AppStoreProvider>
+          <div className="flex min-h-screen bg-bg">
+            <Sidebar />
+            <div className="flex min-w-0 flex-1 flex-col pb-14 lg:pb-0">
+              <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-5 sm:px-6 sm:py-6">
+                {children}
+              </main>
+            </div>
           </div>
-        </div>
-        <MobileTabBar />
+          <MobileTabBar />
+        </AppStoreProvider>
       </body>
     </html>
   );

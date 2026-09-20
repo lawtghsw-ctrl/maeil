@@ -5,9 +5,10 @@ import { usePathname } from "next/navigation";
 
 const NAV = [
   { href: "/", label: "대시보드", icon: "🏠" },
-  { href: "/cases", label: "사건관리", icon: "📁" },
   { href: "/clients", label: "고객관리", icon: "👤" },
-  { href: "/billing", label: "청구·결제", icon: "💳" },
+  { href: "/db", label: "DB관리", icon: "📥" },
+  { href: "/cases", label: "사건관리", icon: "📁" },
+  { href: "/billing", label: "입금·분납", icon: "💳" },
   { href: "/schedule", label: "일정관리", icon: "📅" },
 ];
 

@@ -79,7 +79,84 @@ export interface Client {
   email?: string;
   registeredAt: string; // ISO date
   source: LeadSource;
+  assignedStaff?: string;
   memo?: string;
+  fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
+}
+
+// 결제수단 3종 — 회파산 업무매뉴얼 6장(비용구조 안내) 기준
+export type PaymentMethod = "단순분납" | "신용카드할부" | "로펌금융조합분납";
+
+export const PAYMENT_METHOD_NOTE: Record<PaymentMethod, string> = {
+  단순분납: "'로피' 지정일 결제 · 최대 6개월",
+  신용카드할부: "카드사 일반결제 할부 · 구상권 청구 가능성 사전고지 필요",
+  로펌금융조합분납: "계약금+대행비 40만원 선결제 후 잔액 최대 6개월 분납(연 5.2~6% 수준)",
+};
+
+// ---- DB(상담 리드) 관리 ----
+// 회파산 업무매뉴얼 3장(DB 관리 기본규칙) 기준 시간대 분류
+export type TimeSlot = "평오전" | "평점심" | "평오후" | "퇴근후" | "주말오전" | "주말오후";
+
+export const TIME_SLOT_COLORS: Record<TimeSlot, string> = {
+  평오전: "#BFE3F5", // 하늘색
+  평점심: "#D8ECC0", // 연두색
+  평오후: "#FBE3A6", // 황색
+  퇴근후: "#E5E8F1", // 무색
+  주말오전: "#FCE588", // 노랑색
+  주말오후: "#FCE588", // 노랑색
+};
+
+// 매뉴얼 5장 상담 파이프라인 + 구글시트 대시보드 상태값을 통합한 DB 리드 상태
+export const DB_LEAD_STATUSES = [
+  "신규접수",
+  "상담예정",
+  "상담완료",
+  "재통화필요",
+  "고려중",
+  "서류검토중",
+  "계약진행중",
+  "수임전환",
+  "부재중",
+  "거절",
+  "부적합",
+  "종결_중단",
+] as const;
+
+export type DbLeadStatus = (typeof DB_LEAD_STATUSES)[number];
+
+export const DB_LEAD_STATUS_LABEL: Record<DbLeadStatus, string> = {
+  신규접수: "신규접수",
+  상담예정: "상담예정",
+  상담완료: "상담완료",
+  재통화필요: "재통화필요",
+  고려중: "고려중",
+  서류검토중: "서류검토중",
+  계약진행중: "계약진행중",
+  수임전환: "수임전환",
+  부재중: "부재중",
+  거절: "거절",
+  부적합: "부적합",
+  종결_중단: "종결(중단)",
+};
+
+// 재콜 상한(매뉴얼 4.3) — 하루 최대 2회, 누적 8회
+export const MAX_RECALL_TOTAL = 8;
+
+export interface DbLead {
+  id: string;
+  name: string;
+  phone: string;
+  caseTypeGuess?: CaseType; // 상담 단계에서 추정한 사건유형
+  timeSlot: TimeSlot;
+  receivedAt: string; // ISO datetime — DB 접수 시각
+  status: DbLeadStatus;
+  assignedStaff: string;
+  callAttempts: number; // 누적 재콜 횟수 (상한 8회)
+  lastContactAt?: string;
+  source: LeadSource;
+  memo?: string; // 상담원이 남기는 기초정보 메모
+  convertedClientId?: string; // 고객관리로 전환된 경우 생성된 Client id
+  convertedCaseId?: string;
 }
 
 export interface CaseRecord {
@@ -99,7 +176,10 @@ export interface CaseRecord {
   contractAmount: number; // 수임료 계약금액
   contractDate: string; // 계약일 (ISO date) — 매출 집계 기준일
   paidAmount: number; // 기납부액
+  paymentMethod: PaymentMethod;
+  docsSentAt?: string; // 서류제출안내문 발송일 (ISO date)
   memo?: string;
+  fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
 }
 
 export type InstallmentStatus = "완료" | "예정" | "연체" | "실패";

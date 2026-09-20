@@ -2,21 +2,17 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import {
-  getCaseById,
-  getClientById,
-  getInstallmentsByCase,
-  getScheduleByCase,
-  receivableOf,
-} from "@/lib/mock-data";
-import { CASE_STAGES, STAGE_LABELS } from "@/lib/types";
+import { useStore } from "@/lib/store";
+import { CASE_STAGES, PAYMENT_METHOD_NOTE, STAGE_LABELS } from "@/lib/types";
 import { CaseTypeBadge, InstallmentStatusBadge, StatusBadge } from "@/components/ui/Badge";
+import { DocumentChecklist } from "@/components/ui/DocumentChecklist";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 export default function CaseDetailPage() {
   const params = useParams<{ id: string }>();
   const caseId = Array.isArray(params.id) ? params.id[0] : params.id;
-  const c = caseId ? getCaseById(caseId) : undefined;
+  const { cases, clients, installments, scheduleItems } = useStore();
+  const c = caseId ? cases.find((x) => x.id === caseId) : undefined;
 
   if (!c) {
     return (
@@ -29,10 +25,10 @@ export default function CaseDetailPage() {
     );
   }
 
-  const client = getClientById(c.clientId);
-  const installs = getInstallmentsByCase(c.id);
-  const schedule = getScheduleByCase(c.id);
-  const receivable = receivableOf(c);
+  const client = clients.find((x) => x.id === c.clientId);
+  const installs = installments.filter((i) => i.caseId === c.id).sort((a, b) => a.seq - b.seq);
+  const schedule = scheduleItems.filter((s) => s.caseId === c.id);
+  const receivable = Math.max(0, c.contractAmount - c.paidAmount);
   const stageIdx = CASE_STAGES.indexOf(c.stage);
 
   return (
@@ -63,11 +59,16 @@ export default function CaseDetailPage() {
           />
         </div>
 
-        {c.monthlyRepayment && (
-          <div className="mt-3 rounded-md2 bg-brand-pale px-3 py-2 text-sm text-brand">
-            월 변제금 {fmtWon(c.monthlyRepayment)}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {c.monthlyRepayment && (
+            <div className="rounded-md2 bg-brand-pale px-3 py-2 text-sm text-brand">
+              월 변제금 {fmtWon(c.monthlyRepayment)}
+            </div>
+          )}
+          <div className="rounded-md2 bg-bg px-3 py-2 text-sm text-muted">
+            결제수단 {PAYMENT_METHOD_NOTE[c.paymentMethod]}
           </div>
-        )}
+        </div>
       </div>
 
       <div className="card p-5">
@@ -149,6 +150,8 @@ export default function CaseDetailPage() {
           </table>
         </div>
       </div>
+
+      <DocumentChecklist caseId={c.id} docsSentAt={c.docsSentAt} />
 
       <div className="card p-5">
         <div className="mb-3 text-sm font-semibold text-ink">일정</div>

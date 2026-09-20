@@ -15,6 +15,8 @@ import {
   type PeriodMode,
 } from "@/lib/period-engine";
 import { dayMap } from "@/lib/mock-data";
+import { useStore } from "@/lib/store";
+import { MonthCalendar } from "@/components/charts/MonthCalendar";
 import {
   activeCaseCount,
   CASE_TYPE_COLORS,
@@ -38,6 +40,7 @@ import { StackedRatioBar } from "@/components/charts/StackedRatioBar";
 export default function DashboardPage() {
   const [mode, setMode] = useState<PeriodMode>("month");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
+  const { installments } = useStore();
 
   const stats = useMemo(() => computeStats(mode, anchor, dayMap), [mode, anchor]);
   const headline = useMemo(() => periodHeadline(mode, stats.bounds), [mode, stats.bounds]);
@@ -283,6 +286,10 @@ export default function DashboardPage() {
             일 단위에서는 추이 차트를 표시하지 않습니다.
           </div>
         )}
+      </div>
+
+      <div className="card p-4 sm:p-5">
+        <MonthCalendar installments={installments} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

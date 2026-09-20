@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
-import { cases, getClientById } from "@/lib/mock-data";
+import { useStore } from "@/lib/store";
 import { CASE_STAGES, type CaseStage, type CaseStatus, type CaseType } from "@/lib/types";
 import { CaseTypeBadge, StageBadge, StatusBadge } from "@/components/ui/Badge";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -11,6 +11,7 @@ const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", "개인회생", "개
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
 
 export default function CasesPage() {
+  const { cases, clients } = useStore();
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
@@ -18,7 +19,7 @@ export default function CasesPage() {
 
   const rows = useMemo(() => {
     return cases
-      .map((c) => ({ c, client: getClientById(c.clientId) }))
+      .map((c) => ({ c, client: clients.find((cl) => cl.id === c.clientId) }))
       .filter(({ c, client }) => {
         if (typeFilter !== "전체" && c.caseType !== typeFilter) return false;
         if (statusFilter !== "전체" && c.status !== statusFilter) return false;
@@ -34,13 +35,15 @@ export default function CasesPage() {
         return true;
       })
       .sort((a, b) => (a.c.contractDate < b.c.contractDate ? 1 : -1));
-  }, [query, typeFilter, statusFilter, stageFilter]);
+  }, [cases, clients, query, typeFilter, statusFilter, stageFilter]);
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-ink">사건관리</h1>
-        <p className="mt-0.5 text-sm text-muted">회생/파산 사건 {cases.length}건 중 {rows.length}건 표시</p>
+        <p className="mt-0.5 text-sm text-muted">
+          회생/파산 사건 {cases.length}건 중 {rows.length}건 표시
+        </p>
       </div>
 
       <div className="card space-y-3 p-4">

@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
-import type { CaseStage, CaseStatus, CaseType, InstallmentStatus } from "@/lib/types";
-import { CASE_STAGES, STAGE_LABELS } from "@/lib/types";
+import type {
+  CaseStage,
+  CaseStatus,
+  CaseType,
+  DbLeadStatus,
+  InstallmentStatus,
+  TimeSlot,
+} from "@/lib/types";
+import { CASE_STAGES, DB_LEAD_STATUS_LABEL, STAGE_LABELS, TIME_SLOT_COLORS } from "@/lib/types";
 
 function ToneBadge({
   tone,
@@ -55,4 +62,33 @@ export function InstallmentStatusBadge({ status }: { status: InstallmentStatus }
 
 export function CaseTypeBadge({ caseType }: { caseType: CaseType }) {
   return <ToneBadge tone={caseType === "개인회생" ? "blue" : "gold"}>{caseType}</ToneBadge>;
+}
+
+export function DbLeadStatusBadge({ status }: { status: DbLeadStatus }) {
+  const toneMap: Record<DbLeadStatus, "blue" | "gold" | "red" | "green" | "muted" | "navy"> = {
+    신규접수: "blue",
+    상담예정: "blue",
+    상담완료: "gold",
+    재통화필요: "red",
+    고려중: "gold",
+    서류검토중: "gold",
+    계약진행중: "navy",
+    수임전환: "green",
+    부재중: "red",
+    거절: "muted",
+    부적합: "muted",
+    종결_중단: "muted",
+  };
+  return <ToneBadge tone={toneMap[status]}>{DB_LEAD_STATUS_LABEL[status]}</ToneBadge>;
+}
+
+export function TimeSlotChip({ slot }: { slot: TimeSlot }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-sm2 px-2 py-0.5 text-xs font-medium text-ink whitespace-nowrap"
+      style={{ background: TIME_SLOT_COLORS[slot] }}
+    >
+      {slot}
+    </span>
+  );
 }

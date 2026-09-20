@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
-import { cases, getCaseById, getClientById, installments } from "@/lib/mock-data";
+import { useStore } from "@/lib/store";
 import type { InstallmentStatus } from "@/lib/types";
 import { fmtDate, fmtEokMan, fmtWon } from "@/lib/format";
 import { InstallmentStatusBadge } from "@/components/ui/Badge";
@@ -10,16 +10,17 @@ import { InstallmentStatusBadge } from "@/components/ui/Badge";
 const STATUS_TABS: Array<InstallmentStatus | "전체"> = ["전체", "예정", "완료", "연체", "실패"];
 
 export default function BillingPage() {
+  const { cases, clients, installments } = useStore();
   const [status, setStatus] = useState<InstallmentStatus | "전체">("전체");
   const [query, setQuery] = useState("");
 
   const joined = useMemo(() => {
     return installments.map((ins) => {
-      const c = getCaseById(ins.caseId);
-      const client = c ? getClientById(c.clientId) : undefined;
+      const c = cases.find((x) => x.id === ins.caseId);
+      const client = c ? clients.find((cl) => cl.id === c.clientId) : undefined;
       return { ins, c, client };
     });
-  }, []);
+  }, [installments, cases, clients]);
 
   const totals = useMemo(() => {
     const contractAmount = cases.reduce((a, c) => a + c.contractAmount, 0);
@@ -31,7 +32,7 @@ export default function BillingPage() {
       .reduce((a, i) => a + i.amount, 0);
     const receivable = contractAmount - paymentAmount;
     return { contractAmount, paymentAmount, overdueAmount, receivable };
-  }, []);
+  }, [cases, installments]);
 
   const rows = useMemo(() => {
     return joined

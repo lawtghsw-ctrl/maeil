@@ -4,6 +4,25 @@
 카드/배지 스타일)을 참고해 제작한 **개인회생/개인파산 사건관리 어드민** 프로토타입입니다.
 현재는 전부 **가상의 샘플 데이터**로 동작하며, 실제 DB(Supabase 등)는 연결되어 있지 않습니다.
 
+## v2 업데이트 (데모/DB관리/게시판형 고객관리)
+
+- **데모 표기**: 사무장/변호사 등 실명 대신 전 화면에서 "직원1/직원2/직원3"으로 표기
+- **DB관리 페이지 신설** (`/db`, 사이드바 사건관리 위): 광고로 들어온 상담 리드를 시간대별
+  색상 칩·상태·재콜횟수와 함께 관리하고, 기초정보를 메모한 뒤 "고객 전환" 버튼으로
+  고객관리에 등록할 수 있습니다. 도원 사채 어드민의 DB→고객 전환 흐름을 그대로 이식했습니다.
+- **고객관리 게시판형 전환**: 카드형 그리드 → 표(게시판) 형식으로 변경하고, 행마다 "수정"
+  버튼으로 이름/연락처/이메일/담당자/메모를 바로 고칠 수 있게 했습니다.
+- **메뉴 순서 변경**: 대시보드 → 고객관리 → DB관리 → 사건관리 → 입금·분납 → 일정관리
+- **대시보드 분납 캘린더**: 월간 달력에서 날짜별 분납 예정 금액·건수·연체 여부를 확인할 수
+  있습니다.
+- **사건 상세 서류 체크리스트**: 첨부해주신 "서류제출안내문"의 15개 항목(주민센터·온라인전용·
+  직장요청·세무사요청 구분)을 그대로 반영, 발송일 기준 D+3/D+7 독촉 알림을 표시합니다.
+- **전역 상태 스토어 도입** (`lib/store.tsx`): DB 전환·고객정보 수정처럼 여러 화면에 걸쳐
+  일관되게 보여야 하는 상호작용을 위해 React Context 기반 인메모리 스토어를 추가했습니다.
+  새로고침하면 시드 데이터로 초기화되며, 실서비스 전환 시 이 파일의 `setState` 호출부를
+  Supabase insert/update로 교체하면 됩니다.
+- 결제수단(단순분납/신용카드할부/로펌금융조합분납) 필드를 사건에 추가하고 상세 페이지에 표시
+
 ## 중요 — 로컬에서 처음 실행하기 전에
 
 이 코드는 npm 레지스트리 접근이 차단된 클라우드 샌드박스에서 **`npm install`/빌드를 한 번도
@@ -32,19 +51,22 @@ Node.js 18.18 이상을 권장합니다.
 
 ```
 app/
-  page.tsx              대시보드 홈
-  cases/page.tsx         사건 목록 (검색/필터)
-  cases/[id]/page.tsx     사건 상세 (절차 타임라인, 입금내역, 일정)
-  clients/page.tsx        고객(의뢰인) 목록
-  billing/page.tsx        청구·결제(분납) 관리
+  page.tsx              대시보드 홈 (+ 분납 캘린더)
+  db/page.tsx             DB관리 (상담 리드 → 고객 전환)
+  clients/page.tsx        고객관리 (게시판형, 인라인 수정)
+  cases/page.tsx           사건 목록 (검색/필터)
+  cases/[id]/page.tsx      사건 상세 (절차 타임라인, 입금내역, 서류 체크리스트, 일정)
+  billing/page.tsx        입금·분납 관리
   schedule/page.tsx       일정(법원기일/제출기한) 관리
 components/
   layout/Sidebar.tsx      사이드바 + 모바일 하단 탭
-  ui/                     KPI카드, 배지, 기간엔진 컨트롤
-  charts/                 도넛/막대/스택바 차트
+  ui/                     KPI카드, 배지(DB상태·시간대칩 포함), 기간엔진 컨트롤, 서류체크리스트
+  charts/                 도넛/막대/스택바 차트, 분납 월간 캘린더
 lib/
-  types.ts                도메인 모델 (Client, CaseRecord, Installment, ScheduleItem …)
-  mock-data.ts            시드 기반 샘플 데이터 생성 + 조회 헬퍼
+  types.ts                도메인 모델 (Client, CaseRecord, DbLead, Installment, ScheduleItem …)
+  mock-data.ts            시드 기반 샘플 데이터 생성 + 조회 헬퍼 (리드 34건 포함)
+  documents.ts            서류 체크리스트 템플릿 (서류제출안내문 15개 항목)
+  store.tsx               전역 상태(Context) — DB 전환/고객정보 수정 등 상호작용용
   period-engine.ts         년/월/주/일 기간 이동·집계 엔진 (로피 스펙 4번 시트 이식)
   dashboard.ts             대시보드 전용 집계 (미수금 우선순위, 담당자 실적 등)
   format.ts                금액/날짜/증감률 포맷 유틸
@@ -67,9 +89,10 @@ lib/
 
 ## 다음 단계 (실서비스 연동 가이드)
 
-1. **DB 연동**: `lib/mock-data.ts`의 `clients`/`cases`/`installments`/`scheduleItems`
-   export와 `getXxxById` 계열 함수들을 Supabase 쿼리로 교체하세요. `lib/types.ts`의 인터페이스가
-   그대로 테이블 스키마 초안으로 쓸 수 있게 필드명을 설계해뒀습니다.
+1. **DB 연동**: `lib/mock-data.ts`의 `clients`/`cases`/`installments`/`scheduleItems`/`leads`
+   export와 `getXxxById` 계열 함수들, 그리고 `lib/store.tsx`의 `setState` 호출부(고객 수정, 리드
+   상태변경, DB→고객 전환, 서류 체크리스트)를 Supabase 쿼리/뮤테이션으로 교체하세요.
+   `lib/types.ts`의 인터페이스가 그대로 테이블 스키마 초안으로 쓸 수 있게 필드명을 설계해뒀습니다.
 2. **기존 도원 사채 Admin과의 통합**: 이 프로젝트는 독립 프로젝트로 만들어졌습니다. 기존
    Next.js 프로젝트(GitHub `lawtghsw-ctrl/tg_m`)에 흡수시키려면 `app/`, `components/`,
    `lib/`를 해당 저장소의 라우트 그룹(예: `app/(lawpower)/...`)으로 옮기고, 두 프로젝트의

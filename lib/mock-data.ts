@@ -7,16 +7,22 @@
 
 import {
   CASE_STAGES,
+  DB_LEAD_STATUSES,
+  MAX_RECALL_TOTAL,
   type CaseRecord,
   type CaseStage,
   type CaseStatus,
   type CaseType,
   type Client,
   type DayAggregate,
+  type DbLead,
+  type DbLeadStatus,
   type Installment,
   type InstallmentStatus,
   type LeadSource,
+  type PaymentMethod,
   type ScheduleItem,
+  type TimeSlot,
 } from "./types";
 
 function mulberry32(seed: number) {
@@ -61,9 +67,21 @@ const COURTS = [
   "광주지방법원",
 ];
 
-const STAFF = ["김민석 변호사", "이하윤 사무장", "박지훈 사무장"];
+// 데모 버전에서는 실명 대신 직원1/직원2/직원3으로 표기
+const STAFF = ["직원1", "직원2", "직원3"];
 
 const LEAD_SOURCES: LeadSource[] = ["메타광고", "커뮤니티", "지인소개", "네이버검색", "재상담"];
+
+const TIME_SLOTS: TimeSlot[] = ["평오전", "평점심", "평오후", "퇴근후", "주말오전", "주말오후"];
+
+const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "신용카드할부", "로펌금융조합분납"];
+
+function randomPaymentMethod(): PaymentMethod {
+  const r = rand();
+  if (r < 0.6) return "단순분납";
+  if (r < 0.85) return "신용카드할부";
+  return "로펌금융조합분납";
+}
 
 const today = new Date();
 const todayIso = () =>
@@ -200,6 +218,9 @@ export const cases: CaseRecord[] = Array.from({ length: CASE_COUNT }, (_, i) => 
     contractAmount: amount,
     contractDate: isoOf(contractDate),
     paidAmount,
+    paymentMethod: randomPaymentMethod(),
+    docsSentAt:
+      filingDate && chance(0.8) ? isoOf(daysAgo(Math.max(0, contractDaysAgo - randInt(3, 10)))) : undefined,
     memo: undefined,
   };
 });
@@ -288,6 +309,90 @@ export const scheduleItems: ScheduleItem[] = cases
     done: false,
   }));
 
+// ---- DB(상담 리드) 관리 ----
+// 회파산 업무매뉴얼 3~5장(DB 관리 규칙 · 상담 파이프라인) 기준 목업 데이터.
+// 연락처 저장 규칙(3.2) 예시: '이름 + 사건유형 + (시간대)' — leadContactLabel()로 재현.
+
+const LEAD_STATUS_WEIGHT: Record<DbLeadStatus, number> = {
+  신규접수: 20,
+  상담예정: 12,
+  상담완료: 10,
+  재통화필요: 10,
+  고려중: 8,
+  서류검토중: 6,
+  계약진행중: 6,
+  수임전환: 8,
+  부재중: 12,
+  거절: 5,
+  부적합: 2,
+  종결_중단: 1,
+};
+
+function weightedLeadStatus(): DbLeadStatus {
+  const total = DB_LEAD_STATUSES.reduce((a, s) => a + LEAD_STATUS_WEIGHT[s], 0);
+  let r = rand() * total;
+  for (const s of DB_LEAD_STATUSES) {
+    if (r < LEAD_STATUS_WEIGHT[s]) return s;
+    r -= LEAD_STATUS_WEIGHT[s];
+  }
+  return "신규접수";
+}
+
+const LEAD_MEMO_SAMPLES = [
+  "담보대출 연체 여부 확인 필요 — 개인회생/워크아웃 판단 대기",
+  "사업소득 있음, 매출·매입 장부 요청 예정",
+  "월세 거주, 임대차계약서 추가 수령 필요",
+  "재통화 요청 — 저녁 8시 이후 연락 가능",
+  "배우자 명의 자동차 있음, 자동차등록원부 안내함",
+  "탕감 예상액 문의 — 서류 검토 후 재안내 예정",
+];
+
+const LEAD_COUNT = 34;
+
+export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
+  const status = weightedLeadStatus();
+  const receivedDaysAgo = randInt(0, 12);
+  const callAttempts =
+    status === "신규접수"
+      ? 0
+      : status === "부재중"
+      ? randInt(2, MAX_RECALL_TOTAL)
+      : status === "재통화필요"
+      ? randInt(1, 4)
+      : randInt(0, 3);
+
+  let convertedClientId: string | undefined;
+  let convertedCaseId: string | undefined;
+  if (status === "수임전환") {
+    const client = clients[i % clients.length];
+    convertedClientId = client.id;
+    convertedCaseId = cases.find((c) => c.clientId === client.id)?.id;
+  }
+
+  return {
+    id: `LEAD-${String(i + 1).padStart(4, "0")}`,
+    name: randomName(),
+    phone: randomPhone(),
+    caseTypeGuess: chance(0.8) ? randomCaseType() : undefined,
+    timeSlot: pick(TIME_SLOTS),
+    receivedAt: isoOf(daysAgo(receivedDaysAgo)),
+    status,
+    assignedStaff: pick(STAFF),
+    callAttempts,
+    lastContactAt: callAttempts > 0 ? isoOf(daysAgo(randInt(0, Math.min(5, receivedDaysAgo + 1)))) : undefined,
+    source: pick(LEAD_SOURCES),
+    memo: chance(0.5) ? pick(LEAD_MEMO_SAMPLES) : undefined,
+    convertedClientId,
+    convertedCaseId,
+  };
+}).sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+
+// 매뉴얼 3.2 연락처 저장 규칙: '신청이름 + 사건유형 + (시간대)'
+export function leadContactLabel(lead: DbLead): string {
+  const type = lead.caseTypeGuess === "개인파산" ? "파산" : "회생";
+  return `${lead.name} ${type} (${lead.timeSlot})`;
+}
+
 // ---- 기간 엔진용 일 단위 집계(dayMap) 생성 ----
 // 계약(청구 개념) = cases.contractDate 기준 / 결제(입금) = installments 완료건의 paidDate 기준
 // newConsultCount는 실제 상담 레코드 없이, 계약 건수 대비 유입 배수로 근사 산출(데모 목적)
@@ -304,45 +409,62 @@ function emptyDay(dateIso: string): DayAggregate {
   };
 }
 
-export const dayMap: Map<string, DayAggregate> = new Map();
-for (let i = 0; i <= DAY_RANGE; i++) {
-  const iso = isoOf(daysAgo(DAY_RANGE - i));
-  dayMap.set(iso, emptyDay(iso));
-}
-// 미래 일정 일부(예정 분납일)도 맵에 포함되도록 여유분 생성
-for (let i = 1; i <= 60; i++) {
-  const iso = isoOf(daysFromNow(i));
-  if (!dayMap.has(iso)) dayMap.set(iso, emptyDay(iso));
-}
+// cases/installments를 받아 dayMap을 새로 계산 — store의 실시간 데이터(DB관리에서 전환된
+// 신규 사건 포함)로도 재사용할 수 있도록 순수 함수로 분리함.
+export function buildDayMap(
+  casesArr: CaseRecord[],
+  installmentsArr: Installment[]
+): Map<string, DayAggregate> {
+  const map: Map<string, DayAggregate> = new Map();
+  for (let i = 0; i <= DAY_RANGE; i++) {
+    const iso = isoOf(daysAgo(DAY_RANGE - i));
+    map.set(iso, emptyDay(iso));
+  }
+  // 미래 일정 일부(예정 분납일)도 맵에 포함되도록 여유분 생성
+  for (let i = 1; i <= 60; i++) {
+    const iso = isoOf(daysFromNow(i));
+    if (!map.has(iso)) map.set(iso, emptyDay(iso));
+  }
 
-for (const c of cases) {
-  const day = dayMap.get(c.contractDate);
-  if (day) {
+  for (const c of casesArr) {
+    let day = map.get(c.contractDate);
+    if (!day) {
+      // seed 범위 밖(오늘 이후 등) 계약도 놓치지 않도록 동적으로 추가
+      day = emptyDay(c.contractDate);
+      map.set(c.contractDate, day);
+    }
     day.newContractCount += 1;
     day.contractAmount += c.contractAmount;
     day.newConsultCount += randInt(2, 4); // 계약 1건당 상담 유입 근사치
   }
-}
 
-for (const ins of installments) {
-  if (ins.status === "완료" && ins.paidDate) {
-    const day = dayMap.get(ins.paidDate);
-    const c = cases.find((cc) => cc.id === ins.caseId);
-    if (day && c) {
-      day.paymentAmount += ins.amount;
-      day.caseTypeSplit[c.caseType] += ins.amount;
+  for (const ins of installmentsArr) {
+    if (ins.status === "완료" && ins.paidDate) {
+      let day = map.get(ins.paidDate);
+      const c = casesArr.find((cc) => cc.id === ins.caseId);
+      if (!day && c) {
+        day = emptyDay(ins.paidDate);
+        map.set(ins.paidDate, day);
+      }
+      if (day && c) {
+        day.paymentAmount += ins.amount;
+        day.caseTypeSplit[c.caseType] += ins.amount;
+      }
     }
   }
+
+  // caseTypeSplit을 절대금액 → 비율로 정규화
+  for (const day of map.values()) {
+    const total = day.caseTypeSplit["개인회생"] + day.caseTypeSplit["개인파산"];
+    if (total > 0) {
+      day.caseTypeSplit["개인회생"] = day.caseTypeSplit["개인회생"] / total;
+      day.caseTypeSplit["개인파산"] = day.caseTypeSplit["개인파산"] / total;
+    }
+  }
+  return map;
 }
 
-// caseTypeSplit을 절대금액 → 비율로 정규화
-for (const day of dayMap.values()) {
-  const total = day.caseTypeSplit["개인회생"] + day.caseTypeSplit["개인파산"];
-  if (total > 0) {
-    day.caseTypeSplit["개인회생"] = day.caseTypeSplit["개인회생"] / total;
-    day.caseTypeSplit["개인파산"] = day.caseTypeSplit["개인파산"] / total;
-  }
-}
+export const dayMap: Map<string, DayAggregate> = buildDayMap(cases, installments);
 
 // ---- 조회 헬퍼 (추후 Supabase 쿼리로 교체될 지점) ----
 
@@ -370,6 +492,10 @@ export function getScheduleByCase(caseId: string): ScheduleItem[] {
 
 export function receivableOf(c: CaseRecord): number {
   return Math.max(0, c.contractAmount - c.paidAmount);
+}
+
+export function getLeadById(id: string): DbLead | undefined {
+  return leads.find((l) => l.id === id);
 }
 
 export function overdueDaysOf(ins: Installment, refDate: Date = today): number {

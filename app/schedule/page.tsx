@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { getCaseById, getClientById, scheduleItems } from "@/lib/mock-data";
+import { useStore } from "@/lib/store";
 import { ddayLabel, fmtDate } from "@/lib/format";
 
 type RangeFilter = "임박(7일)" | "이번달" | "전체";
 const RANGE_FILTERS: RangeFilter[] = ["임박(7일)", "이번달", "전체"];
 
 export default function SchedulePage() {
+  const { cases, clients, scheduleItems } = useStore();
   const [range, setRange] = useState<RangeFilter>("임박(7일)");
 
   const rows = useMemo(() => {
@@ -17,8 +18,8 @@ export default function SchedulePage() {
 
     return scheduleItems
       .map((s) => {
-        const c = s.caseId ? getCaseById(s.caseId) : undefined;
-        const client = c ? getClientById(c.clientId) : undefined;
+        const c = s.caseId ? cases.find((x) => x.id === s.caseId) : undefined;
+        const client = c ? clients.find((cl) => cl.id === c.clientId) : undefined;
         const d = new Date(s.date + "T00:00:00");
         const diffDays = Math.round((d.getTime() - t0.getTime()) / 86400000);
         return { s, c, client, diffDays };
@@ -33,7 +34,7 @@ export default function SchedulePage() {
         return true;
       })
       .sort((a, b) => (a.s.date < b.s.date ? -1 : 1));
-  }, [range]);
+  }, [cases, clients, scheduleItems, range]);
 
   return (
     <div className="space-y-4">
