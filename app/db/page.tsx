@@ -3,9 +3,18 @@
 import { useMemo, useState, type ChangeEvent, type FocusEvent } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
-import { DB_LEAD_STATUSES, STAFF_LIST, type DbLeadStatus, type StaffName } from "@/lib/types";
+import {
+  DB_LEAD_STATUS_LABEL,
+  DB_LEAD_STATUSES,
+  STAFF_LIST,
+  type CaseType,
+  type DbLeadStatus,
+  type StaffName,
+} from "@/lib/types";
 import { Button, Card, PageHeader, Pagination, SearchBox, pageRows } from "@/components/ui/Primitives";
 import { fmtDate } from "@/lib/format";
+
+const APPLICATION_TYPES: CaseType[] = ["개인회생", "개인파산"];
 
 export default function DbManagementPage() {
   const { leads, updateLead, convertLeadToClient } = useStore();
@@ -57,7 +66,7 @@ export default function DbManagementPage() {
           <option value="전체">상태 전체</option>
           {DB_LEAD_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {DB_LEAD_STATUS_LABEL[s]}
             </option>
           ))}
         </select>
@@ -72,13 +81,27 @@ export default function DbManagementPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <span className="text-base font-bold text-slate-900">{lead.name}</span>
-                  {lead.caseTypeGuess && <div className="text-[11px] text-slate-400">추정유형 {lead.caseTypeGuess}</div>}
                   <a href={`tel:${lead.phone.replace(/[^0-9+]/g, "")}`} className="mt-1 inline-block text-sm font-semibold text-blue-700">
                     {lead.phone}
                   </a>
                   <div className="mt-1 text-[11px] text-slate-400">{fmtDate(lead.receivedAt)}</div>
                 </div>
               </div>
+              <select
+                value={lead.applicationType ?? ""}
+                disabled={!!lead.convertedClientId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  updateLead(lead.id, { applicationType: (e.target.value || undefined) as CaseType | undefined })
+                }
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
+              >
+                <option value="">신청분류 미지정</option>
+                {APPLICATION_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
               <select
                 value={lead.assignedStaff}
                 disabled={!!lead.convertedClientId}
@@ -99,7 +122,7 @@ export default function DbManagementPage() {
               >
                 {DB_LEAD_STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {DB_LEAD_STATUS_LABEL[s]}
                   </option>
                 ))}
               </select>
@@ -135,7 +158,7 @@ export default function DbManagementPage() {
           <table className="admin-responsive-table w-full min-w-[900px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["접수일", "이름", "연락처", "담당자", "상태", "메모", ""].map((h) => (
+                {["접수일", "이름", "연락처", "신청분류", "담당자", "상태", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -148,9 +171,25 @@ export default function DbManagementPage() {
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(lead.receivedAt)}</td>
                   <td className="px-4 py-3">
                     <div className="font-semibold text-slate-900">{lead.name}</div>
-                    {lead.caseTypeGuess && <div className="text-[11px] text-slate-400">추정유형 {lead.caseTypeGuess}</div>}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{lead.phone}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <select
+                      value={lead.applicationType ?? ""}
+                      disabled={!!lead.convertedClientId}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                        updateLead(lead.id, { applicationType: (e.target.value || undefined) as CaseType | undefined })
+                      }
+                      className="min-w-[100px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+                    >
+                      <option value="">미지정</option>
+                      {APPLICATION_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
                       value={lead.assignedStaff}
@@ -174,7 +213,7 @@ export default function DbManagementPage() {
                     >
                       {DB_LEAD_STATUSES.map((s) => (
                         <option key={s} value={s}>
-                          {s}
+                          {DB_LEAD_STATUS_LABEL[s]}
                         </option>
                       ))}
                     </select>
@@ -208,7 +247,7 @@ export default function DbManagementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 DB가 없습니다.
                   </td>
                 </tr>

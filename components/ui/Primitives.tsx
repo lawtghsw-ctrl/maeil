@@ -162,25 +162,37 @@ export function Select({
   );
 }
 
+export type ModalSize = "md" | "lg" | "xl";
+
 export function Modal({
   open,
   title,
   children,
   onClose,
+  size = "md",
 }: {
   open: boolean;
   title: string;
   children: ReactNode;
   onClose: () => void;
+  size?: ModalSize;
 }) {
   if (!open) return null;
+  const sizeClass: Record<ModalSize, string> = {
+    md: "max-w-2xl",
+    lg: "max-w-4xl",
+    xl: "max-w-5xl",
+  };
   return (
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 p-2 sm:p-4"
       onMouseDown={onClose}
     >
       <div
-        className="max-h-[calc(100dvh-16px)] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-2xl"
+        className={cn(
+          "max-h-[calc(100dvh-16px)] w-full overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-2xl",
+          sizeClass[size]
+        )}
         onMouseDown={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4">

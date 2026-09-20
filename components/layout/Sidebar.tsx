@@ -7,7 +7,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  Activity,
+  Calculator,
   FileSignature,
+  History,
   Inbox,
   LayoutDashboard,
   Menu,
@@ -21,12 +24,16 @@ import { cn } from "@/lib/utils";
 
 // 도원 Admin(tg_m)과 동일하게 DB(리드) 관리를 고객관리보다 앞에 두고, '사건관리'는
 // '계약관리'로 명칭을 통일, 별도였던 일정관리 메뉴는 없애고 내부 게시판을 추가함.
+// 정산·기간별 변동내역·데이터집계는 도원 Admin의 동일 메뉴 구조를 그대로 이식.
 export const menu = [
   ["대시보드", "/", LayoutDashboard],
   ["DB관리", "/db", Inbox],
   ["고객관리", "/clients", Users],
   ["계약관리", "/cases", FileSignature],
   ["입금·분납", "/billing", WalletCards],
+  ["정산", "/settlements", Calculator],
+  ["기간별 변동내역", "/changes", History],
+  ["데이터집계", "/analytics", Activity],
   ["게시판", "/board", MessagesSquare],
 ] as const;
 

@@ -3,10 +3,24 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type MouseEvent } from "react";
 import Link from "next/link";
 import { useStore, type InstallmentDraft } from "@/lib/store";
-import type { CaseRecord, Client, InstallmentStatus, StaffName } from "@/lib/types";
+import type {
+  AssetRow,
+  CaseRecord,
+  CaseType,
+  Client,
+  ConsultationInfo,
+  DebtRow,
+  Gender,
+  InstallmentStatus,
+  OccupationType,
+  RepaymentPlanInput,
+  StaffName,
+} from "@/lib/types";
 import { PAYMENT_METHOD_NOTE, STAFF_LIST } from "@/lib/types";
 import { fmtDate, fmtWon } from "@/lib/format";
-import { CaseTypeBadge, StatusBadge } from "@/components/ui/Badge";
+import { computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput, MIN_LIVING_COST_1P } from "@/lib/consultation";
+import { StatusBadge } from "@/components/ui/Badge";
+import { DocumentChecklist } from "@/components/ui/DocumentChecklist";
 import {
   Button,
   Card,
@@ -23,16 +37,22 @@ import {
 import { ConfirmDelete } from "@/components/ui/ConfirmDelete";
 import { Plus, RefreshCw, FileSignature, Trash2, WalletCards } from "lucide-react";
 
-type DraftClient = Pick<Client, "name" | "phone" | "assignedStaff" | "memo">;
-
 const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
+const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", "개인회생", "개인파산"];
+const OCCUPATION_TYPES: OccupationType[] = ["사업자", "직장인", "프리랜서", "무직", "기타"];
+const CLIENTS_PAGE_SIZE = 5;
+
+function caseStatusText(clientCases: CaseRecord[]): string {
+  if (clientCases.length === 0) return "연결된 계약 없음";
+  return clientCases.map((c) => `${c.caseType} · ${c.status}`).join(", ");
+}
 
 export default function ClientsPage() {
-  const { clients, cases, updateClient, deleteClient } = useStore();
+  const { clients, cases, updateClient, updateCase, deleteClient } = useStore();
   const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [page, setPage] = useState(1);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<DraftClient>({ name: "", phone: "", assignedStaff: undefined, memo: "" });
+  const [editTarget, setEditTarget] = useState<Client | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [eformOpen, setEformOpen] = useState(false);
@@ -40,41 +60,33 @@ export default function ClientsPage() {
 
   const rows = useMemo(() => {
     return clients
+      .filter((cl) => typeFilter === "전체" || cl.applicationType === typeFilter)
       .filter((cl) => {
         if (!query.trim()) return true;
         return cl.name.includes(query) || cl.phone.includes(query);
       })
       .map((cl) => {
         const clientCases = cases.filter((c) => c.clientId === cl.id);
+        const contractTotal = clientCases.reduce((a, c) => a + c.contractAmount, 0);
         const receivable = clientCases.reduce((a, c) => a + Math.max(0, c.contractAmount - c.paidAmount), 0);
-        return { client: cl, cases: clientCases, receivable };
+        return { client: cl, cases: clientCases, contractTotal, receivable };
       })
       .sort((a, b) => (a.client.registeredAt < b.client.registeredAt ? 1 : -1));
-  }, [clients, cases, query]);
+  }, [clients, cases, typeFilter, query]);
 
   const selected = rows.find((r) => r.client.id === selectedId) ?? null;
-
-  function startEdit(c: Client) {
-    setEditingId(c.id);
-    setDraft({ name: c.name, phone: c.phone, assignedStaff: c.assignedStaff, memo: c.memo ?? "" });
-  }
-
-  function saveEdit(id: string) {
-    const name = draft.name.trim();
-    const phone = draft.phone.trim();
-    updateClient(id, {
-      // 이름·연락처는 필수값이라 비워둔 채 저장하면 원래 값을 유지함
-      ...(name ? { name } : {}),
-      ...(phone ? { phone } : {}),
-      assignedStaff: draft.assignedStaff,
-      memo: draft.memo?.trim() || undefined,
-    });
-    setEditingId(null);
-  }
 
   function selectRow(id: string) {
     setSelectedId((prev) => (prev === id ? null : id));
   }
+
+  const countByType = useMemo(() => {
+    const map: Record<string, number> = { 전체: clients.length };
+    for (const t of ["개인회생", "개인파산"] as CaseType[]) {
+      map[t] = clients.filter((c) => c.applicationType === t).length;
+    }
+    return map;
+  }, [clients]);
 
   return (
     <>
@@ -83,7 +95,7 @@ export default function ClientsPage() {
         description={`의뢰인 ${clients.length}명 중 ${rows.length}명 표시 — 이름을 클릭하면 하단에서 계약·분납·전자계약서를 바로 관리할 수 있어요.`}
       />
 
-      <Card className="mb-4 p-3">
+      <Card className="mb-4 space-y-3 p-3">
         <SearchBox
           value={query}
           onChange={(v) => {
@@ -96,108 +108,84 @@ export default function ClientsPage() {
           }}
           placeholder="이름 · 연락처 검색"
         />
+        <div className="flex flex-wrap gap-2">
+          {TYPE_FILTERS.map((t) => (
+            <button
+              key={t}
+              onClick={() => {
+                setTypeFilter(t);
+                setPage(1);
+              }}
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
+                typeFilter === t ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {t}
+              <span className={`ml-1 ${typeFilter === t ? "text-blue-100" : "text-slate-400"}`}>({countByType[t] ?? 0})</span>
+            </button>
+          ))}
+        </div>
       </Card>
 
       <Card className="overflow-hidden">
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 의뢰인이 없습니다.</div>}
-          {pageRows(rows, page, 10).map(({ client, cases: clientCases, receivable }) => {
-            const isEditing = editingId === client.id;
-            if (isEditing) {
-              return (
-                <div key={client.id} className="space-y-2 bg-blue-50/40 p-4">
-                  <Label text="이름">
-                    <Input value={draft.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, name: e.target.value }))} />
-                  </Label>
-                  <Label text="연락처">
-                    <Input value={draft.phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, phone: e.target.value }))} />
-                  </Label>
-                  <Label text="담당자">
-                    <Select
-                      value={draft.assignedStaff ?? ""}
-                      onChange={(e: ChangeEvent<HTMLSelectElement>) => setDraft((d) => ({ ...d, assignedStaff: e.target.value as StaffName }))}
-                      className="w-full"
-                    >
-                      <option value="">미지정</option>
-                      {STAFF_LIST.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </Select>
-                  </Label>
-                  <Label text="메모">
-                    <Input value={draft.memo ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, memo: e.target.value }))} />
-                  </Label>
-                  <div className="flex gap-2 pt-1">
-                    <Button className="flex-1" onClick={() => saveEdit(client.id)}>
-                      저장
-                    </Button>
-                    <Button variant="secondary" className="flex-1" onClick={() => setEditingId(null)}>
-                      취소
-                    </Button>
-                  </div>
-                </div>
-              );
-            }
-            return (
-              <div
-                key={client.id}
-                onClick={() => selectRow(client.id)}
-                className={`cursor-pointer space-y-2 p-4 ${selectedId === client.id ? "bg-blue-50/60" : ""}`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-base font-bold text-slate-900">{client.name}</div>
-                    <a
-                      href={`tel:${client.phone}`}
-                      onClick={(e: MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-                      className="mt-0.5 inline-block text-sm font-semibold text-blue-700"
-                    >
-                      {client.phone}
-                    </a>
-                    <div className="mt-1 text-[11px] text-slate-400">
-                      {fmtDate(client.registeredAt)} · 담당 {client.assignedStaff ?? "-"}
-                    </div>
-                  </div>
-                  {receivable > 0 ? (
-                    <span className="shrink-0 text-sm font-semibold text-red-600">{fmtWon(receivable)}</span>
-                  ) : (
-                    <span className="shrink-0 text-xs text-slate-400">미수금 없음</span>
-                  )}
-                </div>
-                {clientCases.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {clientCases.map((c) => (
-                      <span key={c.id} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px]">
-                        <CaseTypeBadge caseType={c.caseType} />
-                        <StatusBadge status={c.status} />
+          {pageRows(rows, page, CLIENTS_PAGE_SIZE).map(({ client, cases: clientCases, contractTotal, receivable }) => (
+            <div
+              key={client.id}
+              onClick={() => selectRow(client.id)}
+              className={`cursor-pointer space-y-2 p-4 ${selectedId === client.id ? "bg-blue-50/60" : ""}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base font-bold text-slate-900">{client.name}</span>
+                    {client.applicationType && (
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-500">
+                        {client.applicationType}
                       </span>
-                    ))}
+                    )}
                   </div>
+                  <a
+                    href={`tel:${client.phone}`}
+                    onClick={(e: MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+                    className="mt-0.5 inline-block text-sm font-semibold text-blue-700"
+                  >
+                    {client.phone}
+                  </a>
+                  <div className="mt-1 text-[11px] text-slate-400">
+                    {fmtDate(client.registeredAt)} · 담당 {client.assignedStaff ?? "-"}
+                  </div>
+                </div>
+                {receivable > 0 ? (
+                  <span className="shrink-0 text-sm font-semibold text-red-600">{fmtWon(receivable)}</span>
+                ) : (
+                  <span className="shrink-0 text-xs text-slate-400">미수금 없음</span>
                 )}
-                <Button
-                  variant="secondary"
-                  className="w-full"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startEdit(client);
-                  }}
-                >
-                  수정
-                </Button>
               </div>
-            );
-          })}
+              <div className="text-xs text-slate-500">{caseStatusText(clientCases)}</div>
+              <div className="text-xs text-slate-500">계약금액 {contractTotal > 0 ? fmtWon(contractTotal) : "-"}</div>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditTarget(client);
+                }}
+              >
+                수정
+              </Button>
+            </div>
+          ))}
         </div>
 
         {/* 데스크톱: 테이블 */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="admin-responsive-table w-full min-w-[900px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[980px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["등록일", "이름", "연락처", "담당자", "계약현황", "미수금", "메모", ""].map((h) => (
+                {["등록일", "이름", "연락처", "담당자", "계약현황", "계약금액", "미수금", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -205,96 +193,50 @@ export default function ClientsPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRows(rows, page, 10).map(({ client, cases: clientCases, receivable }) => {
-                const isEditing = editingId === client.id;
-                if (isEditing) {
-                  return (
-                    <tr key={client.id} className="border-t border-slate-100 bg-blue-50/40 align-top">
-                      <td className="px-4 py-3 text-slate-500">{fmtDate(client.registeredAt)}</td>
-                      <td className="px-4 py-3">
-                        <Input value={draft.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, name: e.target.value }))} className="w-28" />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Input value={draft.phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, phone: e.target.value }))} className="w-32" />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Select
-                          value={draft.assignedStaff ?? ""}
-                          onChange={(e: ChangeEvent<HTMLSelectElement>) => setDraft((d) => ({ ...d, assignedStaff: e.target.value as StaffName }))}
-                          className="w-24"
-                        >
-                          <option value="">미지정</option>
-                          {STAFF_LIST.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </Select>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">{clientCases.length}건</td>
-                      <td className="px-4 py-3 text-slate-500">{receivable > 0 ? fmtWon(receivable) : "-"}</td>
-                      <td className="px-4 py-3">
-                        <Input value={draft.memo ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, memo: e.target.value }))} className="w-40" />
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right">
-                        <Button className="mr-1 px-2.5 py-1.5" onClick={() => saveEdit(client.id)}>
-                          저장
-                        </Button>
-                        <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => setEditingId(null)}>
-                          취소
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr
-                    key={client.id}
-                    onClick={() => selectRow(client.id)}
-                    className={`cursor-pointer border-t transition-colors ${
-                      selectedId === client.id ? "border-blue-100 bg-blue-50/70" : "border-slate-100 hover:bg-slate-50"
-                    }`}
-                  >
-                    <td className="px-4 py-3 text-slate-500">{fmtDate(client.registeredAt)}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-900">{client.name}</td>
-                    <td className="px-4 py-3 text-slate-500">{client.phone}</td>
-                    <td className="px-4 py-3 text-slate-500">{client.assignedStaff ?? "-"}</td>
-                    <td className="px-4 py-3">
-                      {clientCases.length === 0 ? (
-                        <span className="text-slate-300">없음</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {clientCases.map((c) => (
-                            <span key={c.id} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px]">
-                              <CaseTypeBadge caseType={c.caseType} />
-                              <StatusBadge status={c.status} />
-                            </span>
-                          ))}
-                        </div>
+              {pageRows(rows, page, CLIENTS_PAGE_SIZE).map(({ client, cases: clientCases, contractTotal, receivable }) => (
+                <tr
+                  key={client.id}
+                  onClick={() => selectRow(client.id)}
+                  className={`cursor-pointer border-t transition-colors ${
+                    selectedId === client.id ? "border-blue-100 bg-blue-50/70" : "border-slate-100 hover:bg-slate-50"
+                  }`}
+                >
+                  <td className="px-4 py-3 text-slate-500">{fmtDate(client.registeredAt)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5 font-semibold text-slate-900">
+                      {client.name}
+                      {client.applicationType && (
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-500">
+                          {client.applicationType}
+                        </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>}
-                    </td>
-                    <td className="max-w-[180px] truncate px-4 py-3 text-slate-500">{client.memo ?? "-"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <Button
-                        variant="secondary"
-                        className="px-2.5 py-1.5"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          startEdit(client);
-                        }}
-                      >
-                        수정
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{client.phone}</td>
+                  <td className="px-4 py-3 text-slate-500">{client.assignedStaff ?? "-"}</td>
+                  <td className="px-4 py-3 text-slate-500">{caseStatusText(clientCases)}</td>
+                  <td className="px-4 py-3 text-slate-900">{contractTotal > 0 ? fmtWon(contractTotal) : "-"}</td>
+                  <td className="px-4 py-3">
+                    {receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>}
+                  </td>
+                  <td className="max-w-[160px] truncate px-4 py-3 text-slate-500">{client.memo ?? "-"}</td>
+                  <td className="px-4 py-3 text-right">
+                    <Button
+                      variant="secondary"
+                      className="px-2.5 py-1.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditTarget(client);
+                      }}
+                    >
+                      수정
+                    </Button>
+                  </td>
+                </tr>
+              ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 의뢰인이 없습니다.
                   </td>
                 </tr>
@@ -302,7 +244,7 @@ export default function ClientsPage() {
             </tbody>
           </table>
         </div>
-        <Pagination page={page} total={rows.length} onChange={setPage} pageSize={10} />
+        <Pagination page={page} total={rows.length} onChange={setPage} pageSize={CLIENTS_PAGE_SIZE} />
       </Card>
 
       {selected && (
@@ -310,7 +252,7 @@ export default function ClientsPage() {
           client={selected.client}
           clientCases={selected.cases}
           receivable={selected.receivable}
-          onEdit={() => startEdit(selected.client)}
+          onEdit={() => setEditTarget(selected.client)}
           onInstallments={() => setInstallOpen(true)}
           onEform={() => setEformOpen(true)}
           onDelete={() => setDelTarget(selected.client)}
@@ -334,6 +276,21 @@ export default function ClientsPage() {
           client={selected.client}
           clientCases={selected.cases}
           onClose={() => setEformOpen(false)}
+        />
+      )}
+
+      {editTarget && (
+        <CustomerEditModal
+          key={editTarget.id}
+          open={!!editTarget}
+          client={editTarget}
+          primaryCase={cases.find((c) => c.clientId === editTarget.id)}
+          onClose={() => setEditTarget(null)}
+          onSave={(clientPatch, consultation, contractMemo, primaryCaseId) => {
+            updateClient(editTarget.id, { ...clientPatch, consultation });
+            if (primaryCaseId) updateCase(primaryCaseId, { memo: contractMemo });
+            setEditTarget(null);
+          }}
         />
       )}
 
@@ -379,7 +336,7 @@ function CustomerDetail({
         <div>
           <div className="text-lg font-bold">{client.name} 고객 정보</div>
           <div className="mt-1 text-sm text-slate-500">
-            {client.phone} · 담당 {client.assignedStaff ?? "-"}
+            {client.phone} · 담당 {client.assignedStaff ?? "-"} {client.applicationType && `· ${client.applicationType}`}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -429,8 +386,8 @@ function CustomerDetail({
                 href={`/cases/${c.id}`}
                 className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs hover:bg-slate-50"
               >
-                <CaseTypeBadge caseType={c.caseType} />
-                <span className="font-semibold text-slate-700">{c.caseNumber}</span>
+                <span className="font-semibold text-slate-700">{c.caseType}</span>
+                <span className="text-slate-500">{c.caseNumber}</span>
                 <StatusBadge status={c.status} />
               </Link>
             ))}
@@ -628,6 +585,484 @@ function EformStubModal({
             계약서 전송
           </Button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ---- 고객정보 수정 팝업 — 상담일지(개인회생·개인파산 상담일지) 전 항목을 탭으로 분류 ----
+// 도원 Admin의 '수정 팝업 + 메모/체크리스트' 상호작용 패턴을 이식하되, 내용은 고객이
+// 전달한 상담일지 엑셀 서식(인적사항/소득현황/재산현황/채무현황/변제계획/상담메모)을
+// 그대로 반영해 상담 중 빠뜨리기 쉬운 항목이 없도록 구성했습니다.
+type TabKey = "기본정보" | "인적사항" | "소득현황" | "재산현황" | "채무현황" | "변제계획" | "상담메모" | "서류체크리스트";
+const TABS: TabKey[] = ["기본정보", "인적사항", "소득현황", "재산현황", "채무현황", "변제계획", "상담메모", "서류체크리스트"];
+
+const dateInputClass =
+  "h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-10 sm:text-sm";
+const textareaClass =
+  "min-h-32 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:text-sm";
+
+function CustomerEditModal({
+  open,
+  client,
+  primaryCase,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  client: Client;
+  primaryCase?: CaseRecord;
+  onClose: () => void;
+  onSave: (
+    clientPatch: Pick<Client, "name" | "phone" | "assignedStaff" | "memo" | "applicationType">,
+    consultation: ConsultationInfo,
+    contractMemo: string,
+    primaryCaseId?: string
+  ) => void;
+}) {
+  const [tab, setTab] = useState<TabKey>("기본정보");
+  const [name, setName] = useState(client.name);
+  const [phone, setPhone] = useState(client.phone);
+  const [assignedStaff, setAssignedStaff] = useState<StaffName | undefined>(client.assignedStaff);
+  const [applicationType, setApplicationType] = useState<CaseType | undefined>(client.applicationType);
+  const [memo, setMemo] = useState(client.memo ?? "");
+  const [contractMemo, setContractMemo] = useState(primaryCase?.memo ?? "");
+
+  const [personal, setPersonal] = useState(client.consultation?.personal ?? {});
+  const [income, setIncome] = useState(client.consultation?.income ?? {});
+  const [assets, setAssets] = useState<AssetRow[]>(client.consultation?.assets ?? emptyAssetRows());
+  const [debts, setDebts] = useState<DebtRow[]>(client.consultation?.debts ?? emptyDebtRows());
+  const [plan, setPlan] = useState<RepaymentPlanInput>(client.consultation?.plan ?? emptyPlanInput());
+  const [consultMemo, setConsultMemo] = useState(client.consultation?.memo ?? "");
+
+  useEffect(() => {
+    if (!open) return;
+    setTab("기본정보");
+    setName(client.name);
+    setPhone(client.phone);
+    setAssignedStaff(client.assignedStaff);
+    setApplicationType(client.applicationType);
+    setMemo(client.memo ?? "");
+    setContractMemo(primaryCase?.memo ?? "");
+    setPersonal(client.consultation?.personal ?? {});
+    setIncome(client.consultation?.income ?? {});
+    setAssets(client.consultation?.assets ?? emptyAssetRows());
+    setDebts(client.consultation?.debts ?? emptyDebtRows());
+    setPlan(client.consultation?.plan ?? emptyPlanInput());
+    setConsultMemo(client.consultation?.memo ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, client.id]);
+
+  const result = useMemo(
+    () => computeRepaymentPlan(income.monthlyAvgIncome ?? 0, income.secondaryIncome ?? 0, income.pensionIncome ?? 0, assets, debts, plan),
+    [income, assets, debts, plan]
+  );
+
+  function updateAsset(i: number, patch: Partial<AssetRow>) {
+    setAssets((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  }
+  function updateDebt(i: number, patch: Partial<DebtRow>) {
+    setDebts((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  }
+
+  function save() {
+    if (!name.trim() || !phone.trim()) return;
+    onSave(
+      { name: name.trim(), phone: phone.trim(), assignedStaff, memo: memo.trim() || undefined, applicationType },
+      { personal, income, assets, debts, plan, memo: consultMemo.trim() || undefined },
+      contractMemo.trim(),
+      primaryCase?.id
+    );
+  }
+
+  return (
+    <Modal open={open} title={`${client.name} 고객정보 수정`} onClose={onClose} size="xl">
+      <div className="mb-4 flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+              tab === t ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "기본정보" && (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="이름">
+              <Input value={name} onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)} />
+            </Label>
+            <Label text="연락처">
+              <Input value={phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)} />
+            </Label>
+            <Label text="담당자">
+              <Select value={assignedStaff ?? ""} onChange={(e: ChangeEvent<HTMLSelectElement>) => setAssignedStaff(e.target.value as StaffName)} className="w-full">
+                <option value="">미지정</option>
+                {STAFF_LIST.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            </Label>
+            <Label text="신청분류">
+              <Select
+                value={applicationType ?? ""}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setApplicationType((e.target.value || undefined) as CaseType | undefined)}
+                className="w-full"
+              >
+                <option value="">미지정</option>
+                <option value="개인회생">개인회생</option>
+                <option value="개인파산">개인파산</option>
+              </Select>
+            </Label>
+          </div>
+          <Label text="고객 메모">
+            <Input value={memo} onChange={(e: ChangeEvent<HTMLInputElement>) => setMemo(e.target.value)} />
+          </Label>
+          <Label text="계약 관련 메모 (계약관리 사건 메모와 연동)">
+            <textarea
+              className={textareaClass}
+              placeholder={primaryCase ? "계약 진행 관련 특이사항을 기록하세요." : "연결된 계약이 없어 저장 시 반영되지 않습니다."}
+              value={contractMemo}
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setContractMemo(e.target.value)}
+              disabled={!primaryCase}
+            />
+          </Label>
+        </div>
+      )}
+
+      {tab === "인적사항" && (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="생년월일">
+              <input
+                type="date"
+                className={dateInputClass}
+                value={personal.birthDate ?? ""}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, birthDate: e.target.value }))}
+              />
+            </Label>
+            <Label text="성별">
+              <Select value={personal.gender ?? ""} onChange={(e: ChangeEvent<HTMLSelectElement>) => setPersonal((p) => ({ ...p, gender: (e.target.value || undefined) as Gender | undefined }))} className="w-full">
+                <option value="">선택안함</option>
+                <option value="남">남</option>
+                <option value="여">여</option>
+              </Select>
+            </Label>
+            <Label text="거주지(초본주소)">
+              <Input value={personal.address ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, address: e.target.value }))} />
+            </Label>
+            <Label text="관할법원">
+              <Input value={personal.jurisdictionCourt ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, jurisdictionCourt: e.target.value }))} />
+            </Label>
+            <Label text="직업">
+              <Select
+                value={personal.occupationType ?? ""}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setPersonal((p) => ({ ...p, occupationType: (e.target.value || undefined) as OccupationType | undefined }))}
+                className="w-full"
+              >
+                <option value="">선택안함</option>
+                {OCCUPATION_TYPES.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </Select>
+            </Label>
+            <Label text="배우자 유무">
+              <Select
+                value={personal.spouse === undefined ? "" : personal.spouse ? "예" : "아니오"}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setPersonal((p) => ({ ...p, spouse: e.target.value === "예" ? true : e.target.value === "아니오" ? false : undefined }))}
+                className="w-full"
+              >
+                <option value="">선택안함</option>
+                <option value="예">예</option>
+                <option value="아니오">아니오</option>
+              </Select>
+            </Label>
+            <Label text="자녀 인원">
+              <NumberInput value={personal.childrenCount ?? 0} onChange={(v) => setPersonal((p) => ({ ...p, childrenCount: v }))} />
+            </Label>
+            <Label text="자녀 나이">
+              <Input value={personal.childrenAges ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, childrenAges: e.target.value }))} placeholder="예: 8세, 5세" />
+            </Label>
+            <Label text="기타 부양가족">
+              <Input value={personal.otherDependents ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, otherDependents: e.target.value }))} />
+            </Label>
+            <Label text="중대질환·장기요양 여부">
+              <Select
+                value={personal.seriousIllness === undefined ? "" : personal.seriousIllness ? "예" : "아니오"}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setPersonal((p) => ({ ...p, seriousIllness: e.target.value === "예" ? true : e.target.value === "아니오" ? false : undefined }))}
+                className="w-full"
+              >
+                <option value="">선택안함</option>
+                <option value="예">예</option>
+                <option value="아니오">아니오</option>
+              </Select>
+            </Label>
+          </div>
+          <Label text="부양가족 특이사항">
+            <Input value={personal.dependentNote ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, dependentNote: e.target.value }))} />
+          </Label>
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            ① 인적사항 체크포인트 — 거주지·관할법원 일치 여부, 부양가족 인원(생계비 산정 직결), 중대질환·장기요양 여부를 빠짐없이 확인하세요.
+          </div>
+        </div>
+      )}
+
+      {tab === "소득현황" && (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="소득유형">
+              <Input value={income.incomeType ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setIncome((v) => ({ ...v, incomeType: e.target.value }))} placeholder="예: 근로소득, 사업소득" />
+            </Label>
+            <Label text="회사명·사업자명">
+              <Input value={income.workplaceName ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setIncome((v) => ({ ...v, workplaceName: e.target.value }))} />
+            </Label>
+            <Label text="재직기간·사업장정보">
+              <Input value={income.tenureInfo ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setIncome((v) => ({ ...v, tenureInfo: e.target.value }))} />
+            </Label>
+            <Label text="월평균소득(최근 3개월)">
+              <NumberInput value={income.monthlyAvgIncome ?? 0} onChange={(v) => setIncome((x) => ({ ...x, monthlyAvgIncome: v }))} />
+            </Label>
+            <Label text="2중소득(부업)">
+              <NumberInput value={income.secondaryIncome ?? 0} onChange={(v) => setIncome((x) => ({ ...x, secondaryIncome: v }))} />
+            </Label>
+            <Label text="연금소득(국민/노령)">
+              <NumberInput value={income.pensionIncome ?? 0} onChange={(v) => setIncome((x) => ({ ...x, pensionIncome: v }))} />
+            </Label>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">연소득(자동)</div>
+            <div className="mt-1 text-lg font-bold text-slate-900">{fmtWon(result.totalIncome)}</div>
+          </div>
+          <Label text="비고">
+            <Input value={income.note ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setIncome((v) => ({ ...v, note: e.target.value }))} />
+          </Label>
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            ② 소득현황 체크포인트 — 최근 3개월 평균으로 산정, 부업·2중소득 누락 여부, 사업소득자는 매출/매입 장부 요청 여부를 확인하세요.
+          </div>
+        </div>
+      )}
+
+      {tab === "재산현황" && (
+        <div className="space-y-4">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead className="bg-slate-50 text-left text-slate-500">
+                <tr>
+                  {["구분", "평가액", "담보·대출", "담보·대출 금액", "비고"].map((h) => (
+                    <th key={h} className="px-3 py-2 font-medium">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {assets.map((row, i) => (
+                  <tr key={row.category} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-semibold text-slate-700">{row.category}</td>
+                    <td className="px-3 py-2">
+                      <NumberInput className="w-32" value={row.value} onChange={(v) => updateAsset(i, { value: v })} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Select value={row.hasSecurity ? "예" : "아니오"} onChange={(e: ChangeEvent<HTMLSelectElement>) => updateAsset(i, { hasSecurity: e.target.value === "예" })} className="w-24">
+                        <option value="아니오">아니오</option>
+                        <option value="예">예</option>
+                      </Select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <NumberInput className="w-32" value={row.securityAmount} onChange={(v) => updateAsset(i, { securityAmount: v })} disabled={!row.hasSecurity} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input className="w-40" value={row.note ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateAsset(i, { note: e.target.value })} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">자산합계(자동)</div>
+            <div className="mt-1 text-lg font-bold text-slate-900">{fmtWon(result.assetTotal)}</div>
+          </div>
+          <Label text="소액임차인 최우선변제 참고 메모 (지역별 기준액은 매년 고시되므로 자동조회 대신 담당자가 직접 확인해 기록)">
+            <Input
+              value={plan.smallLeaseNote ?? ""}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setPlan((p) => ({ ...p, smallLeaseNote: e.target.value }))}
+              placeholder="예: 서울 지역 기준 최우선변제 대상 여부 확인 필요"
+            />
+          </Label>
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            ③ 재산현황 체크포인트 — 임차보증금 반환채권, 보험 해약환급금, 퇴직금 예상액(1/2 산정 여부), 최근 처분한 재산 유무를 확인하세요.
+          </div>
+        </div>
+      )}
+
+      {tab === "채무현황" && (
+        <div className="space-y-4">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead className="bg-slate-50 text-left text-slate-500">
+                <tr>
+                  {["구분", "채권자", "내용", "금액", "비고"].map((h) => (
+                    <th key={h} className="px-3 py-2 font-medium">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {debts.map((row, i) => (
+                  <tr key={row.category} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-semibold text-slate-700">{row.category}</td>
+                    <td className="px-3 py-2">
+                      <Input className="w-32" value={row.creditor ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateDebt(i, { creditor: e.target.value })} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input className="w-32" value={row.detail ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateDebt(i, { detail: e.target.value })} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <NumberInput className="w-32" value={row.amount} onChange={(v) => updateDebt(i, { amount: v })} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input className="w-40" value={row.note ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateDebt(i, { note: e.target.value })} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">채무합계(자동)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.debtTotal)}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">담보채무합계(자동)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.securedDebtTotal)}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">신용채무(탕감대상)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.unsecuredDebtTotal)}</div>
+            </div>
+          </div>
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            ④ 채무현황 체크포인트 — 세금·건강보험 체납액(우선변제 50% 한도 별도 확인 필요), 담보채무의 실제 담보가치, 신용채무 총액과 채권자 수를 확인하세요.
+          </div>
+        </div>
+      )}
+
+      {tab === "변제계획" && (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="가구원수">
+              <NumberInput
+                min={1}
+                value={plan.householdSize}
+                onChange={(v) =>
+                  setPlan((p) => ({
+                    ...p,
+                    householdSize: v || 1,
+                    minLivingCost: v === 1 ? MIN_LIVING_COST_1P : p.minLivingCost,
+                  }))
+                }
+              />
+            </Label>
+            <Label text="최저생계비 (수동입력 — 1인가구만 참고값 자동 반영)">
+              <NumberInput value={plan.minLivingCost} onChange={(v) => setPlan((p) => ({ ...p, minLivingCost: v }))} />
+            </Label>
+            <Label text="기타공제금">
+              <NumberInput value={plan.otherDeduction} onChange={(v) => setPlan((p) => ({ ...p, otherDeduction: v }))} />
+            </Label>
+            <Label text="변제개월수">
+              <NumberInput min={1} value={plan.repaymentMonths} onChange={(v) => setPlan((p) => ({ ...p, repaymentMonths: v || 1 }))} />
+            </Label>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">월 가용소득(자동)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.monthlyDisposableIncome)}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">총변제예정액(자동)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.totalPlannedRepayment)}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">청산가치(자동=자산-담보채무)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.liquidationValue)}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">청산가치 보장 여부</div>
+              <div className={`mt-1 font-bold ${result.liquidationCovered ? "text-emerald-600" : "text-red-600"}`}>
+                {result.liquidationCovered ? "보장됨" : "미달 — 월 변제금 상향 반영"}
+              </div>
+            </div>
+            <div className="rounded-xl bg-blue-50 p-4">
+              <div className="text-xs font-semibold text-blue-600">최종 월 변제금(자동)</div>
+              <div className="mt-1 text-lg font-bold text-blue-700">{fmtWon(result.finalMonthlyRepayment)}</div>
+            </div>
+            <div className="rounded-xl bg-blue-50 p-4">
+              <div className="text-xs font-semibold text-blue-600">최종 총변제예정액(자동)</div>
+              <div className="mt-1 text-lg font-bold text-blue-700">{fmtWon(result.finalTotalRepayment)}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-500">기존 신용채무총액(연동)</div>
+              <div className="mt-1 font-bold text-slate-900">{fmtWon(result.unsecuredDebtTotal)}</div>
+            </div>
+            <div className="rounded-xl bg-emerald-50 p-4">
+              <div className="text-xs font-semibold text-emerald-600">탕감액(자동) / 탕감률</div>
+              <div className="mt-1 font-bold text-emerald-700">
+                {fmtWon(result.writeOffAmount)} ({result.writeOffRate.toFixed(1)}%)
+              </div>
+            </div>
+          </div>
+
+          <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${result.feasible ? "border-emerald-100 bg-emerald-50 text-emerald-700" : "border-red-100 bg-red-50 text-red-700"}`}>
+            진행가능여부(자동판정): {result.feasible ? "가능" : "재검토 필요"}
+            <div className="mt-1 text-xs font-normal">{result.feasibilityNote}</div>
+          </div>
+          <div className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] text-slate-500">
+            ※ 위 계산은 상담 단계의 추정치이며, 최종 산정은 담당변호사 확인이 필요합니다. 최저생계비·소액임차인 기준액은 매년/지역별로 변경되므로 최신 고시 기준을 직접 확인해 입력하세요.
+          </div>
+        </div>
+      )}
+
+      {tab === "상담메모" && (
+        <div className="space-y-4">
+          <Label text="상담메모 / 상담내역">
+            <textarea
+              className={`${textareaClass} min-h-64`}
+              value={consultMemo}
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setConsultMemo(e.target.value)}
+              placeholder="상담 진행 내용, 고객 요청사항, 후속 조치 등을 자유롭게 기록하세요."
+            />
+          </Label>
+        </div>
+      )}
+
+      {tab === "서류체크리스트" &&
+        (primaryCase ? (
+          <DocumentChecklist caseId={primaryCase.id} docsSentAt={primaryCase.docsSentAt} />
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
+            연결된 계약이 없어 서류 체크리스트를 사용할 수 없습니다. 계약관리에서 사건을 먼저 등록해주세요.
+          </div>
+        ))}
+
+      <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+        <Button variant="secondary" onClick={onClose}>
+          취소
+        </Button>
+        <Button onClick={save}>저장</Button>
       </div>
     </Modal>
   );

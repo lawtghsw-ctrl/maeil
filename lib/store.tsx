@@ -43,6 +43,25 @@ export interface InstallmentDraft {
   paidDate?: string;
 }
 
+// ---- 기간별 변동내역(도원 Admin '변동내역'과 동일한 취지) ----
+// 실제 DB가 없는 데모라 Supabase 트리거 대신, 각 store 메서드 호출부에서 직접
+// 변경 요약 문자열을 남기는 방식으로 단순화했습니다.
+export type ChangeCategory = "DB관리" | "고객관리" | "계약관리" | "입금·분납" | "게시판";
+export type ChangeAction = "등록" | "수정" | "삭제";
+
+export interface ChangeLogEntry {
+  id: string;
+  category: ChangeCategory;
+  action: ChangeAction;
+  targetName: string; // 대상 이름(고객명·게시글 제목 등)
+  detail: string; // 변경 내용 요약
+  staff: string;
+  at: string; // ISO datetime
+}
+
+// 데모 버전 로그인 주체 — 실제 인증 연동 전까지 '직원1' 고정
+export const CURRENT_STAFF = "직원1";
+
 interface AppStoreValue {
   clients: Client[];
   cases: CaseRecord[];
@@ -51,11 +70,13 @@ interface AppStoreValue {
   leads: DbLead[];
   posts: BoardPost[];
   caseDocuments: DocumentState;
+  changeLog: ChangeLogEntry[];
   updateClient: (id: string, patch: Partial<Client>) => void;
   deleteClient: (id: string) => void;
   updateLead: (id: string, patch: Partial<DbLead>) => void;
   convertLeadToClient: (leadId: string) => string | undefined; // 생성된(또는 기존) clientId 반환
   toggleDocument: (caseId: string, itemId: string) => void;
+  updateCase: (id: string, patch: Partial<CaseRecord>) => void;
   setCaseInstallments: (caseId: string, rows: InstallmentDraft[]) => void;
   addPost: (draft: Omit<BoardPost, "id">) => void;
   updatePost: (id: string, patch: Partial<BoardPost>) => void;
@@ -80,30 +101,67 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [leads, setLeads] = useState<DbLead[]>(seedLeads);
   const [posts, setPosts] = useState<BoardPost[]>(seedPosts);
   const [caseDocuments, setCaseDocuments] = useState<DocumentState>({});
+  const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
   const clientSeqRef = useRef(seedClients.length);
   const postSeqRef = useRef(seedPosts.length);
   const insSeqRef = useRef(0);
+  const changeSeqRef = useRef(0);
 
-  const updateClient = useCallback((id: string, patch: Partial<Client>) => {
-    setClients((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-  }, []);
+  const logChange = useCallback(
+    (category: ChangeCategory, action: ChangeAction, targetName: string, detail: string) => {
+      changeSeqRef.current += 1;
+      const entry: ChangeLogEntry = {
+        id: `CHG-${String(changeSeqRef.current).padStart(5, "0")}`,
+        category,
+        action,
+        targetName,
+        detail,
+        staff: CURRENT_STAFF,
+        at: new Date().toISOString(),
+      };
+      setChangeLog((prev) => [entry, ...prev]);
+    },
+    []
+  );
+
+  const updateClient = useCallback(
+    (id: string, patch: Partial<Client>) => {
+      setClients((prev) => {
+        const before = prev.find((c) => c.id === id);
+        if (before) logChange("고객관리", "수정", before.name, "고객정보 수정");
+        return prev.map((c) => (c.id === id ? { ...c, ...patch } : c));
+      });
+    },
+    [logChange]
+  );
 
   const deleteClient = useCallback(
     (id: string) => {
       const clientCaseIds = cases.filter((c) => c.clientId === id).map((c) => c.id);
-      setClients((prev) => prev.filter((c) => c.id !== id));
+      setClients((prev) => {
+        const target = prev.find((c) => c.id === id);
+        if (target) logChange("고객관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
+        return prev.filter((c) => c.id !== id);
+      });
       setCases((prev) => prev.filter((c) => c.clientId !== id));
       setInstallments((prev) => prev.filter((i) => !clientCaseIds.includes(i.caseId)));
       setScheduleItems((prev) =>
         prev.filter((s) => s.clientId !== id && !(s.caseId && clientCaseIds.includes(s.caseId)))
       );
     },
-    [cases]
+    [cases, logChange]
   );
 
-  const updateLead = useCallback((id: string, patch: Partial<DbLead>) => {
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-  }, []);
+  const updateLead = useCallback(
+    (id: string, patch: Partial<DbLead>) => {
+      setLeads((prev) => {
+        const before = prev.find((l) => l.id === id);
+        if (before) logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
+        return prev.map((l) => (l.id === id ? { ...l, ...patch } : l));
+      });
+    },
+    [logChange]
+  );
 
   // leads를 직접 참조해야 해서(이미 전환됐는지 확인) 의존성 배열에 leads를 포함함.
   const convertLeadToClient = useCallback(
@@ -125,6 +183,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           assignedStaff: lead.assignedStaff,
           memo: lead.memo,
           fromLeadId: lead.id,
+          applicationType: lead.applicationType,
         },
       ]);
 
@@ -134,9 +193,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         )
       );
 
+      logChange("DB관리", "수정", lead.name, "고객관리로 전환(전환 완료)");
+
       return newClientId;
     },
-    [leads]
+    [leads, logChange]
   );
 
   const toggleDocument = useCallback((caseId: string, itemId: string) => {
@@ -149,39 +210,73 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const updateCase = useCallback(
+    (id: string, patch: Partial<CaseRecord>) => {
+      setCases((prev) => {
+        const before = prev.find((c) => c.id === id);
+        if (before) logChange("계약관리", "수정", before.caseNumber, "계약 관련 메모/정보 수정");
+        return prev.map((c) => (c.id === id ? { ...c, ...patch } : c));
+      });
+    },
+    [logChange]
+  );
+
   // 고객 상세 패널의 '분납관리'에서 사건 하나의 입금/분납 일정 전체를 새 배열로 교체.
   // 계약금(1회차) 표시 규칙(seq===1)을 유지하기 위해 배열 순서를 그대로 seq로 사용하고,
   // 저장 시 사건의 기납부액(paidAmount)도 완료 건 합계로 재계산해 미수금이 자동 반영되게 함.
-  const setCaseInstallments = useCallback((caseId: string, rows: InstallmentDraft[]) => {
-    const updated: Installment[] = rows.map((r, idx) => {
-      insSeqRef.current += 1;
-      return {
-        id: r.id ?? `${caseId}-INS-NEW-${insSeqRef.current}`,
-        caseId,
-        seq: idx + 1,
-        dueDate: r.dueDate,
-        amount: r.amount,
-        status: r.status,
-        paidDate: r.paidDate || undefined,
-      };
-    });
-    setInstallments((prev) => [...prev.filter((i) => i.caseId !== caseId), ...updated]);
-    const paidAmount = updated.filter((i) => i.status === "완료").reduce((a, i) => a + i.amount, 0);
-    setCases((prev) => prev.map((c) => (c.id === caseId ? { ...c, paidAmount } : c)));
-  }, []);
+  const setCaseInstallments = useCallback(
+    (caseId: string, rows: InstallmentDraft[]) => {
+      const updated: Installment[] = rows.map((r, idx) => {
+        insSeqRef.current += 1;
+        return {
+          id: r.id ?? `${caseId}-INS-NEW-${insSeqRef.current}`,
+          caseId,
+          seq: idx + 1,
+          dueDate: r.dueDate,
+          amount: r.amount,
+          status: r.status,
+          paidDate: r.paidDate || undefined,
+        };
+      });
+      setInstallments((prev) => [...prev.filter((i) => i.caseId !== caseId), ...updated]);
+      const paidAmount = updated.filter((i) => i.status === "완료").reduce((a, i) => a + i.amount, 0);
+      setCases((prev) => prev.map((c) => (c.id === caseId ? { ...c, paidAmount } : c)));
+      const c = cases.find((x) => x.id === caseId);
+      if (c) logChange("입금·분납", "수정", c.caseNumber, "입금/분납 일정 저장");
+    },
+    [cases, logChange]
+  );
 
-  const addPost = useCallback((draft: Omit<BoardPost, "id">) => {
-    postSeqRef.current += 1;
-    setPosts((prev) => [...prev, { ...draft, id: `POST-${String(postSeqRef.current).padStart(4, "0")}` }]);
-  }, []);
+  const addPost = useCallback(
+    (draft: Omit<BoardPost, "id">) => {
+      postSeqRef.current += 1;
+      setPosts((prev) => [...prev, { ...draft, id: `POST-${String(postSeqRef.current).padStart(4, "0")}` }]);
+      logChange("게시판", "등록", draft.title, "게시글 등록");
+    },
+    [logChange]
+  );
 
-  const updatePost = useCallback((id: string, patch: Partial<BoardPost>) => {
-    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-  }, []);
+  const updatePost = useCallback(
+    (id: string, patch: Partial<BoardPost>) => {
+      setPosts((prev) => {
+        const before = prev.find((p) => p.id === id);
+        if (before) logChange("게시판", "수정", before.title, "게시글 수정");
+        return prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
+      });
+    },
+    [logChange]
+  );
 
-  const deletePost = useCallback((id: string) => {
-    setPosts((prev) => prev.filter((p) => p.id !== id));
-  }, []);
+  const deletePost = useCallback(
+    (id: string) => {
+      setPosts((prev) => {
+        const before = prev.find((p) => p.id === id);
+        if (before) logChange("게시판", "삭제", before.title, "게시글 삭제");
+        return prev.filter((p) => p.id !== id);
+      });
+    },
+    [logChange]
+  );
 
   const value = useMemo<AppStoreValue>(
     () => ({
@@ -192,11 +287,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       leads,
       posts,
       caseDocuments,
+      changeLog,
       updateClient,
       deleteClient,
       updateLead,
       convertLeadToClient,
       toggleDocument,
+      updateCase,
       setCaseInstallments,
       addPost,
       updatePost,
@@ -210,11 +307,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       leads,
       posts,
       caseDocuments,
+      changeLog,
       updateClient,
       deleteClient,
       updateLead,
       convertLeadToClient,
       toggleDocument,
+      updateCase,
       setCaseInstallments,
       addPost,
       updatePost,
@@ -226,7 +325,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 }
 
 export function useStore(): AppStoreValue {
-  const ctx = useContext(AppStoreContext);
+  const ctx = useContext<AppStoreValue | null>(AppStoreContext);
   if (!ctx) {
     throw new Error("useStore는 AppStoreProvider 내부에서만 사용할 수 있습니다.");
   }

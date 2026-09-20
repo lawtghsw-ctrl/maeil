@@ -15,6 +15,7 @@ import {
   type CaseStatus,
   type CaseType,
   type Client,
+  type ConsultationInfo,
   type DayAggregate,
   type DbLead,
   type DbLeadStatus,
@@ -23,6 +24,7 @@ import {
   type PaymentMethod,
   type ScheduleItem,
 } from "./types";
+import { emptyAssetRows, emptyDebtRows, emptyPlanInput, MIN_LIVING_COST_1P } from "./consultation";
 
 function mulberry32(seed: number) {
   let a = seed;
@@ -219,6 +221,50 @@ export const cases: CaseRecord[] = Array.from({ length: CASE_COUNT }, (_, i) => 
   };
 });
 
+// 신청분류(개인회생/개인파산) — 연결된 계약이 있으면 그 사건유형을 그대로 따르고,
+// 아직 계약이 없는 고객(DB관리에서 막 전환된 경우 등)은 임의로 배정합니다.
+for (const c of clients) {
+  const relatedCase = cases.find((cc) => cc.clientId === c.id);
+  c.applicationType = relatedCase ? relatedCase.caseType : chance(0.62) ? "개인회생" : "개인파산";
+}
+
+// 상담일지 데모 샘플 — 고객이 전달한 상담일지 서식이 실제로 어떻게 채워지는지 보여주기
+// 위한 예시 1건. 나머지 고객은 상담일지가 비어있는 상태(고객관리 수정 팝업에서 처음
+// 작성하는 흐름)를 그대로 보여줍니다.
+const SAMPLE_CONSULTATION: ConsultationInfo = {
+  personal: {
+    birthDate: "1985-04-12",
+    gender: "남",
+    address: "서울특별시 관악구 신림로 123",
+    jurisdictionCourt: "서울회생법원",
+    occupationType: "직장인",
+    spouse: true,
+    childrenCount: 1,
+    childrenAges: "7세",
+    otherDependents: "",
+    seriousIllness: false,
+    dependentNote: "배우자 소득 없음",
+  },
+  income: {
+    incomeType: "근로소득",
+    workplaceName: "㈜한빛물류",
+    tenureInfo: "재직 4년차",
+    monthlyAvgIncome: 2800000,
+    secondaryIncome: 0,
+    pensionIncome: 0,
+    note: "급여명세서 3개월분 수령 예정",
+  },
+  assets: emptyAssetRows().map((a) =>
+    a.category === "예금/적금" ? { ...a, value: 1200000 } : a.category === "자동차" ? { ...a, value: 3000000 } : a
+  ),
+  debts: emptyDebtRows().map((d) =>
+    d.category === "신용채무(카드/캐피탈/저축은행 등)" ? { ...d, creditor: "OO카드 외 3곳", amount: 42000000 } : d
+  ),
+  plan: { ...emptyPlanInput(), householdSize: 1, minLivingCost: MIN_LIVING_COST_1P, otherDeduction: 0, repaymentMonths: 36 },
+  memo: "최초 상담 — 개인회생 진행 희망, 서류 준비 안내 완료.",
+};
+if (clients[0]) clients[0].consultation = SAMPLE_CONSULTATION;
+
 // 계약금액을 계약금(30~50%) + 분납 2~5회로 나눠 입금 스케줄 생성
 export const installments: Installment[] = cases.flatMap((c) => {
   const upfrontRatio = 0.3 + rand() * 0.2;
@@ -359,7 +405,7 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
     id: `LEAD-${String(i + 1).padStart(4, "0")}`,
     name: randomName(),
     phone: randomPhone(),
-    caseTypeGuess: chance(0.8) ? randomCaseType() : undefined,
+    applicationType: chance(0.8) ? randomCaseType() : undefined,
     receivedAt: isoOf(daysAgo(receivedDaysAgo)),
     status,
     assignedStaff: pick(STAFF),

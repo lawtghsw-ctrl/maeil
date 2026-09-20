@@ -148,7 +148,6 @@ export default function DashboardPage() {
 
       {overdue.length > 0 && (
         <Card className="mb-4 flex flex-wrap items-center gap-3 border-red-100 bg-red-50/60 px-4 py-3">
-          <span className="rounded-md bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">실시간</span>
           <span className="text-sm text-slate-900">
             연체·결제실패 <b>{overdue.length}건</b> (총 {fmtEokMan(overdueTotal)}) — 추심 우선순위 확인이 필요해요.
           </span>

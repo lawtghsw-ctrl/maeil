@@ -78,6 +78,8 @@ export interface Client {
   assignedStaff?: StaffName;
   memo?: string;
   fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
+  applicationType?: CaseType; // 신청분류(개인회생/개인파산) — DB관리에서 지정, 고객관리 상단 탭 분류 기준
+  consultation?: ConsultationInfo; // 상담일지(고객정보 수정 팝업에서 작성)
 }
 
 // 결제수단 3종 — 회파산 업무매뉴얼 6장(비용구조 안내) 기준
@@ -116,7 +118,7 @@ export const DB_LEAD_STATUS_LABEL: Record<DbLeadStatus, string> = {
   고려중: "고려중",
   서류검토중: "서류검토중",
   계약진행중: "계약진행중",
-  수임전환: "수임전환",
+  수임전환: "전환 완료",
   부재중: "부재중",
   거절: "거절",
   부적합: "부적합",
@@ -127,7 +129,7 @@ export interface DbLead {
   id: string;
   name: string;
   phone: string;
-  caseTypeGuess?: CaseType; // 상담 단계에서 추정한 사건유형
+  applicationType?: CaseType; // 신청분류(개인회생/개인파산) — DB관리 리스트에서 드롭다운으로 지정, 고객 전환 시 그대로 승계
   receivedAt: string; // ISO datetime — DB 접수 시각
   status: DbLeadStatus;
   assignedStaff: StaffName;
@@ -210,4 +212,100 @@ export interface BoardPost {
   isNotice: boolean;
   noticeOrder: number;
   attachments: BoardAttachment[];
+}
+
+// ---- 상담일지(개인회생·개인파산 상담일지) ----
+// 고객이 제공한 '개인회생·개인파산 상담일지' 엑셀 서식을 그대로 옮긴 구조.
+// 화면(고객관리 수정 팝업)에서 섹션별 탭으로 나눠 입력하며, 놓치기 쉬운 상담 항목을
+// 누락 없이 기록하는 것이 목적입니다.
+// ※ 법정 최저생계비 · 소액임차인 최우선변제 기준액은 매년/지역별로 바뀌고 법적으로
+//    민감한 수치이므로 이 데모에서는 임의의 표를 만들어 자동판정하지 않고, 수동 입력
+//    (최저생계비는 1인가구 기준값만 참고로 채워둠) 또는 참고 메모로만 다룹니다.
+
+export type Gender = "남" | "여";
+export type OccupationType = "사업자" | "직장인" | "프리랜서" | "무직" | "기타";
+
+export interface ConsultationPersonal {
+  birthDate?: string; // 생년월일
+  gender?: Gender;
+  address?: string; // 거주지(초본주소)
+  jurisdictionCourt?: string; // 관할법원
+  occupationType?: OccupationType;
+  spouse?: boolean; // 배우자 유무
+  childrenCount?: number; // 자녀 인원
+  childrenAges?: string; // 자녀 나이
+  otherDependents?: string; // 기타 부양가족
+  seriousIllness?: boolean; // 중대질환·장기요양 여부
+  dependentNote?: string; // 부양가족 특이사항
+}
+
+export interface ConsultationIncome {
+  incomeType?: string; // 소득유형(근로소득/사업소득 등)
+  workplaceName?: string; // 회사명·사업자명
+  tenureInfo?: string; // 재직기간·사업장정보
+  monthlyAvgIncome?: number; // 월평균소득(최근 3개월)
+  secondaryIncome?: number; // 2중소득(부업)
+  pensionIncome?: number; // 연금소득(국민/노령)
+  note?: string;
+}
+
+// 재산현황(청산가치 산정용) — 상담일지 서식의 고정 행 구성을 그대로 사용
+export const ASSET_CATEGORIES = [
+  "주택/토지",
+  "임차보증금(반환채권)",
+  "예금/적금",
+  "보험(해약환급금)",
+  "자동차",
+  "퇴직금",
+  "주식/펀드",
+  "기타(재고자산 등)",
+] as const;
+export type AssetCategory = (typeof ASSET_CATEGORIES)[number];
+
+export interface AssetRow {
+  category: AssetCategory;
+  value: number; // 평가액
+  hasSecurity: boolean; // 담보·대출 여부
+  securityAmount: number; // 담보·대출 금액
+  note?: string;
+}
+
+// 채무현황 — 상담일지 서식의 고정 행 구성을 그대로 사용
+export const DEBT_CATEGORIES = [
+  "세금체납",
+  "건강보험체납",
+  "담보채무(부동산저당)",
+  "담보채무(자동차)",
+  "신용채무(카드/캐피탈/저축은행 등)",
+] as const;
+export type DebtCategory = (typeof DEBT_CATEGORIES)[number];
+
+// 담보채무로 집계할 카테고리 — 청산가치(자산-담보채무) 계산에 사용
+export const SECURED_DEBT_CATEGORIES: DebtCategory[] = ["담보채무(부동산저당)", "담보채무(자동차)"];
+// 탕감 대상(변제계획 계산 기준) 신용채무 카테고리
+export const UNSECURED_DEBT_CATEGORY: DebtCategory = "신용채무(카드/캐피탈/저축은행 등)";
+
+export interface DebtRow {
+  category: DebtCategory;
+  creditor?: string; // 채권자
+  detail?: string; // 내용
+  amount: number;
+  note?: string;
+}
+
+export interface RepaymentPlanInput {
+  householdSize: number; // 가구원수
+  minLivingCost: number; // 최저생계비 — 수동 입력(1인가구 기준값만 참고 제공)
+  otherDeduction: number; // 기타공제금
+  repaymentMonths: number; // 변제개월수
+  smallLeaseNote?: string; // 소액임차인 최우선변제 참고 메모(자동조회 대신 수기 확인 기록)
+}
+
+export interface ConsultationInfo {
+  personal?: ConsultationPersonal;
+  income?: ConsultationIncome;
+  assets?: AssetRow[];
+  debts?: DebtRow[];
+  plan?: RepaymentPlanInput;
+  memo?: string; // 상담메모/상담내역
 }
