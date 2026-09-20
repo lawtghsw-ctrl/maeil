@@ -38,7 +38,7 @@ export default function CasesPage() {
 
   return (
     <>
-      <PageHeader title="사건관리" description={`회생/파산 사건 ${cases.length}건 중 ${rows.length}건 표시`} />
+      <PageHeader title="계약관리" description={`회생/파산 사건 ${cases.length}건 중 ${rows.length}건 표시`} />
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox

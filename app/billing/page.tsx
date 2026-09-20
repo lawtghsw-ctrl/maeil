@@ -35,9 +35,9 @@ export default function BillingPage() {
   const rows = useMemo(() => {
     return joined
       .filter(({ ins }) => status === "전체" || ins.status === status)
-      .filter(({ c, client }) => {
+      .filter(({ client }) => {
         if (!query.trim()) return true;
-        return client?.name.includes(query) || c?.caseNumber.includes(query) || false;
+        return client?.name.includes(query) ?? false;
       })
       .sort((a, b) => (a.ins.dueDate < b.ins.dueDate ? 1 : -1));
   }, [joined, status, query]);
@@ -76,7 +76,7 @@ export default function BillingPage() {
             setQuery("");
             setPage(1);
           }}
-          placeholder="의뢰인명 · 사건번호 검색"
+          placeholder="의뢰인명 검색"
         />
         <div className="flex flex-wrap gap-2">
           {STATUS_TABS.map((s) => (
@@ -103,9 +103,7 @@ export default function BillingPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-base font-bold text-slate-900">{client?.name ?? "-"}</div>
-                  <div className="text-xs text-slate-500">
-                    {c?.caseNumber ?? "-"} · {ins.seq === 1 ? "계약금" : `${ins.seq - 1}회차`}
-                  </div>
+                  <div className="text-xs text-slate-500">{ins.seq === 1 ? "계약금" : `${ins.seq - 1}회차`}</div>
                 </div>
                 <InstallmentStatusBadge status={ins.status} />
               </div>
@@ -127,7 +125,7 @@ export default function BillingPage() {
           <table className="admin-responsive-table w-full min-w-[680px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["의뢰인", "사건번호", "회차", "납부기한", "금액", "상태", "입금일", ""].map((h) => (
+                {["의뢰인", "회차", "납부기한", "금액", "상태", "입금일", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -138,7 +136,6 @@ export default function BillingPage() {
               {pageRows(rows, page, 10).map(({ ins, c, client }) => (
                 <tr key={ins.id} className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 font-semibold text-slate-900">{client?.name ?? "-"}</td>
-                  <td className="px-4 py-3 text-slate-500">{c?.caseNumber ?? "-"}</td>
                   <td className="px-4 py-3 text-slate-500">{ins.seq === 1 ? "계약금" : `${ins.seq - 1}회차`}</td>
                   <td className="px-4 py-3 text-slate-500">{fmtDate(ins.dueDate)}</td>
                   <td className="px-4 py-3 text-slate-900">{fmtWon(ins.amount)}</td>
@@ -157,7 +154,7 @@ export default function BillingPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 내역이 없습니다.
                   </td>
                 </tr>

@@ -5,6 +5,31 @@
 레이아웃)은 도원 Admin과 동일**하게 맞추고, 기능만 회생/파산 도메인에 맞게 새로 설계했습니다.
 현재는 전부 **가상의 샘플 데이터**로 동작하며, 실제 DB(Supabase 등)는 연결되어 있지 않습니다.
 
+## v4 업데이트 — 메뉴/기능 1차 정리 요청 반영
+
+디자인 골격(v3)을 유지한 채, 실제 사용 흐름에 맞춘 메뉴·기능 정리 요청을 반영했습니다.
+
+- **메뉴**: DB관리·고객관리 위치를 도원 Admin과 동일하게 맞바꾸고(DB관리가 먼저), '사건관리'를
+  '계약관리'로 명칭 통일. 일정관리 단독 메뉴는 없애고(대시보드 캘린더·사건상세 일정으로 충분),
+  도원 Admin과 동일한 기능의 **내부 게시판**(공지 고정/순서, 검색, 파일 첨부)을 새로 추가
+- **대시보드**: 계약·결제 추이, 미수금 추심 우선순위, 다가오는 기일·제출기한, 담당자별 실적
+  카드를 제거해 화면을 더 간결하게 정리(핵심 KPI·분납/기일 캘린더·기간별 통계·구성비 차트는 유지)
+- **고객관리**: 유입경로 필터·컬럼과 이메일 필드를 제거하고(메타광고 단일 채널이므로), 도원
+  Admin처럼 **행을 클릭하면 하단에 고객 상세 패널이 열려** 분납관리·전자계약서·삭제까지 바로
+  처리할 수 있도록 재구성. 컬럼 순서도 등록일·이름·연락처 순으로 통일
+- **DB관리**: 시간대 구분과 재콜(카운트) 기능을 제거하고, 이름 표기를 '이름(저장형식)'에서
+  순수 이름으로 단순화. 담당자는 자유입력 대신 드롭다운으로, 상태도 드롭다운 하나만 남기고
+  그 아래 있던 상태 배지 박스는 제거
+- **계약관리**: 메뉴명만 '사건관리'→'계약관리'로 변경(그 외 화면 구성은 동일)
+- **입금·분납**: 목록에서 사건번호 컬럼을 제거(의뢰인명 기준으로만 검색)
+- **공통**: 모든 목록의 이메일 필드를 제거하고, 등록일·이름·연락처가 함께 있는 목록은 이 순서로
+  컬럼을 통일
+
+**추가로 반영한 것** (요청 범위를 넘지 않는 선에서, 도원 어드민과 비교해 있으면 좋겠다고 판단한 것만):
+- 고객관리 인라인 수정의 담당자 필드도 자유입력 → 드롭다운으로 통일(DB관리와 동일한 방식)
+- 고객 상세 패널에 도원 Admin과 동일한 '삭제' 버튼 + 확인 모달(`ConfirmDelete`)을 추가해
+  연결된 계약·분납 데이터까지 함께 정리되도록 함
+
 ## v3 업데이트 — 도원 Admin과 동일한 디자인으로 전면 재작업
 
 이전 버전은 로피(LawFee) PG사 자료의 디자인(네이비/골드 톤, 로피식 카드·배지)을 참고해
@@ -60,29 +85,30 @@ Node.js 18.18 이상을 권장합니다.
 ```
 app/
   page.tsx              대시보드 (기간선택 KPI + 분납/기일 듀얼 캘린더 + 기간별 통계)
-  db/page.tsx             DB관리 (상담 리드 → 고객 전환)
-  clients/page.tsx        고객관리 (게시판형, 인라인 수정, 모바일 카드뷰)
-  cases/page.tsx           사건 목록 (검색/필터, 모바일 카드뷰)
-  cases/[id]/page.tsx      사건 상세 (정보 그리드, 절차 타임라인, 입금내역, 서류 체크리스트)
+  db/page.tsx             DB관리 (상담 리드 → 고객 전환, 담당자·상태 드롭다운)
+  clients/page.tsx        고객관리 (목록 + 클릭 시 하단 상세패널: 분납관리/전자계약서/삭제)
+  cases/page.tsx           계약관리 목록 (검색/필터, 모바일 카드뷰)
+  cases/[id]/page.tsx      계약 상세 (정보 그리드, 절차 타임라인, 입금내역, 서류 체크리스트)
   billing/page.tsx        입금·분납 관리
-  schedule/page.tsx       일정(법원기일/제출기한) 관리
+  board/page.tsx           내부 게시판 (공지 고정/순서, 검색, 파일 첨부)
 components/
   layout/Sidebar.tsx      고정 사이드바 + 모바일 드로어 (도원 Admin 구조 그대로)
   layout/Header.tsx       검색 + 알림벨 + 신규DB 배지 (신규)
   ui/Primitives.tsx       Card/Button/Badge/PageHeader/Input/Select/Modal/SearchBox/
                           StatusTabs/Pagination — 도원 Admin ui.tsx 이식
   ui/DateRangePicker.tsx  기간 선택 캘린더 — 도원 Admin 이식
-  ui/Badge.tsx            도메인 전용 배지(사건유형/상태/DB상태/시간대칩)
+  ui/ConfirmDelete.tsx    삭제 확인 모달 — 도원 Admin confirm-delete.tsx 이식
+  ui/Badge.tsx            도메인 전용 배지(사건유형/상태/DB상태)
   charts/MonthCalendar.tsx 월간 일정 캘린더(호버 미리보기 + 클릭 고정) — 도원 Admin 이식
   charts/                 도넛/막대/스택바 차트(색상만 slate/blue 팔레트로 조정)
 lib/
   utils.ts                cn() 클래스 병합 유틸 (도원 Admin과 동일)
-  types.ts                도메인 모델 (Client, CaseRecord, DbLead, Installment, ScheduleItem …)
+  types.ts                도메인 모델 (Client, CaseRecord, DbLead, Installment, BoardPost …)
   mock-data.ts            시드 기반 샘플 데이터 생성 + 조회 헬퍼
   documents.ts            서류 체크리스트 템플릿 (서류제출안내문 15개 항목)
-  store.tsx               전역 상태(Context) — DB 전환/고객정보 수정 등 상호작용용
+  store.tsx               전역 상태(Context) — DB 전환·분납 편집·게시판 CRUD 등 상호작용용
   period-engine.ts         년/월/주/일 기간 이동·집계 엔진
-  dashboard.ts             대시보드 전용 집계 (미수금 우선순위, 담당자 실적 등)
+  dashboard.ts             대시보드 전용 집계 (연체 리스트, 절차단계 분포 등)
   format.ts                금액/날짜/증감률 포맷 유틸
 ```
 

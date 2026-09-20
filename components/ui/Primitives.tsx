@@ -33,7 +33,7 @@ export function Button({
   className?: string;
   variant?: ButtonVariant;
   children: ReactNode;
-  onClick?: () => void;
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
   type?: "button" | "submit";
   disabled?: boolean;
 }) {
@@ -109,12 +109,16 @@ export function Input({
   placeholder,
   type = "text",
   className,
+  readOnly = false,
+  disabled = false,
 }: {
   value?: string;
   onChange?: (e: ChangeEvent<HTMLInputElement>) => void;
   placeholder?: string;
   type?: string;
   className?: string;
+  readOnly?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <input
@@ -122,8 +126,11 @@ export function Input({
       onChange={onChange}
       type={type}
       placeholder={placeholder}
+      readOnly={readOnly}
+      disabled={disabled}
       className={cn(
         "h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-10 sm:text-sm",
+        (readOnly || disabled) && "bg-slate-50 text-slate-500",
         className
       )}
     />

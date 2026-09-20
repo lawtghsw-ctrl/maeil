@@ -7,11 +7,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  CalendarClock,
   FileSignature,
   Inbox,
   LayoutDashboard,
   Menu,
+  MessagesSquare,
   ShieldCheck,
   Users,
   WalletCards,
@@ -19,13 +19,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// 도원 Admin(tg_m)과 동일하게 DB(리드) 관리를 고객관리보다 앞에 두고, '사건관리'는
+// '계약관리'로 명칭을 통일, 별도였던 일정관리 메뉴는 없애고 내부 게시판을 추가함.
 export const menu = [
   ["대시보드", "/", LayoutDashboard],
-  ["고객관리", "/clients", Users],
   ["DB관리", "/db", Inbox],
-  ["사건관리", "/cases", FileSignature],
+  ["고객관리", "/clients", Users],
+  ["계약관리", "/cases", FileSignature],
   ["입금·분납", "/billing", WalletCards],
-  ["일정관리", "/schedule", CalendarClock],
+  ["게시판", "/board", MessagesSquare],
 ] as const;
 
 function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {

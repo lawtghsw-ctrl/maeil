@@ -6,9 +6,8 @@ import type {
   CaseType,
   DbLeadStatus,
   InstallmentStatus,
-  TimeSlot,
 } from "@/lib/types";
-import { CASE_STAGES, DB_LEAD_STATUS_LABEL, STAGE_LABELS, TIME_SLOT_COLORS } from "@/lib/types";
+import { CASE_STAGES, DB_LEAD_STATUS_LABEL, STAGE_LABELS } from "@/lib/types";
 import { Badge, type BadgeTone } from "@/components/ui/Primitives";
 
 export function StageBadge({ stage, caseType }: { stage: CaseStage; caseType: CaseType }) {
@@ -57,15 +56,4 @@ export function DbLeadStatusBadge({ status }: { status: DbLeadStatus }) {
     종결_중단: "gray",
   };
   return <Badge tone={toneMap[status]}>{DB_LEAD_STATUS_LABEL[status]}</Badge>;
-}
-
-export function TimeSlotChip({ slot }: { slot: TimeSlot }) {
-  return (
-    <span
-      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold text-slate-700"
-      style={{ background: TIME_SLOT_COLORS[slot] }}
-    >
-      {slot}
-    </span>
-  );
 }

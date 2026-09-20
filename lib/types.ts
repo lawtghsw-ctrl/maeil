@@ -65,21 +65,17 @@ export const STAGE_GENERIC_LABELS: Record<CaseStage, string> = {
 
 export type CaseStatus = "진행중" | "보류" | "취하" | "종결";
 
-export type LeadSource =
-  | "메타광고"
-  | "커뮤니티"
-  | "지인소개"
-  | "네이버검색"
-  | "재상담";
+// 담당 직원 목록 — 데모 버전에서는 실명 대신 직원1/직원2/직원3으로 표기.
+// DB관리·고객관리의 담당자 필드는 모두 이 목록을 드롭다운으로 사용합니다.
+export const STAFF_LIST = ["직원1", "직원2", "직원3"] as const;
+export type StaffName = (typeof STAFF_LIST)[number];
 
 export interface Client {
   id: string;
   name: string;
   phone: string;
-  email?: string;
   registeredAt: string; // ISO date
-  source: LeadSource;
-  assignedStaff?: string;
+  assignedStaff?: StaffName;
   memo?: string;
   fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
 }
@@ -94,18 +90,6 @@ export const PAYMENT_METHOD_NOTE: Record<PaymentMethod, string> = {
 };
 
 // ---- DB(상담 리드) 관리 ----
-// 회파산 업무매뉴얼 3장(DB 관리 기본규칙) 기준 시간대 분류
-export type TimeSlot = "평오전" | "평점심" | "평오후" | "퇴근후" | "주말오전" | "주말오후";
-
-export const TIME_SLOT_COLORS: Record<TimeSlot, string> = {
-  평오전: "#BFE3F5", // 하늘색
-  평점심: "#D8ECC0", // 연두색
-  평오후: "#FBE3A6", // 황색
-  퇴근후: "#E5E8F1", // 무색
-  주말오전: "#FCE588", // 노랑색
-  주말오후: "#FCE588", // 노랑색
-};
-
 // 매뉴얼 5장 상담 파이프라인 + 구글시트 대시보드 상태값을 통합한 DB 리드 상태
 export const DB_LEAD_STATUSES = [
   "신규접수",
@@ -139,21 +123,14 @@ export const DB_LEAD_STATUS_LABEL: Record<DbLeadStatus, string> = {
   종결_중단: "종결(중단)",
 };
 
-// 재콜 상한(매뉴얼 4.3) — 하루 최대 2회, 누적 8회
-export const MAX_RECALL_TOTAL = 8;
-
 export interface DbLead {
   id: string;
   name: string;
   phone: string;
   caseTypeGuess?: CaseType; // 상담 단계에서 추정한 사건유형
-  timeSlot: TimeSlot;
   receivedAt: string; // ISO datetime — DB 접수 시각
   status: DbLeadStatus;
-  assignedStaff: string;
-  callAttempts: number; // 누적 재콜 횟수 (상한 8회)
-  lastContactAt?: string;
-  source: LeadSource;
+  assignedStaff: StaffName;
   memo?: string; // 상담원이 남기는 기초정보 메모
   convertedClientId?: string; // 고객관리로 전환된 경우 생성된 Client id
   convertedCaseId?: string;
@@ -214,4 +191,23 @@ export interface DayAggregate {
   contractAmount: number; // 신규 계약금액(청구 개념)
   paymentAmount: number; // 그날 실제 입금액(결제 완료)
   caseTypeSplit: Record<CaseType, number>; // 그날 결제완료액의 사건유형별 구성비(0~1)
+}
+
+// ---- 내부 게시판 (도원 Admin '내부 게시판'과 동일 기능) ----
+// 실제 백엔드가 없어 첨부파일은 이름/용량만 기록하고 실제 바이트는 저장하지 않습니다.
+export interface BoardAttachment {
+  id: string;
+  name: string;
+  size: number; // bytes
+}
+
+export interface BoardPost {
+  id: string;
+  title: string;
+  body: string;
+  writer: string;
+  date: string; // ISO date — 등록일
+  isNotice: boolean;
+  noticeOrder: number;
+  attachments: BoardAttachment[];
 }

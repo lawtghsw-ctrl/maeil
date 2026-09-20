@@ -5,34 +5,22 @@ import Link from "next/link";
 import { CircleDollarSign, Users, WalletCards } from "lucide-react";
 import {
   computeStats,
-  dayBucketsOfRange,
   isNextBlocked,
-  isoStr,
-  monthBucketsOfYear,
   nextAnchor,
   periodHeadline,
   prevAnchor,
-  weekBucketsOfMonth,
   type PeriodMode,
 } from "@/lib/period-engine";
 import { dayMap } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
-import {
-  CASE_TYPE_COLORS,
-  getOverdueList,
-  getStageDistribution,
-  getStaffPerformance,
-  getUpcomingSchedule,
-  STAGE_CHART_COLORS,
-} from "@/lib/dashboard";
+import { CASE_TYPE_COLORS, getOverdueList, getStageDistribution, STAGE_CHART_COLORS } from "@/lib/dashboard";
 import { STAGE_GENERIC_LABELS } from "@/lib/types";
-import { fmtDate, fmtEokMan, fmtWon } from "@/lib/format";
+import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { PeriodControl } from "@/components/ui/PeriodControl";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { DonutChart } from "@/components/charts/DonutChart";
-import { TrendBarChart, type TrendBucket } from "@/components/charts/TrendBarChart";
 import { StackedRatioBar } from "@/components/charts/StackedRatioBar";
 import { MonthCalendar, type CalendarItem } from "@/components/charts/MonthCalendar";
 
@@ -127,42 +115,8 @@ export default function DashboardPage() {
   const stats = useMemo(() => computeStats(mode, anchor, dayMap), [mode, anchor]);
   const headline = useMemo(() => periodHeadline(mode, stats.bounds), [mode, stats.bounds]);
 
-  const buckets: TrendBucket[] = useMemo(() => {
-    const { bounds } = stats;
-    if (mode === "year") {
-      return monthBucketsOfYear(bounds.start.getFullYear(), dayMap).map((b) => ({
-        label: b.label,
-        range: b.range,
-        a: b.contractAmount,
-        b: b.paymentAmount,
-      }));
-    }
-    if (mode === "month") {
-      return weekBucketsOfMonth(bounds.start.getFullYear(), bounds.start.getMonth(), dayMap).map((b) => ({
-        label: b.label,
-        range: b.range,
-        a: b.contractAmount,
-        b: b.paymentAmount,
-      }));
-    }
-    if (mode === "week") {
-      return dayBucketsOfRange(bounds.start, bounds.naturalEnd, dayMap).map((b) => ({
-        label: b.label,
-        range: b.range,
-        a: b.contractAmount,
-        b: b.paymentAmount,
-      }));
-    }
-    return [];
-  }, [mode, stats]);
-
   const overdue = useMemo(() => getOverdueList(8), []);
-  const upcoming = useMemo(() => getUpcomingSchedule(6), []);
   const stageDist = useMemo(() => getStageDistribution(), []);
-  const staffPerf = useMemo(
-    () => getStaffPerformance(isoStr(stats.bounds.start), isoStr(stats.bounds.end)),
-    [stats]
-  );
   const overdueTotal = overdue.reduce((a, r) => a + r.amount, 0);
 
   function handleShift(delta: 1 | -1) {
@@ -288,116 +242,6 @@ export default function DashboardPage() {
           />
         </Card>
       </div>
-
-      <Card className="mt-4 p-4 sm:p-5">
-        <div className="mb-1 text-sm font-semibold text-slate-900">계약·결제 추이</div>
-        <div className="mb-4 text-xs text-slate-500">
-          {mode === "day" ? "일 단위 조회에서는 상단 스냅샷을 참고해주세요." : "선택된 기간 설정을 그대로 상속합니다."}
-        </div>
-        {buckets.length > 0 ? (
-          <TrendBarChart buckets={buckets} labelA="계약금액" labelB="결제액" valueFmt={fmtEokMan} />
-        ) : (
-          <div className="flex h-40 items-center justify-center text-sm text-slate-400">
-            일 단위에서는 추이 차트를 표시하지 않습니다.
-          </div>
-        )}
-      </Card>
-
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card className="p-4 sm:p-5">
-          <div className="mb-3 text-sm font-semibold text-slate-900">미수금 추심 우선순위</div>
-          {overdue.length === 0 ? (
-            <div className="py-6 text-center text-sm text-slate-400">연체 건이 없습니다.</div>
-          ) : (
-            <div className="space-y-2">
-              {overdue.map((row) => (
-                <div key={row.installmentId} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2.5">
-                  <span
-                    className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
-                      row.overdueDays >= 30 ? "bg-red-50 text-red-700" : row.overdueDays >= 15 ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    D+{row.overdueDays}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-slate-900">
-                      {row.clientName}님 · {row.caseType}
-                    </div>
-                    <div className="truncate text-xs text-slate-500">
-                      {row.caseNumber} · {row.reason}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right text-sm font-semibold text-slate-900">{fmtWon(row.amount)}</div>
-                  <Link href={`/cases/${row.caseId}`} className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:text-slate-900">
-                    확인
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-4 sm:p-5">
-          <div className="mb-3 text-sm font-semibold text-slate-900">다가오는 기일·제출기한</div>
-          {upcoming.length === 0 ? (
-            <div className="py-6 text-center text-sm text-slate-400">예정된 일정이 없습니다.</div>
-          ) : (
-            <div className="space-y-2">
-              {upcoming.map((row) => (
-                <div key={row.id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2.5">
-                  <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${row.dday <= 3 ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}>
-                    {row.dday === 0 ? "D-day" : row.dday > 0 ? `D-${row.dday}` : `D+${-row.dday}`}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-slate-900">
-                      {row.clientName}님 · {row.title}
-                    </div>
-                    <div className="truncate text-xs text-slate-500">
-                      {fmtDate(row.date)} · {row.type}
-                    </div>
-                  </div>
-                  <Link href={`/cases/${row.caseId}`} className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:text-slate-900">
-                    확인
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card className="mt-4 p-4 sm:p-5">
-        <div className="mb-3 text-sm font-semibold text-slate-900">담당자별 실적</div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[480px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs text-slate-500">
-              <tr>
-                <th className="px-3 py-2.5 font-medium">담당자</th>
-                <th className="px-3 py-2.5 font-medium">신규계약</th>
-                <th className="px-3 py-2.5 font-medium">계약금액</th>
-                <th className="px-3 py-2.5 font-medium">결제율</th>
-              </tr>
-            </thead>
-            <tbody>
-              {staffPerf.map((row) => (
-                <tr key={row.staff} className="border-t border-slate-100">
-                  <td className="px-3 py-2.5 font-medium text-slate-900">{row.staff}</td>
-                  <td className="px-3 py-2.5 text-slate-500">{row.caseCount}건</td>
-                  <td className="px-3 py-2.5 text-slate-500">{fmtEokMan(row.contractAmount)}</td>
-                  <td className="px-3 py-2.5 text-slate-500">{row.paymentRate.toFixed(0)}%</td>
-                </tr>
-              ))}
-              {staffPerf.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-slate-400">
-                    선택된 기간에 데이터가 없습니다.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
     </>
   );
 }

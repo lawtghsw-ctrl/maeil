@@ -8,7 +8,8 @@
 import {
   CASE_STAGES,
   DB_LEAD_STATUSES,
-  MAX_RECALL_TOTAL,
+  STAFF_LIST,
+  type BoardPost,
   type CaseRecord,
   type CaseStage,
   type CaseStatus,
@@ -19,10 +20,8 @@ import {
   type DbLeadStatus,
   type Installment,
   type InstallmentStatus,
-  type LeadSource,
   type PaymentMethod,
   type ScheduleItem,
-  type TimeSlot,
 } from "./types";
 
 function mulberry32(seed: number) {
@@ -68,11 +67,7 @@ const COURTS = [
 ];
 
 // 데모 버전에서는 실명 대신 직원1/직원2/직원3으로 표기
-const STAFF = ["직원1", "직원2", "직원3"];
-
-const LEAD_SOURCES: LeadSource[] = ["메타광고", "커뮤니티", "지인소개", "네이버검색", "재상담"];
-
-const TIME_SLOTS: TimeSlot[] = ["평오전", "평점심", "평오후", "퇴근후", "주말오전", "주말오후"];
+const STAFF = STAFF_LIST;
 
 const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "신용카드할부", "로펌금융조합분납"];
 
@@ -139,9 +134,8 @@ export const clients: Client[] = Array.from({ length: CLIENT_COUNT }, (_, i) => 
     id: `CL-${String(i + 1).padStart(4, "0")}`,
     name: randomName(),
     phone: randomPhone(),
-    email: chance(0.4) ? `client${i + 1}@example.com` : undefined,
     registeredAt: isoOf(daysAgo(registeredDaysAgo)),
-    source: pick(LEAD_SOURCES),
+    assignedStaff: pick(STAFF),
     memo: undefined,
   };
 });
@@ -310,8 +304,8 @@ export const scheduleItems: ScheduleItem[] = cases
   }));
 
 // ---- DB(상담 리드) 관리 ----
-// 회파산 업무매뉴얼 3~5장(DB 관리 규칙 · 상담 파이프라인) 기준 목업 데이터.
-// 연락처 저장 규칙(3.2) 예시: '이름 + 사건유형 + (시간대)' — leadContactLabel()로 재현.
+// 회파산 업무매뉴얼 5장(상담 파이프라인) 기준 목업 데이터. 모든 리드는 메타광고 단일
+// 채널로만 유입되는 것으로 가정해 별도의 유입경로 구분은 두지 않습니다.
 
 const LEAD_STATUS_WEIGHT: Record<DbLeadStatus, number> = {
   신규접수: 20,
@@ -352,14 +346,6 @@ const LEAD_COUNT = 34;
 export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
   const status = weightedLeadStatus();
   const receivedDaysAgo = randInt(0, 12);
-  const callAttempts =
-    status === "신규접수"
-      ? 0
-      : status === "부재중"
-      ? randInt(2, MAX_RECALL_TOTAL)
-      : status === "재통화필요"
-      ? randInt(1, 4)
-      : randInt(0, 3);
 
   let convertedClientId: string | undefined;
   let convertedCaseId: string | undefined;
@@ -374,24 +360,14 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
     name: randomName(),
     phone: randomPhone(),
     caseTypeGuess: chance(0.8) ? randomCaseType() : undefined,
-    timeSlot: pick(TIME_SLOTS),
     receivedAt: isoOf(daysAgo(receivedDaysAgo)),
     status,
     assignedStaff: pick(STAFF),
-    callAttempts,
-    lastContactAt: callAttempts > 0 ? isoOf(daysAgo(randInt(0, Math.min(5, receivedDaysAgo + 1)))) : undefined,
-    source: pick(LEAD_SOURCES),
     memo: chance(0.5) ? pick(LEAD_MEMO_SAMPLES) : undefined,
     convertedClientId,
     convertedCaseId,
   };
 }).sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
-
-// 매뉴얼 3.2 연락처 저장 규칙: '신청이름 + 사건유형 + (시간대)'
-export function leadContactLabel(lead: DbLead): string {
-  const type = lead.caseTypeGuess === "개인파산" ? "파산" : "회생";
-  return `${lead.name} ${type} (${lead.timeSlot})`;
-}
 
 // ---- 기간 엔진용 일 단위 집계(dayMap) 생성 ----
 // 계약(청구 개념) = cases.contractDate 기준 / 결제(입금) = installments 완료건의 paidDate 기준
@@ -506,3 +482,42 @@ export function overdueDaysOf(ins: Installment, refDate: Date = today): number {
 }
 
 export const TODAY_ISO = todayIso();
+
+// ---- 내부 게시판 (도원 Admin '내부 게시판'과 동일 기능) ----
+const BOARD_SEED: Array<Omit<BoardPost, "id" | "attachments" | "date">> = [
+  {
+    title: "서류제출안내문 최신본 안내",
+    body: "매일법률사무소 서류제출안내문 양식이 갱신되었습니다. 사건 상세 화면의 서류 체크리스트에 그대로 반영되어 있으니, 신규 계약 건은 최신본 기준으로 안내 부탁드립니다.",
+    writer: "직원1",
+    isNotice: true,
+    noticeOrder: 1,
+  },
+  {
+    title: "이번 주 법원기일 공유",
+    body: "이번 주 개인회생 심문기일 2건, 개인파산 채권자집회 1건이 예정되어 있습니다. 대시보드의 기일·제출기한 캘린더에서 날짜를 다시 확인해주세요.",
+    writer: "직원2",
+    isNotice: true,
+    noticeOrder: 2,
+  },
+  {
+    title: "신규 DB 응대 시 유의사항",
+    body: "DB관리에서 신규 접수 건은 당일 중 상태를 업데이트해주세요. 상담 후 진행 의사가 없는 경우 '거절' 또는 '부적합'으로 정리하면 대시보드 집계에서 자동 제외됩니다.",
+    writer: "직원1",
+    isNotice: false,
+    noticeOrder: 1,
+  },
+  {
+    title: "분납 연체 고객 응대 가이드",
+    body: "입금·분납 관리에서 연체·실패 건은 대시보드 상단 배너에 실시간으로 집계됩니다. 고객관리에서 해당 고객을 선택해 분납관리 화면으로 바로 이동할 수 있습니다.",
+    writer: "직원3",
+    isNotice: false,
+    noticeOrder: 1,
+  },
+];
+
+export const posts: BoardPost[] = BOARD_SEED.map((p, i) => ({
+  id: `POST-${String(i + 1).padStart(4, "0")}`,
+  attachments: [],
+  date: isoOf(daysAgo(i * 3)),
+  ...p,
+}));
