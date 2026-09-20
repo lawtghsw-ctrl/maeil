@@ -13,12 +13,15 @@ import type {
   Gender,
   InstallmentStatus,
   OccupationType,
+  PaymentMethod,
   RepaymentPlanInput,
   StaffName,
 } from "@/lib/types";
 import { PAYMENT_METHOD_NOTE, STAFF_LIST } from "@/lib/types";
+import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { fmtDate, fmtWon } from "@/lib/format";
-import { computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput, MIN_LIVING_COST_1P } from "@/lib/consultation";
+import { computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput, lookupMinLivingCost } from "@/lib/consultation";
+import { exportConsultationExcel } from "@/lib/excel-export";
 import { StatusBadge } from "@/components/ui/Badge";
 import { DocumentChecklist } from "@/components/ui/DocumentChecklist";
 import {
@@ -35,16 +38,23 @@ import {
   pageRows,
 } from "@/components/ui/Primitives";
 import { ConfirmDelete } from "@/components/ui/ConfirmDelete";
-import { Plus, RefreshCw, FileSignature, Trash2, WalletCards } from "lucide-react";
+import { Download, FileSignature, Percent, Plus, RefreshCw, Send, Trash2, WalletCards } from "lucide-react";
 
 const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", "개인회생", "개인파산"];
 const OCCUPATION_TYPES: OccupationType[] = ["사업자", "직장인", "프리랜서", "무직", "기타"];
+const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const CLIENTS_PAGE_SIZE = 5;
 
 function caseStatusText(clientCases: CaseRecord[]): string {
   if (clientCases.length === 0) return "연결된 계약 없음";
-  return clientCases.map((c) => `${c.caseType} · ${c.status}`).join(", ");
+  // 계약분류(caseType)와 진행도(status)를 하나로 합치지 않고 "계약분류 | 진행도" 형태로 분리 표기
+  return clientCases.map((c) => `${c.caseType} | ${c.status}`).join(", ");
+}
+
+function todayIsoStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export default function ClientsPage() {
@@ -56,6 +66,8 @@ export default function ClientsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [eformOpen, setEformOpen] = useState(false);
+  const [docGuideOpen, setDocGuideOpen] = useState(false);
+  const [settlementOpen, setSettlementOpen] = useState(false);
   const [delTarget, setDelTarget] = useState<Client | null>(null);
 
   const rows = useMemo(() => {
@@ -174,7 +186,7 @@ export default function ClientsPage() {
                   setEditTarget(client);
                 }}
               >
-                수정
+                상세
               </Button>
             </div>
           ))}
@@ -229,7 +241,7 @@ export default function ClientsPage() {
                         setEditTarget(client);
                       }}
                     >
-                      수정
+                      상세
                     </Button>
                   </td>
                 </tr>
@@ -255,6 +267,8 @@ export default function ClientsPage() {
           onEdit={() => setEditTarget(selected.client)}
           onInstallments={() => setInstallOpen(true)}
           onEform={() => setEformOpen(true)}
+          onDocGuide={() => setDocGuideOpen(true)}
+          onSettlement={() => setSettlementOpen(true)}
           onDelete={() => setDelTarget(selected.client)}
         />
       )}
@@ -276,6 +290,26 @@ export default function ClientsPage() {
           client={selected.client}
           clientCases={selected.cases}
           onClose={() => setEformOpen(false)}
+        />
+      )}
+
+      {selected && (
+        <DocGuideModal
+          key={`docguide-${selected.client.id}-${docGuideOpen}`}
+          open={docGuideOpen}
+          client={selected.client}
+          clientCases={selected.cases}
+          onClose={() => setDocGuideOpen(false)}
+        />
+      )}
+
+      {selected && (
+        <SettlementRateModal
+          key={`settlement-${selected.client.id}-${settlementOpen}`}
+          open={settlementOpen}
+          client={selected.client}
+          clientCases={selected.cases}
+          onClose={() => setSettlementOpen(false)}
         />
       )}
 
@@ -317,6 +351,8 @@ function CustomerDetail({
   onEdit,
   onInstallments,
   onEform,
+  onDocGuide,
+  onSettlement,
   onDelete,
 }: {
   client: Client;
@@ -325,6 +361,8 @@ function CustomerDetail({
   onEdit: () => void;
   onInstallments: () => void;
   onEform: () => void;
+  onDocGuide: () => void;
+  onSettlement: () => void;
   onDelete: () => void;
 }) {
   const contractTotal = clientCases.reduce((a, c) => a + c.contractAmount, 0);
@@ -350,6 +388,14 @@ function CustomerDetail({
           <Button variant="secondary" onClick={onEform}>
             <FileSignature size={15} />
             전자계약서
+          </Button>
+          <Button variant="secondary" onClick={onDocGuide}>
+            <Send size={15} />
+            서류안내문 전송
+          </Button>
+          <Button variant="secondary" onClick={onSettlement}>
+            <Percent size={15} />
+            정산 설정
           </Button>
           <Button variant="danger" onClick={onDelete}>
             <Trash2 size={14} />
@@ -590,6 +636,213 @@ function EformStubModal({
   );
 }
 
+// ---- 서류안내문 전송 팝업 — 도원 Admin '카카오톡 공지 생성' 기능을 서류 미제출 독촉용으로 이식 ----
+// 실제 카카오톡 알림톡/SMS 발송 API 연동 전이므로, 서류체크리스트 기준 미제출 항목을
+// 자동으로 뽑아 메시지 초안을 만들어 보여주고, 전송 버튼은 미리보기 알림으로 대체합니다.
+const DOC_GUIDE_CHANNELS = ["카카오톡 알림톡", "SMS"] as const;
+type DocGuideChannel = (typeof DOC_GUIDE_CHANNELS)[number];
+
+function buildDocGuideMessage(clientName: string, pendingLabels: string[]): string {
+  if (pendingLabels.length === 0) {
+    return `[로파워] ${clientName}님, 제출해주신 서류 확인이 모두 완료되었습니다. 협조 감사드립니다.`;
+  }
+  return [
+    `[로파워] ${clientName}님, 원활한 사건 진행을 위해 아래 서류를 준비해 보내주시기 바랍니다.`,
+    "",
+    ...pendingLabels.map((l, i) => `${i + 1}. ${l}`),
+    "",
+    "서류 준비에 어려움이 있으시면 담당자에게 편하게 연락 부탁드립니다. 감사합니다.",
+  ].join("\n");
+}
+
+function DocGuideModal({
+  open,
+  client,
+  clientCases,
+  onClose,
+}: {
+  open: boolean;
+  client: Client;
+  clientCases: CaseRecord[];
+  onClose: () => void;
+}) {
+  const { caseDocuments, updateCase } = useStore();
+  const c = clientCases[0];
+  const checked = c ? caseDocuments[c.id] ?? {} : {};
+  const pending = DOCUMENT_CHECKLIST_TEMPLATE.filter((d) => !checked[d.id]);
+
+  const [channel, setChannel] = useState<DocGuideChannel>("카카오톡 알림톡");
+  const [phone, setPhone] = useState(client.phone);
+  const [message, setMessage] = useState(() => buildDocGuideMessage(client.name, pending.map((d) => d.label)));
+
+  useEffect(() => {
+    if (open) {
+      setChannel("카카오톡 알림톡");
+      setPhone(client.phone);
+      setMessage(buildDocGuideMessage(client.name, pending.map((d) => d.label)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, client.id]);
+
+  function send() {
+    if (c) updateCase(c.id, { docsSentAt: todayIsoStr() });
+    alert("서류안내문 전송 기능은 카카오톡 알림톡/SMS API 연동 후 실제로 발송됩니다. (지금은 미리보기 화면입니다)");
+    onClose();
+  }
+
+  return (
+    <Modal open={open} title={`${client.name} · 서류안내문 전송`} onClose={onClose} size="lg">
+      <div className="space-y-4">
+        <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
+          <b>{client.name}</b> 고객에게 미제출 서류 안내문을 발송합니다.
+          <div className="mt-1 text-xs text-blue-600">
+            ※ 카카오톡 알림톡/SMS API 연동 전 화면 미리보기입니다 — 전송 버튼을 눌러도 실제로 발송되지 않습니다.
+          </div>
+        </div>
+
+        {!c && (
+          <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+            연결된 계약이 없어 서류 체크리스트를 불러올 수 없습니다. 계약관리에서 사건을 먼저 등록해주세요.
+          </div>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Label text="발송 채널">
+            <Select value={channel} onChange={(e: ChangeEvent<HTMLSelectElement>) => setChannel(e.target.value as DocGuideChannel)} className="w-full">
+              {DOC_GUIDE_CHANNELS.map((ch) => (
+                <option key={ch}>{ch}</option>
+              ))}
+            </Select>
+          </Label>
+          <Label text="수신 연락처">
+            <Input value={phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)} />
+          </Label>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 p-4">
+          <div className="mb-2 text-xs font-semibold text-slate-500">
+            미제출 서류 ({pending.length}/{DOCUMENT_CHECKLIST_TEMPLATE.length})
+          </div>
+          {pending.length === 0 ? (
+            <div className="text-sm font-semibold text-emerald-600">모든 서류가 제출 완료되었습니다.</div>
+          ) : (
+            <ul className="space-y-1 text-xs text-slate-600">
+              {pending.map((d) => (
+                <li key={d.id}>· {d.label}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <Label text="발송 메시지">
+          <textarea
+            className="min-h-40 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:text-sm"
+            value={message}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMessage(e.target.value)}
+          />
+        </Label>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            취소
+          </Button>
+          <Button onClick={send} disabled={!c}>
+            <Send size={15} />
+            안내문 전송
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ---- 정산 설정 팝업 — 결제수단(단순분납/로피분납/신카할부완납/캐피탈분납)별로 정산금이
+// 달라지고, 같은 결제수단이라도 담당자별로 다른 정산요율을 설정할 수 있도록 함 ----
+function SettlementRateModal({
+  open,
+  client,
+  clientCases,
+  onClose,
+}: {
+  open: boolean;
+  client: Client;
+  clientCases: CaseRecord[];
+  onClose: () => void;
+}) {
+  const { settlementRates, updateSettlementRate } = useStore();
+  const c = clientCases[0];
+  const rate = c ? settlementRates[c.assignedStaff as StaffName]?.[c.paymentMethod] ?? 0 : 0;
+  const expectedSettlement = c ? Math.round((c.contractAmount * rate) / 100) : 0;
+
+  return (
+    <Modal open={open} title="정산요율 설정 (담당자 × 결제수단)" onClose={onClose} size="lg">
+      <div className="space-y-4">
+        <div className="rounded-xl bg-blue-50 p-4 text-xs text-blue-700">
+          단순분납 / 로피분납 / 신카할부완납 / 캐피탈분납 결제수단에 따라 실제 정산금이 달라지고, 같은 결제수단이라도
+          담당자별로 다른 요율을 적용할 수 있습니다. 로펌 관리자가 아래에서 담당자별 · 결제수단별 정산요율(%)을 설정하면
+          정산 메뉴 및 예상 정산금 계산에 즉시 반영됩니다.
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[560px] text-xs">
+            <thead className="bg-slate-50 text-left text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-medium">담당자</th>
+                {PAYMENT_METHODS.map((m) => (
+                  <th key={m} className="px-3 py-2 font-medium">
+                    {m}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {STAFF_LIST.map((staff) => (
+                <tr key={staff} className="border-t border-slate-100">
+                  <td className="px-3 py-2 font-semibold text-slate-700">{staff}</td>
+                  {PAYMENT_METHODS.map((m) => (
+                    <td key={m} className="px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        <NumberInput
+                          className="w-20"
+                          value={settlementRates[staff]?.[m] ?? 0}
+                          onChange={(v) => updateSettlementRate(staff, m, v)}
+                        />
+                        <span className="text-slate-400">%</span>
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {c ? (
+          <div className="rounded-xl bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">
+              {client.name} 고객 예상 정산금 · 결제수단 {c.paymentMethod} · 담당 {c.assignedStaff}
+            </div>
+            <div className="mt-1 flex flex-wrap items-baseline gap-2">
+              <span className="text-lg font-bold text-slate-900">{fmtWon(expectedSettlement)}</span>
+              <span className="text-xs text-slate-400">
+                = 계약금액 {fmtWon(c.contractAmount)} × 적용요율 {rate}%
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+            연결된 계약이 없어 예상 정산금을 계산할 수 없습니다.
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>닫기</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ---- 고객정보 수정 팝업 — 상담일지(개인회생·개인파산 상담일지) 전 항목을 탭으로 분류 ----
 // 도원 Admin의 '수정 팝업 + 메모/체크리스트' 상호작용 패턴을 이식하되, 내용은 고객이
 // 전달한 상담일지 엑셀 서식(인적사항/소득현황/재산현황/채무현황/변제계획/상담메모)을
@@ -620,6 +873,7 @@ function CustomerEditModal({
     primaryCaseId?: string
   ) => void;
 }) {
+  const { minLivingCostTable } = useStore();
   const [tab, setTab] = useState<TabKey>("기본정보");
   const [name, setName] = useState(client.name);
   const [phone, setPhone] = useState(client.phone);
@@ -971,12 +1225,12 @@ function CustomerEditModal({
                   setPlan((p) => ({
                     ...p,
                     householdSize: v || 1,
-                    minLivingCost: v === 1 ? MIN_LIVING_COST_1P : p.minLivingCost,
+                    minLivingCost: lookupMinLivingCost(v || 1, minLivingCostTable),
                   }))
                 }
               />
             </Label>
-            <Label text="최저생계비 (수동입력 — 1인가구만 참고값 자동 반영)">
+            <Label text="최저생계비 (최저생계비 계산기 설정값 자동 반영 — 필요 시 수동 수정 가능)">
               <NumberInput value={plan.minLivingCost} onChange={(v) => setPlan((p) => ({ ...p, minLivingCost: v }))} />
             </Label>
             <Label text="기타공제금">
@@ -1058,11 +1312,35 @@ function CustomerEditModal({
           </div>
         ))}
 
-      <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
-        <Button variant="secondary" onClick={onClose}>
-          취소
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
+        <Button
+          variant="secondary"
+          onClick={() =>
+            exportConsultationExcel({
+              clientName: name.trim() || client.name,
+              phone: phone.trim() || client.phone,
+              registeredAt: client.registeredAt,
+              assignedStaff,
+              applicationType,
+              personal,
+              income,
+              assets,
+              debts,
+              plan,
+              consultMemo,
+              contractMemo,
+            })
+          }
+        >
+          <Download size={15} />
+          고객 상담 엑셀 다운로드
         </Button>
-        <Button onClick={save}>저장</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            취소
+          </Button>
+          <Button onClick={save}>저장</Button>
+        </div>
       </div>
     </Modal>
   );

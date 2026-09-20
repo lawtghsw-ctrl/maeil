@@ -16,6 +16,35 @@ import { fmtDate } from "@/lib/format";
 
 const APPLICATION_TYPES: CaseType[] = ["개인회생", "개인파산"];
 
+// 콜(통화 시도) 횟수 — 0부터 시작해 ▲▼ 버튼으로 담당자가 직접 증감시키는 단순 카운터.
+function CallCounter({ value, disabled, onChange }: { value: number; disabled?: boolean; onChange: (v: number) => void }) {
+  return (
+    <div className={`inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${disabled ? "opacity-60" : ""}`}>
+      <span className="min-w-[18px] text-center text-sm font-semibold text-slate-700">{value}</span>
+      <div className="flex flex-col leading-none">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange(value + 1)}
+          className="grid h-3.5 w-4 place-items-center text-[9px] text-slate-500 hover:text-blue-600 disabled:cursor-not-allowed"
+          aria-label="콜횟수 증가"
+        >
+          ▲
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange(Math.max(0, value - 1))}
+          className="grid h-3.5 w-4 place-items-center text-[9px] text-slate-500 hover:text-blue-600 disabled:cursor-not-allowed"
+          aria-label="콜횟수 감소"
+        >
+          ▼
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function DbManagementPage() {
   const { leads, updateLead, convertLeadToClient } = useStore();
   const [query, setQuery] = useState("");
@@ -102,6 +131,14 @@ export default function DbManagementPage() {
                   </option>
                 ))}
               </select>
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                <span className="text-sm text-slate-500">콜횟수</span>
+                <CallCounter
+                  value={lead.callCount ?? 0}
+                  disabled={!!lead.convertedClientId}
+                  onChange={(v) => updateLead(lead.id, { callCount: v })}
+                />
+              </div>
               <select
                 value={lead.assignedStaff}
                 disabled={!!lead.convertedClientId}
@@ -158,7 +195,7 @@ export default function DbManagementPage() {
           <table className="admin-responsive-table w-full min-w-[900px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["접수일", "이름", "연락처", "신청분류", "담당자", "상태", "메모", ""].map((h) => (
+                {["접수일", "이름", "연락처", "신청분류", "콜횟수", "담당자", "상태", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -189,6 +226,13 @@ export default function DbManagementPage() {
                         </option>
                       ))}
                     </select>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <CallCounter
+                      value={lead.callCount ?? 0}
+                      disabled={!!lead.convertedClientId}
+                      onChange={(v) => updateLead(lead.id, { callCount: v })}
+                    />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
@@ -247,7 +291,7 @@ export default function DbManagementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 DB가 없습니다.
                   </td>
                 </tr>

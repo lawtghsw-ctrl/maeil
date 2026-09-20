@@ -16,6 +16,35 @@ import { ASSET_CATEGORIES, DEBT_CATEGORIES, SECURED_DEBT_CATEGORIES, UNSECURED_D
 // 기본값을 제공하지 않습니다.
 export const MIN_LIVING_COST_1P = 1538543;
 
+// ---- 최저생계비 계산기 (메뉴: "최저생계비 계산기") ----
+// 가구원수별 최저생계비는 매년 고시가 바뀌는 법적으로 민감한 수치라, LawPower가 임의의
+// 표를 만들어 자동판정하지 않습니다. 대신 '최저생계비 계산기' 화면에서 로펌 관리자가
+// 매년 고시된 최신 기준중위소득표를 직접 입력해 관리하고, 그 값이 고객 상담일지의
+// 변제계획 탭에 자동 반영되도록 합니다(1인가구만 상담일지 원문 수치로 미리 채워둠).
+export interface MinLivingCostTable {
+  sizes: Record<number, number>; // 가구원수(1~6) -> 최저생계비
+  extraPerPerson: number; // 7인 이상부터 1인 추가마다 더할 금액(관리자 설정, 기본 0)
+}
+
+export const MIN_LIVING_COST_HOUSEHOLD_SIZES = [1, 2, 3, 4, 5, 6] as const;
+
+export function defaultMinLivingCostTable(): MinLivingCostTable {
+  return {
+    sizes: { 1: MIN_LIVING_COST_1P, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+    extraPerPerson: 0,
+  };
+}
+
+// 가구원수에 해당하는 최저생계비를 조회. 6인 초과는 6인 기준값 + (초과 인원 × 1인당 추가금액).
+// 관리자가 아직 해당 가구원수를 설정하지 않아 0으로 남아있으면 0을 그대로 반환합니다
+// (화면에서 "관리자 설정 필요"로 안내).
+export function lookupMinLivingCost(householdSize: number, table: MinLivingCostTable): number {
+  const size = Math.max(1, Math.round(householdSize || 1));
+  if (size <= 6) return table.sizes[size] ?? 0;
+  const base = table.sizes[6] ?? 0;
+  return base + (size - 6) * (table.extraPerPerson || 0);
+}
+
 export function emptyAssetRows(): AssetRow[] {
   return ASSET_CATEGORIES.map((category) => ({
     category,

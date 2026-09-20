@@ -30,8 +30,12 @@ import type {
   DbLead,
   Installment,
   InstallmentStatus,
+  PaymentMethod,
   ScheduleItem,
+  StaffName,
 } from "./types";
+import { STAFF_LIST } from "./types";
+import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 
 type DocumentState = Record<string, Record<string, boolean>>; // caseId -> itemId -> checked
 
@@ -46,8 +50,28 @@ export interface InstallmentDraft {
 // ---- 기간별 변동내역(도원 Admin '변동내역'과 동일한 취지) ----
 // 실제 DB가 없는 데모라 Supabase 트리거 대신, 각 store 메서드 호출부에서 직접
 // 변경 요약 문자열을 남기는 방식으로 단순화했습니다.
-export type ChangeCategory = "DB관리" | "고객관리" | "계약관리" | "입금·분납" | "게시판";
+export type ChangeCategory = "DB관리" | "고객관리" | "계약관리" | "입금·분납" | "게시판" | "설정";
 export type ChangeAction = "등록" | "수정" | "삭제";
+
+// ---- 결제수단별 정산요율 (담당자별로 로펌 관리자가 설정) ----
+// 결제수단(단순분납/로피분납/신카할부완납/캐피탈분납)에 따라 실제 정산금이 달라지고,
+// 같은 결제수단이라도 담당자별로 다른 요율을 적용할 수 있어야 한다는 요청을 반영.
+export type SettlementRateMap = Record<StaffName, Record<PaymentMethod, number>>;
+
+const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
+  단순분납: 100,
+  로피분납: 90,
+  신카할부완납: 85,
+  캐피탈분납: 80,
+};
+
+function defaultSettlementRates(): SettlementRateMap {
+  const map = {} as SettlementRateMap;
+  for (const staff of STAFF_LIST) {
+    map[staff] = { ...DEFAULT_RATE_BY_METHOD };
+  }
+  return map;
+}
 
 export interface ChangeLogEntry {
   id: string;
@@ -71,6 +95,8 @@ interface AppStoreValue {
   posts: BoardPost[];
   caseDocuments: DocumentState;
   changeLog: ChangeLogEntry[];
+  settlementRates: SettlementRateMap;
+  minLivingCostTable: MinLivingCostTable;
   updateClient: (id: string, patch: Partial<Client>) => void;
   deleteClient: (id: string) => void;
   updateLead: (id: string, patch: Partial<DbLead>) => void;
@@ -81,6 +107,9 @@ interface AppStoreValue {
   addPost: (draft: Omit<BoardPost, "id">) => void;
   updatePost: (id: string, patch: Partial<BoardPost>) => void;
   deletePost: (id: string) => void;
+  updateSettlementRate: (staff: StaffName, method: PaymentMethod, rate: number) => void;
+  setMinLivingCostForSize: (size: number, amount: number) => void;
+  setMinLivingCostExtraPerPerson: (amount: number) => void;
 }
 
 const AppStoreContext = createContext<AppStoreValue | null>(null);
@@ -102,6 +131,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [posts, setPosts] = useState<BoardPost[]>(seedPosts);
   const [caseDocuments, setCaseDocuments] = useState<DocumentState>({});
   const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
+  const [settlementRates, setSettlementRates] = useState<SettlementRateMap>(() => defaultSettlementRates());
+  const [minLivingCostTable, setMinLivingCostTable] = useState<MinLivingCostTable>(() => defaultMinLivingCostTable());
   const clientSeqRef = useRef(seedClients.length);
   const postSeqRef = useRef(seedPosts.length);
   const insSeqRef = useRef(0);
@@ -278,6 +309,30 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [logChange]
   );
 
+  const updateSettlementRate = useCallback(
+    (staff: StaffName, method: PaymentMethod, rate: number) => {
+      setSettlementRates((prev) => ({ ...prev, [staff]: { ...prev[staff], [method]: rate } }));
+      logChange("설정", "수정", `${staff} · ${method}`, `정산요율 ${rate}%로 변경`);
+    },
+    [logChange]
+  );
+
+  const setMinLivingCostForSize = useCallback(
+    (size: number, amount: number) => {
+      setMinLivingCostTable((prev) => ({ ...prev, sizes: { ...prev.sizes, [size]: amount } }));
+      logChange("설정", "수정", "최저생계비 계산기", `${size}인가구 최저생계비 ${amount.toLocaleString("ko-KR")}원으로 설정`);
+    },
+    [logChange]
+  );
+
+  const setMinLivingCostExtraPerPerson = useCallback(
+    (amount: number) => {
+      setMinLivingCostTable((prev) => ({ ...prev, extraPerPerson: amount }));
+      logChange("설정", "수정", "최저생계비 계산기", `7인 이상 1인당 추가금액 ${amount.toLocaleString("ko-KR")}원으로 설정`);
+    },
+    [logChange]
+  );
+
   const value = useMemo<AppStoreValue>(
     () => ({
       clients,
@@ -288,6 +343,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       posts,
       caseDocuments,
       changeLog,
+      settlementRates,
+      minLivingCostTable,
       updateClient,
       deleteClient,
       updateLead,
@@ -298,6 +355,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       addPost,
       updatePost,
       deletePost,
+      updateSettlementRate,
+      setMinLivingCostForSize,
+      setMinLivingCostExtraPerPerson,
     }),
     [
       clients,
@@ -308,6 +368,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       posts,
       caseDocuments,
       changeLog,
+      settlementRates,
+      minLivingCostTable,
       updateClient,
       deleteClient,
       updateLead,
@@ -318,6 +380,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       addPost,
       updatePost,
       deletePost,
+      updateSettlementRate,
+      setMinLivingCostForSize,
+      setMinLivingCostExtraPerPerson,
     ]
   );
 

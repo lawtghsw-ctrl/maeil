@@ -71,13 +71,14 @@ const COURTS = [
 // 데모 버전에서는 실명 대신 직원1/직원2/직원3으로 표기
 const STAFF = STAFF_LIST;
 
-const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "신용카드할부", "로펌금융조합분납"];
+const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "로피분납", "신카할부완납", "캐피탈분납"];
 
 function randomPaymentMethod(): PaymentMethod {
   const r = rand();
-  if (r < 0.6) return "단순분납";
-  if (r < 0.85) return "신용카드할부";
-  return "로펌금융조합분납";
+  if (r < 0.4) return "단순분납";
+  if (r < 0.75) return "로피분납";
+  if (r < 0.92) return "신카할부완납";
+  return "캐피탈분납";
 }
 
 const today = new Date();
@@ -389,6 +390,15 @@ const LEAD_MEMO_SAMPLES = [
 
 const LEAD_COUNT = 34;
 
+// 콜(통화 시도) 횟수 — 진행 단계가 깊을수록/부재중일수록 콜 시도가 누적됐다고 가정한
+// 데모용 근사치입니다. DB관리 리스트에서 ▲▼ 버튼으로 담당자가 직접 조정할 수 있습니다.
+function randomCallCount(status: DbLeadStatus): number {
+  if (status === "신규접수") return randInt(0, 1);
+  if (status === "부재중") return randInt(2, 6);
+  if (status === "수임전환" || status === "계약진행중" || status === "서류검토중") return randInt(3, 8);
+  return randInt(1, 4);
+}
+
 export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
   const status = weightedLeadStatus();
   const receivedDaysAgo = randInt(0, 12);
@@ -410,6 +420,7 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
     status,
     assignedStaff: pick(STAFF),
     memo: chance(0.5) ? pick(LEAD_MEMO_SAMPLES) : undefined,
+    callCount: randomCallCount(status),
     convertedClientId,
     convertedCaseId,
   };

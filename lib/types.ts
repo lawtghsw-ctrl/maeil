@@ -82,13 +82,16 @@ export interface Client {
   consultation?: ConsultationInfo; // 상담일지(고객정보 수정 팝업에서 작성)
 }
 
-// 결제수단 3종 — 회파산 업무매뉴얼 6장(비용구조 안내) 기준
-export type PaymentMethod = "단순분납" | "신용카드할부" | "로펌금융조합분납";
+// 결제수단 4종 — 회파산 업무매뉴얼 6장(비용구조 안내) 기준. 결제수단에 따라 정산금이
+// 달라지므로(정산요율은 store.tsx의 settlementRates에서 담당자별로 설정), 여기서는
+// 결제수단 종류와 설명만 정의합니다.
+export type PaymentMethod = "단순분납" | "로피분납" | "신카할부완납" | "캐피탈분납";
 
 export const PAYMENT_METHOD_NOTE: Record<PaymentMethod, string> = {
   단순분납: "'로피' 지정일 결제 · 최대 6개월",
-  신용카드할부: "카드사 일반결제 할부 · 구상권 청구 가능성 사전고지 필요",
-  로펌금융조합분납: "계약금+대행비 40만원 선결제 후 잔액 최대 6개월 분납(연 5.2~6% 수준)",
+  로피분납: "계약금+대행비 40만원 선결제 후 잔액 최대 6개월 분납(연 5.2~6% 수준)",
+  신카할부완납: "카드사 일반결제 할부로 전액 완납 · 구상권 청구 가능성 사전고지 필요",
+  캐피탈분납: "캐피탈사 대출 연계 분납 · 심사 결과에 따라 한도/기간 상이",
 };
 
 // ---- DB(상담 리드) 관리 ----
@@ -134,6 +137,7 @@ export interface DbLead {
   status: DbLeadStatus;
   assignedStaff: StaffName;
   memo?: string; // 상담원이 남기는 기초정보 메모
+  callCount?: number; // 콜(통화 시도) 횟수 — DB관리 리스트에서 ▲▼ 버튼으로 직접 증감
   convertedClientId?: string; // 고객관리로 전환된 경우 생성된 Client id
   convertedCaseId?: string;
 }

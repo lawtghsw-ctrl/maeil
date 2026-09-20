@@ -3,8 +3,8 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
-import { CASE_STAGES, type CaseStage, type CaseStatus, type CaseType } from "@/lib/types";
-import { CaseTypeBadge, StageBadge, StatusBadge } from "@/components/ui/Badge";
+import { CASE_STAGES, STAGE_LABELS, type CaseStage, type CaseStatus, type CaseType } from "@/lib/types";
+import { StatusBadge } from "@/components/ui/Badge";
 import { Card, PageHeader, Pagination, SearchBox, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
 
@@ -111,14 +111,14 @@ export default function CasesPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-base font-bold text-slate-900">{client?.name ?? "-"}</span>
-                      <CaseTypeBadge caseType={c.caseType} />
+                      <span className="text-xs font-semibold text-slate-500">{c.caseType}</span>
                     </div>
                     <div className="mt-0.5 text-xs text-slate-500">{c.caseNumber} · 담당 {c.assignedStaff}</div>
                   </div>
                   <StatusBadge status={c.status} />
                 </div>
                 <div className="flex items-center gap-2">
-                  <StageBadge stage={c.stage} caseType={c.caseType} />
+                  <span className="text-xs font-semibold text-slate-600">{STAGE_LABELS[c.caseType][c.stage]}</span>
                   <span className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
@@ -149,12 +149,8 @@ export default function CasesPage() {
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3 font-semibold text-slate-900">{client?.name ?? "-"}</td>
                     <td className="px-4 py-3 text-slate-500">{c.caseNumber}</td>
-                    <td className="px-4 py-3">
-                      <CaseTypeBadge caseType={c.caseType} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <StageBadge stage={c.stage} caseType={c.caseType} />
-                    </td>
+                    <td className="px-4 py-3 text-slate-700">{c.caseType}</td>
+                    <td className="px-4 py-3 text-slate-700">{STAGE_LABELS[c.caseType][c.stage]}</td>
                     <td className="px-4 py-3 text-slate-500">{c.assignedStaff}</td>
                     <td className="px-4 py-3 text-slate-500">{fmtDate(c.contractDate)}</td>
                     <td className="px-4 py-3 text-slate-900">{fmtWon(c.contractAmount)}</td>
