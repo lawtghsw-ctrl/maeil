@@ -129,17 +129,21 @@ export default function ClientsPage() {
         {attentionClients.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-slate-400">현재 분납일정 등록이 필요한 의뢰인이 없습니다.</div>
         ) : (
-          <div className="no-scrollbar flex gap-2 overflow-x-auto px-4 py-3">
-            {attentionClients.slice(0, 12).map(({ client, receivable }) => (
+          // 게시판처럼 세로로 전부 나열하고 목록이 길면 박스 안에서 세로 스크롤되도록 해서,
+          // 뱃지에 표시된 전체 건수와 실제 보이는 목록이 항상 일치하도록 했습니다.
+          <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+            {attentionClients.map(({ client, receivable }) => (
               <button
                 key={client.id}
                 type="button"
                 onClick={() => selectRow(client.id)}
-                className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-left text-xs transition hover:opacity-80"
+                className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-0.5 bg-red-50/50 px-4 py-2.5 text-left text-xs transition hover:bg-red-50"
               >
-                <div className="whitespace-nowrap font-semibold text-slate-900">{client.name}</div>
-                <div className="mt-0.5 whitespace-nowrap text-[10px] text-slate-500">담당 {client.assignedStaff ?? "-"}</div>
-                <div className="mt-0.5 whitespace-nowrap text-[10px] font-semibold text-red-600">미수금 {fmtWon(receivable)}</div>
+                <div className="min-w-0">
+                  <span className="font-semibold text-slate-900">{client.name}</span>
+                  <span className="ml-2 text-slate-400">담당 {client.assignedStaff ?? "-"}</span>
+                </div>
+                <span className="shrink-0 font-semibold text-red-600">미수금 {fmtWon(receivable)}</span>
               </button>
             ))}
           </div>

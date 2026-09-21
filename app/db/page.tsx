@@ -160,7 +160,11 @@ function NextContactCell({ lead, onSet }: { lead: DbLead; onSet: (iso: string) =
   const isToday = !done && !!lead.nextContactAt && lead.nextContactAt === today;
 
   return (
-    <div className="space-y-1">
+    // 표 셀에는 기본적으로 white-space: nowrap이 적용되는데(세로 글자쌓임 버그 방지용),
+    // 이 셀 안의 안내 문구는 원래 한 줄에 다 들어가지 않는 길이라 nowrap을 그대로
+    // 물려받으면 옆 컬럼 위로 넘쳐 겹쳐 보이는 문제가 있었습니다. whitespace-normal로
+    // 이 부분만 줄바꿈을 허용해 컬럼 안에서 2줄로 자연스럽게 접히게 했습니다.
+    <div className="w-full max-w-[190px] space-y-1 whitespace-normal">
       <input
         type="date"
         disabled={done}
@@ -174,13 +178,13 @@ function NextContactCell({ lead, onSet }: { lead: DbLead; onSet: (iso: string) =
         <button
           type="button"
           onClick={() => onSet(suggested)}
-          className="text-[10px] font-semibold text-blue-600 hover:underline"
+          className="block w-full text-left text-[10px] font-semibold leading-snug text-blue-600 hover:underline"
         >
           미지정 → {fmtDate(suggested)} 제안(클릭해서 지정)
         </button>
       )}
-      {isOverdue && <div className="text-[10px] font-semibold text-red-600">재통화 예정일이 지났어요</div>}
-      {isToday && <div className="text-[10px] font-semibold text-amber-600">오늘 재통화 예정</div>}
+      {isOverdue && <div className="text-[10px] font-semibold leading-snug text-red-600">재통화 예정일이 지났어요</div>}
+      {isToday && <div className="text-[10px] font-semibold leading-snug text-amber-600">오늘 재통화 예정</div>}
     </div>
   );
 }
@@ -361,8 +365,12 @@ export default function DbManagementPage() {
         {attentionLeads.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-slate-400">현재 재통화 관리가 필요한 DB가 없습니다.</div>
         ) : (
-          <div className="no-scrollbar flex gap-2 overflow-x-auto px-4 py-3">
-            {attentionLeads.slice(0, 12).map((l) => {
+          // 예전에는 가로 스크롤 카드 12건까지만 잘라 보여줘 전체 건수(뱃지에 표시된 수)와
+          // 실제 눈에 보이는 카드 수가 달라 보였습니다. 게시판처럼 세로로 전부 나열하고,
+          // 목록이 길면 박스 안에서 세로 스크롤(스크롤바 표시)되도록 바꿔 전체 건수가
+          // 빠짐없이 보이게 했습니다.
+          <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+            {attentionLeads.map((l) => {
               const overdue = !!l.nextContactAt && l.nextContactAt < todayIso;
               return (
                 <button
@@ -372,15 +380,18 @@ export default function DbManagementPage() {
                     setQuery(l.name);
                     setPage(1);
                   }}
-                  className={`shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition hover:opacity-80 ${
-                    overdue ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"
+                  className={`flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-2.5 text-left text-xs transition hover:bg-slate-50 ${
+                    overdue ? "bg-red-50/50" : "bg-amber-50/40"
                   }`}
                 >
-                  <div className="whitespace-nowrap font-semibold text-slate-900">{l.name}</div>
-                  <div className="mt-0.5 whitespace-nowrap text-[10px] text-slate-500">담당 {l.assignedStaff}</div>
-                  <div className={`mt-0.5 whitespace-nowrap text-[10px] font-semibold ${overdue ? "text-red-600" : "text-amber-600"}`}>
-                    {overdue ? `재통화 ${l.nextContactAt} 지남` : "재통화 예정일 미지정"}
+                  <div className="min-w-0">
+                    <span className="font-semibold text-slate-900">{l.name}</span>
+                    <span className="ml-2 text-slate-400">{l.phone}</span>
+                    <span className="ml-2 text-slate-400">담당 {l.assignedStaff}</span>
                   </div>
+                  <span className={`shrink-0 font-semibold ${overdue ? "text-red-600" : "text-amber-600"}`}>
+                    {overdue ? `재통화 ${l.nextContactAt} 지남` : "재통화 예정일 미지정"}
+                  </span>
                 </button>
               );
             })}
@@ -622,7 +633,7 @@ export default function DbManagementPage() {
                       onChange={(v) => updateLead(lead.id, { callCount: v })}
                     />
                   </td>
-                  <td className="min-w-[170px] px-4 py-3">
+                  <td className="min-w-[200px] px-4 py-3">
                     <NextContactCell lead={lead} onSet={(v) => updateLead(lead.id, { nextContactAt: v || undefined })} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
