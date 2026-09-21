@@ -50,7 +50,7 @@ export function MonthCalendar({
   month: string; // YYYY-MM
   onMonthChange: (month: string) => void;
   items: CalendarItem[];
-  tone: "blue" | "amber";
+  tone: "blue" | "amber" | "violet";
   summary?: { paid: number; expected: number; total: number };
 }) {
   const [yy, mm] = month.split("-").map(Number);
@@ -144,7 +144,10 @@ export function MonthCalendar({
                 다음달
               </button>
               <span className="grid h-8 w-9 place-items-center rounded-lg border border-slate-200 bg-white">
-                <CalendarDays size={17} className={tone === "blue" ? "text-blue-600" : "text-amber-600"} />
+                <CalendarDays
+                  size={17}
+                  className={tone === "blue" ? "text-blue-600" : tone === "amber" ? "text-amber-600" : "text-violet-600"}
+                />
               </span>
             </div>
           </div>
@@ -199,7 +202,9 @@ export function MonthCalendar({
                           ? "bg-slate-200 text-slate-500 opacity-75"
                           : tone === "blue"
                           ? "bg-blue-50 text-blue-800"
-                          : "bg-amber-50 text-amber-800";
+                          : tone === "amber"
+                          ? "bg-amber-50 text-amber-800"
+                          : "bg-violet-50 text-violet-800";
                         return (
                           <div key={x.id} className={`rounded-md px-1.5 py-1 text-[10px] font-medium sm:text-[11px] ${rowClass}`}>
                             <div className="flex min-w-0 items-center gap-1">
@@ -241,7 +246,11 @@ export function MonthCalendar({
               <div className="shrink-0 text-[13px] font-bold text-slate-900">
                 {Number(active.date.slice(5, 7))}월 {Number(active.date.slice(-2))}일 일정
               </div>
-              <div className={`min-w-0 flex-1 truncate text-center text-[10px] font-bold ${tone === "blue" ? "text-blue-700" : "text-amber-700"}`}>
+              <div
+                className={`min-w-0 flex-1 truncate text-center text-[10px] font-bold ${
+                  tone === "blue" ? "text-blue-700" : tone === "amber" ? "text-amber-700" : "text-violet-700"
+                }`}
+              >
                 합계 {fmtWon(active.rows.reduce((sum, row) => sum + (row.amount || 0), 0))}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
@@ -262,7 +271,9 @@ export function MonthCalendar({
                 ? "border-slate-200 bg-slate-100 text-slate-500"
                 : tone === "blue"
                 ? "border-blue-100 bg-blue-50 text-blue-900"
-                : "border-amber-100 bg-amber-50 text-amber-900";
+                : tone === "amber"
+                ? "border-amber-100 bg-amber-50 text-amber-900"
+                : "border-violet-100 bg-violet-50 text-violet-900";
               return (
                 <div key={x.id} className={`rounded-lg border px-2.5 py-2 ${rowClass}`}>
                   <div className="flex items-start justify-between gap-2">

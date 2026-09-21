@@ -29,7 +29,7 @@ import { computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput } f
 import { ConsultationTabsEditor, CONSULTATION_TABS, type ConsultationTabKey } from "@/components/ui/ConsultationTabsEditor";
 import { Button, Card, Modal, PageHeader, Pagination, SearchBox, pageRows } from "@/components/ui/Primitives";
 import { fmtDate } from "@/lib/format";
-import { ClipboardList } from "lucide-react";
+import { AlarmClock, ClipboardList } from "lucide-react";
 
 // 콜(통화 시도) 횟수 — 0부터 시작해 ▲▼ 버튼으로 담당자가 직접 증감시키는 단순 카운터.
 function CallCounter({ value, disabled, onChange }: { value: number; disabled?: boolean; onChange: (v: number) => void }) {
@@ -74,12 +74,15 @@ function ColorTag({ label, color }: { label: string; color: string }) {
   );
 }
 
+// 태그가 3개까지 붙다 보니 컬럼이 좁으면 두 줄로 줄바꿈되던 것을, "한 줄로 쭉 나열"
+// 요청에 따라 줄바꿈 없이 한 줄에 배치하고 넘치면 가로 스크롤되게 바꿨습니다
+// (스크롤바는 no-scrollbar로 숨김).
 function LeadTags({ lead }: { lead: DbLead }) {
   if (!lead.debtRange && !lead.incomeRange && !lead.consultTime) {
-    return <span className="text-[11px] text-slate-300">인스턴트 양식 응답 없음</span>;
+    return <span className="whitespace-nowrap text-[11px] text-slate-300">인스턴트 양식 응답 없음</span>;
   }
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="no-scrollbar flex flex-nowrap items-center gap-1 overflow-x-auto">
       {lead.debtRange && <ColorTag label={lead.debtRange} color={DEBT_RANGE_COLOR[lead.debtRange]} />}
       {lead.incomeRange && <ColorTag label={lead.incomeRange} color={INCOME_RANGE_COLOR[lead.incomeRange]} />}
       {lead.consultTime && <ColorTag label={lead.consultTime} color={CONSULT_TIME_COLOR[lead.consultTime]} />}
@@ -123,7 +126,7 @@ function PivotBar<T extends string>({
         <button
           key={opt}
           type="button"
-          onClick={() => onSelect(opt)}
+          onClick={() => onSelect(active === opt ? "전체" : opt)}
           className="rounded-md px-2 py-1 text-[11px] font-semibold transition"
           style={
             active === opt
@@ -317,12 +320,73 @@ export default function DbManagementPage() {
 
   const newTodayCount = leads.filter((l) => l.status === "신규접수").length;
 
+  // ---- 관리가 필요한 DB — 재통화 예정일이 지났거나 아직 지정되지 않은 리드를 상단에
+  // 바로 모아 보여줘, 영업진이 놓치는 컨택이 없도록 합니다(도원 사채어드민의
+  // '분납/상환일정 미등록' 박스와 동일한 취지). 클릭하면 검색창에 이름이 채워져
+  // 아래 목록이 바로 그 리드로 필터링됩니다.
+  const todayIso = todayIsoStr();
+  const attentionLeads = useMemo(() => {
+    return leads
+      .filter((l) => {
+        const done = !!l.convertedClientId || l.status === "거절" || l.status === "부적합" || l.status === "종결_중단";
+        if (done) return false;
+        return !l.nextContactAt || l.nextContactAt < todayIso;
+      })
+      .sort((a, b) => {
+        const aOverdue = !!a.nextContactAt && a.nextContactAt < todayIso;
+        const bOverdue = !!b.nextContactAt && b.nextContactAt < todayIso;
+        if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+        const an = a.nextContactAt ?? "9999-99-99";
+        const bn = b.nextContactAt ?? "9999-99-99";
+        return an < bn ? -1 : an > bn ? 1 : 0;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads, todayIso]);
+
   return (
     <>
       <PageHeader
         title="DB관리"
         description={`광고 등으로 접수된 상담 신청 ${leads.length}건 · 미확인 신규 ${newTodayCount}건 — 기초정보를 메모하고 상태를 정리한 뒤 '고객 전환'으로 고객관리에 등록하세요.`}
       />
+
+      <Card className="mb-4 overflow-hidden border-red-100">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <AlarmClock size={16} className="text-red-500" />
+            관리가 필요한 DB (재통화 예정일 경과·미지정)
+          </div>
+          <span className="text-xs text-slate-400">{attentionLeads.length}건</span>
+        </div>
+        {attentionLeads.length === 0 ? (
+          <div className="px-4 py-6 text-center text-xs text-slate-400">현재 재통화 관리가 필요한 DB가 없습니다.</div>
+        ) : (
+          <div className="no-scrollbar flex gap-2 overflow-x-auto px-4 py-3">
+            {attentionLeads.slice(0, 12).map((l) => {
+              const overdue = !!l.nextContactAt && l.nextContactAt < todayIso;
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => {
+                    setQuery(l.name);
+                    setPage(1);
+                  }}
+                  className={`shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition hover:opacity-80 ${
+                    overdue ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"
+                  }`}
+                >
+                  <div className="whitespace-nowrap font-semibold text-slate-900">{l.name}</div>
+                  <div className="mt-0.5 whitespace-nowrap text-[10px] text-slate-500">담당 {l.assignedStaff}</div>
+                  <div className={`mt-0.5 whitespace-nowrap text-[10px] font-semibold ${overdue ? "text-red-600" : "text-amber-600"}`}>
+                    {overdue ? `재통화 ${l.nextContactAt} 지남` : "재통화 예정일 미지정"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -531,7 +595,7 @@ export default function DbManagementPage() {
                     <div className="font-semibold text-slate-900">{lead.name}</div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{lead.phone}</td>
-                  <td className="min-w-[160px] px-4 py-3">
+                  <td className="min-w-[220px] max-w-[260px] px-4 py-3">
                     <LeadTags lead={lead} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">

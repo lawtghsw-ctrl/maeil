@@ -56,7 +56,7 @@ function todayIsoStr(): string {
 }
 
 export default function ClientsPage() {
-  const { clients, cases, updateClient, updateCase, deleteClient } = useStore();
+  const { clients, cases, installments, updateClient, updateCase, deleteClient } = useStore();
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<ConsultDirection | "전체">("전체");
   const [page, setPage] = useState(1);
@@ -65,7 +65,6 @@ export default function ClientsPage() {
   const [installOpen, setInstallOpen] = useState(false);
   const [eformOpen, setEformOpen] = useState(false);
   const [docGuideOpen, setDocGuideOpen] = useState(false);
-  const [settlementOpen, setSettlementOpen] = useState(false);
   const [delTarget, setDelTarget] = useState<Client | null>(null);
 
   const rows = useMemo(() => {
@@ -99,12 +98,53 @@ export default function ClientsPage() {
     return map;
   }, [clients]);
 
+  // ---- 관리가 필요한 의뢰인 — 미수금은 남아있는데 아직 '예정' 상태의 분납 일정이
+  // 하나도 등록되지 않은 계약을 모아 상단에 보여줍니다(도원 사채어드민의
+  // '분납/상환일정 미등록' 박스와 동일한 취지). 검색·필터와 무관하게 항상 전체
+  // 의뢰인 기준으로 계산해, 필터에 가려져 놓치는 일이 없게 했습니다.
+  const attentionClients = useMemo(() => {
+    return clients
+      .map((cl) => {
+        const clientCases = cases.filter((c) => c.clientId === cl.id);
+        const receivable = clientCases.reduce((a, c) => a + Math.max(0, c.contractAmount - c.paidAmount), 0);
+        const hasScheduled = clientCases.some((c) => installments.some((i) => i.caseId === c.id && i.status === "예정"));
+        return { client: cl, receivable, hasCases: clientCases.length > 0, hasScheduled };
+      })
+      .filter((r) => r.hasCases && r.receivable > 0 && !r.hasScheduled)
+      .sort((a, b) => b.receivable - a.receivable);
+  }, [clients, cases, installments]);
+
   return (
     <>
       <PageHeader
         title="고객관리"
         description={`의뢰인 ${clients.length}명 중 ${rows.length}명 표시 — 이름을 클릭하면 하단에서 계약·분납·전자계약서를 바로 관리할 수 있어요.`}
       />
+
+      <Card className="mb-4 overflow-hidden border-red-100">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <div className="text-sm font-semibold text-slate-900">관리가 필요한 의뢰인 (미수금 있음 · 분납일정 미등록)</div>
+          <span className="text-xs text-slate-400">{attentionClients.length}명</span>
+        </div>
+        {attentionClients.length === 0 ? (
+          <div className="px-4 py-6 text-center text-xs text-slate-400">현재 분납일정 등록이 필요한 의뢰인이 없습니다.</div>
+        ) : (
+          <div className="no-scrollbar flex gap-2 overflow-x-auto px-4 py-3">
+            {attentionClients.slice(0, 12).map(({ client, receivable }) => (
+              <button
+                key={client.id}
+                type="button"
+                onClick={() => selectRow(client.id)}
+                className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-left text-xs transition hover:opacity-80"
+              >
+                <div className="whitespace-nowrap font-semibold text-slate-900">{client.name}</div>
+                <div className="mt-0.5 whitespace-nowrap text-[10px] text-slate-500">담당 {client.assignedStaff ?? "-"}</div>
+                <div className="mt-0.5 whitespace-nowrap text-[10px] font-semibold text-red-600">미수금 {fmtWon(receivable)}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -271,7 +311,6 @@ export default function ClientsPage() {
           onInstallments={() => setInstallOpen(true)}
           onEform={() => setEformOpen(true)}
           onDocGuide={() => setDocGuideOpen(true)}
-          onSettlement={() => setSettlementOpen(true)}
           onDelete={() => setDelTarget(selected.client)}
         />
       )}
@@ -306,16 +345,6 @@ export default function ClientsPage() {
         />
       )}
 
-      {selected && (
-        <SettlementRateModal
-          key={`settlement-${selected.client.id}-${settlementOpen}`}
-          open={settlementOpen}
-          client={selected.client}
-          clientCases={selected.cases}
-          onClose={() => setSettlementOpen(false)}
-        />
-      )}
-
       {editTarget && (
         <CustomerEditModal
           key={editTarget.id}
@@ -323,9 +352,9 @@ export default function ClientsPage() {
           client={editTarget}
           primaryCase={cases.find((c) => c.clientId === editTarget.id)}
           onClose={() => setEditTarget(null)}
-          onSave={(clientPatch, consultation, contractMemo, primaryCaseId) => {
+          onSave={(clientPatch, consultation, contractMemo, primaryCaseId, paymentMethod) => {
             updateClient(editTarget.id, { ...clientPatch, consultation });
-            if (primaryCaseId) updateCase(primaryCaseId, { memo: contractMemo });
+            if (primaryCaseId) updateCase(primaryCaseId, { memo: contractMemo, ...(paymentMethod ? { paymentMethod } : {}) });
             setEditTarget(null);
           }}
         />
@@ -355,7 +384,6 @@ function CustomerDetail({
   onInstallments,
   onEform,
   onDocGuide,
-  onSettlement,
   onDelete,
 }: {
   client: Client;
@@ -365,7 +393,6 @@ function CustomerDetail({
   onInstallments: () => void;
   onEform: () => void;
   onDocGuide: () => void;
-  onSettlement: () => void;
   onDelete: () => void;
 }) {
   const contractTotal = clientCases.reduce((a, c) => a + c.contractAmount, 0);
@@ -396,10 +423,13 @@ function CustomerDetail({
             <Send size={15} />
             서류안내문 전송
           </Button>
-          <Button variant="secondary" onClick={onSettlement}>
+          <Link
+            href="/settlement-settings"
+            className="flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
             <Percent size={15} />
-            정산 설정
-          </Button>
+            정산요율 설정
+          </Link>
           <Button variant="danger" onClick={onDelete}>
             <Trash2 size={14} />
             삭제
@@ -759,93 +789,6 @@ function DocGuideModal({
   );
 }
 
-// ---- 정산 설정 팝업 — 결제수단(단순분납/로피분납/신카할부완납/캐피탈분납)별로 정산금이
-// 달라지고, 같은 결제수단이라도 담당자별로 다른 정산요율을 설정할 수 있도록 함 ----
-function SettlementRateModal({
-  open,
-  client,
-  clientCases,
-  onClose,
-}: {
-  open: boolean;
-  client: Client;
-  clientCases: CaseRecord[];
-  onClose: () => void;
-}) {
-  const { settlementRates, updateSettlementRate } = useStore();
-  const c = clientCases[0];
-  const rate = c ? settlementRates[c.assignedStaff as StaffName]?.[c.paymentMethod] ?? 0 : 0;
-  const expectedSettlement = c ? Math.round((c.contractAmount * rate) / 100) : 0;
-
-  return (
-    <Modal open={open} title="정산요율 설정 (담당자 × 결제수단)" onClose={onClose} size="lg">
-      <div className="space-y-4">
-        <div className="rounded-xl bg-blue-50 p-4 text-xs text-blue-700">
-          단순분납 / 로피분납 / 신카할부완납 / 캐피탈분납 결제수단에 따라 실제 정산금이 달라지고, 같은 결제수단이라도
-          담당자별로 다른 요율을 적용할 수 있습니다. 로펌 관리자가 아래에서 담당자별 · 결제수단별 정산요율(%)을 설정하면
-          정산 메뉴 및 예상 정산금 계산에 즉시 반영됩니다.
-        </div>
-
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full min-w-[560px] text-xs">
-            <thead className="bg-slate-50 text-left text-slate-500">
-              <tr>
-                <th className="px-3 py-2 font-medium">담당자</th>
-                {PAYMENT_METHODS.map((m) => (
-                  <th key={m} className="px-3 py-2 font-medium">
-                    {m}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {STAFF_LIST.map((staff) => (
-                <tr key={staff} className="border-t border-slate-100">
-                  <td className="px-3 py-2 font-semibold text-slate-700">{staff}</td>
-                  {PAYMENT_METHODS.map((m) => (
-                    <td key={m} className="px-3 py-2">
-                      <div className="flex items-center gap-1">
-                        <NumberInput
-                          className="w-20"
-                          value={settlementRates[staff]?.[m] ?? 0}
-                          onChange={(v) => updateSettlementRate(staff, m, v)}
-                        />
-                        <span className="text-slate-400">%</span>
-                      </div>
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {c ? (
-          <div className="rounded-xl bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">
-              {client.name} 고객 예상 정산금 · 결제수단 {c.paymentMethod} · 담당 {c.assignedStaff}
-            </div>
-            <div className="mt-1 flex flex-wrap items-baseline gap-2">
-              <span className="text-lg font-bold text-slate-900">{fmtWon(expectedSettlement)}</span>
-              <span className="text-xs text-slate-400">
-                = 계약금액 {fmtWon(c.contractAmount)} × 적용요율 {rate}%
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
-            연결된 계약이 없어 예상 정산금을 계산할 수 없습니다.
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>닫기</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 // ---- 고객정보 수정 팝업 — 상담일지(개인회생·개인파산 상담일지) 전 항목을 탭으로 분류 ----
 // 도원 Admin의 '수정 팝업 + 메모/체크리스트' 상호작용 패턴을 이식하되, 내용은 고객이
 // 전달한 상담일지 엑셀 서식(인적사항/소득현황/재산현황/채무현황/변제계획/상담메모)을
@@ -868,7 +811,8 @@ function CustomerEditModal({
     clientPatch: Pick<Client, "name" | "phone" | "assignedStaff" | "memo" | "applicationType">,
     consultation: ConsultationInfo,
     contractMemo: string,
-    primaryCaseId?: string
+    primaryCaseId: string | undefined,
+    paymentMethod: PaymentMethod | undefined
   ) => void;
 }) {
   const [tab, setTab] = useState<TabKey>("기본정보");
@@ -878,6 +822,7 @@ function CustomerEditModal({
   const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(client.applicationType);
   const [memo, setMemo] = useState(client.memo ?? "");
   const [contractMemo, setContractMemo] = useState(primaryCase?.memo ?? "");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | undefined>(primaryCase?.paymentMethod);
 
   const [personal, setPersonal] = useState(client.consultation?.personal ?? {});
   const [income, setIncome] = useState(client.consultation?.income ?? {});
@@ -895,6 +840,7 @@ function CustomerEditModal({
     setApplicationType(client.applicationType);
     setMemo(client.memo ?? "");
     setContractMemo(primaryCase?.memo ?? "");
+    setPaymentMethod(primaryCase?.paymentMethod);
     setPersonal(client.consultation?.personal ?? {});
     setIncome(client.consultation?.income ?? {});
     setAssets(client.consultation?.assets ?? emptyAssetRows());
@@ -915,7 +861,8 @@ function CustomerEditModal({
       { name: name.trim(), phone: phone.trim(), assignedStaff, memo: memo.trim() || undefined, applicationType },
       { personal, income, assets, debts, plan, memo: consultMemo.trim() || undefined },
       contractMemo.trim(),
-      primaryCase?.id
+      primaryCase?.id,
+      paymentMethod
     );
   }
 
@@ -981,6 +928,24 @@ function CustomerEditModal({
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setContractMemo(e.target.value)}
               disabled={!primaryCase}
             />
+          </Label>
+          <Label text="결제방식 (정산설정의 담당자×결제수단 요율과 자동 연동)">
+            <Select
+              value={paymentMethod ?? ""}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setPaymentMethod((e.target.value || undefined) as PaymentMethod | undefined)}
+              className="w-full"
+              disabled={!primaryCase}
+            >
+              <option value="">{primaryCase ? "선택" : "연결된 계약이 없어 저장 시 반영되지 않습니다"}</option>
+              {PAYMENT_METHODS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+            {primaryCase && (
+              <div className="mt-1 text-[11px] text-slate-400">{paymentMethod ? PAYMENT_METHOD_NOTE[paymentMethod] : "결제방식을 선택하면 정산 메뉴에 적용요율이 자동 반영됩니다."}</div>
+            )}
           </Label>
         </div>
       )}

@@ -97,6 +97,34 @@ textarea {
   border-collapse: collapse;
 }
 
+/* 글씨 세로쌓임(문자별 줄바꿈) 방지 — 예전에는 이 nowrap 규칙이 모바일 미디어쿼리
+   안에만 있어서, 실제 기기 뷰포트가 md(768px) 브레이크포인트를 넘어 데스크톱 표
+   레이아웃이 그려지는 경우(가로모드, 큰 화면 폰 등) 컬럼이 좁아지면 이름·연락처
+   같은 텍스트가 한 글자씩 세로로 줄바꿈되는 문제가 있었습니다. 화면 너비와 무관하게
+   항상 가로로 한 줄 유지되도록 기본 규칙으로 옮겼습니다. */
+.admin-responsive-table th,
+.admin-responsive-table td {
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+/* 메모처럼 의도적으로 줄바꿈이 필요한 셀에만 개별적으로 적용 */
+.admin-responsive-table .table-cell-wrap {
+  white-space: normal;
+}
+
+/* 가로 스크롤로 한 줄 유지하고 싶은 태그/뱃지 묶음(리드정보 등)에 사용 */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 @media (max-width: 767px) {
   main {
     min-width: 0;
@@ -112,11 +140,6 @@ textarea {
   .admin-responsive-table th,
   .admin-responsive-table td {
     min-width: 104px !important;
-    white-space: nowrap !important;
-    word-break: keep-all !important;
-    overflow-wrap: normal !important;
-    line-height: 1.4 !important;
-    vertical-align: middle !important;
     padding-left: 12px !important;
     padding-right: 12px !important;
   }

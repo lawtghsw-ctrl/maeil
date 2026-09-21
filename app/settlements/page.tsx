@@ -4,14 +4,15 @@
 // 사채업 특유의 '환수' 개념은 없으므로 계약매출/실매출/미수금 3대 지표와
 // 담당자별 정산 요약, 결제완료 내역(CSV 내보내기)으로 구성했습니다.
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { getStaffPerformance } from "@/lib/dashboard";
-import { PAYMENT_METHOD_NOTE } from "@/lib/types";
+import { PAYMENT_METHOD_NOTE, type StaffName } from "@/lib/types";
 import { fmtDate, fmtWon } from "@/lib/format";
 import { Card, PageHeader, Pagination, pageRows } from "@/components/ui/Primitives";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { KpiCard } from "@/components/ui/KpiCard";
-import { Download } from "lucide-react";
+import { Download, Percent } from "lucide-react";
 
 function monthRange() {
   const t = new Date();
@@ -41,7 +42,7 @@ function downloadCsv(rows: Array<Record<string, string>>, filename: string) {
 }
 
 export default function SettlementsPage() {
-  const { cases, clients, installments } = useStore();
+  const { cases, clients, installments, settlementRates } = useStore();
   const init = monthRange();
   const [rangeStart, setRangeStart] = useState(init.start);
   const [rangeEnd, setRangeEnd] = useState(init.end);
@@ -68,6 +69,23 @@ export default function SettlementsPage() {
   }, [cases, paidRows, rangeStart, rangeEnd]);
 
   const staffRows = useMemo(() => getStaffPerformance(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
+
+  // ---- 담당자별 예상 정산액 — 정산설정 메뉴에서 설정한 담당자×결제수단 요율을, 고객관리에서
+  // 실제 선택된 결제방식(case.paymentMethod)에 곱해 자동 계산합니다. 정산설정에서 요율을
+  // 바꾸거나 고객관리에서 결제방식을 바꾸면 이 화면에 즉시 반영됩니다.
+  const expectedSettlementByStaff = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of cases) {
+      if (!inRange(c.contractDate, rangeStart, rangeEnd)) continue;
+      const rate = settlementRates[c.assignedStaff as StaffName]?.[c.paymentMethod] ?? 0;
+      map.set(c.assignedStaff, (map.get(c.assignedStaff) ?? 0) + Math.round((c.contractAmount * rate) / 100));
+    }
+    return map;
+  }, [cases, settlementRates, rangeStart, rangeEnd]);
+  const expectedSettlementTotal = useMemo(
+    () => Array.from(expectedSettlementByStaff.values()).reduce((a, v) => a + v, 0),
+    [expectedSettlementByStaff]
+  );
 
   function exportCsv() {
     const rows = paidRows.map((r) => ({
@@ -100,19 +118,29 @@ export default function SettlementsPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="계약매출 (계약일 기준)" value={fmtWon(kpi.contractSales)} />
         <KpiCard label="실매출 (결제완료액)" value={fmtWon(kpi.realSales)} />
         <KpiCard label="현재 전체 미수금" value={fmtWon(kpi.receivable)} />
+        <KpiCard label="예상 정산액 합계 (요율 적용)" value={fmtWon(expectedSettlementTotal)} />
       </div>
 
       <Card className="mt-4 overflow-hidden">
-        <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-900">담당자별 정산 요약</div>
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div className="text-sm font-semibold text-slate-900">담당자별 정산 요약</div>
+          <Link
+            href="/settlement-settings"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            <Percent size={13} />
+            정산요율 설정
+          </Link>
+        </div>
         <div className="overflow-x-auto">
-          <table className="admin-responsive-table w-full min-w-[640px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["담당자", "계약건수", "계약금액", "결제율"].map((h) => (
+                {["담당자", "계약건수", "계약금액", "결제율", "예상 정산액"].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -126,11 +154,12 @@ export default function SettlementsPage() {
                   <td className="px-4 py-3 text-slate-500">{r.caseCount}건</td>
                   <td className="px-4 py-3 text-slate-900">{fmtWon(r.contractAmount)}</td>
                   <td className="px-4 py-3 text-slate-500">{r.paymentRate.toFixed(1)}%</td>
+                  <td className="px-4 py-3 font-semibold text-blue-700">{fmtWon(expectedSettlementByStaff.get(r.staff) ?? 0)}</td>
                 </tr>
               ))}
               {staffRows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={5} className="px-4 py-10 text-center text-slate-400">
                     선택한 기간에 계약 건이 없습니다.
                   </td>
                 </tr>

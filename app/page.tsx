@@ -21,7 +21,7 @@ import {
   getStageDistribution,
   STAGE_CHART_COLORS,
 } from "@/lib/dashboard";
-import { STAGE_GENERIC_LABELS } from "@/lib/types";
+import { DB_LEAD_STATUS_LABEL, STAGE_GENERIC_LABELS } from "@/lib/types";
 import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const [rangeEnd, setRangeEnd] = useState(initialRange.end);
   const [paymentMonth, setPaymentMonth] = useState(currentMonth);
   const [hearingMonth, setHearingMonth] = useState(currentMonth);
+  const [contactMonth, setContactMonth] = useState(currentMonth);
 
   // ---- 상단 KPI (도원 Admin 대시보드와 동일하게 DateRangePicker로 선택한 기간 기준) ----
   const kpi = useMemo(() => {
@@ -120,6 +121,27 @@ export default function DashboardPage() {
   // 피드백 반영) — DB관리의 실시간 leads를 기준으로 계산해 상태·콜횟수를 바꾸면 바로 반영됨.
   const leadKpis = useMemo(() => getLeadKpis(leads), [leads]);
   const considerationTodo = useMemo(() => getConsiderationTodoList(leads, 8), [leads]);
+
+  // ---- 업무일정 캘린더 — "재통화 일시 지정 → 캘린더 + 알림", "고려중 DB를 적극 관리할 수
+  // 있는 캘린더 표시가 필요함" 요청 반영. DB관리에서 지정한 재통화 예정일을 월간 캘린더로
+  // 볼 수 있게 하고, 예정일이 지난 건은 "지남" 배지로 표시합니다.
+  const contactItems: CalendarItem[] = useMemo(() => {
+    const t = today();
+    return leads
+      .filter((l) => {
+        const done = !!l.convertedClientId || l.status === "거절" || l.status === "부적합" || l.status === "종결_중단";
+        return !done && !!l.nextContactAt && l.nextContactAt.startsWith(contactMonth);
+      })
+      .map((l) => ({
+        id: l.id,
+        date: l.nextContactAt as string,
+        label: l.name,
+        sub: `${DB_LEAD_STATUS_LABEL[l.status]} · 담당 ${l.assignedStaff}`,
+        done: false,
+        status: (l.nextContactAt as string) < t ? "지남" : undefined,
+        amount: 0,
+      }));
+  }, [leads, contactMonth]);
 
   // ---- 기간별 통계(년/월/주/일) — 기존 로피 기간엔진 이식분을 그대로 유지, 톤만 재적용 ----
   const [mode, setMode] = useState<PeriodMode>("month");
@@ -273,6 +295,16 @@ export default function DashboardPage() {
           onMonthChange={setHearingMonth}
           items={hearingItems}
           tone="amber"
+        />
+      </div>
+
+      <div className="mt-4">
+        <MonthCalendar
+          title="업무일정 캘린더 (DB 재통화 예정)"
+          month={contactMonth}
+          onMonthChange={setContactMonth}
+          items={contactItems}
+          tone="violet"
         />
       </div>
 

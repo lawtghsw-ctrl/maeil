@@ -142,18 +142,21 @@ export function Select({
   onChange,
   children,
   className,
+  disabled,
 }: {
   value?: string;
   onChange?: (e: ChangeEvent<HTMLSelectElement>) => void;
   children: ReactNode;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <select
       value={value}
       onChange={onChange}
+      disabled={disabled}
       className={cn(
-        "h-11 rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 sm:h-10 sm:text-sm",
+        "h-11 rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 disabled:opacity-60 sm:h-10 sm:text-sm",
         className
       )}
     >
