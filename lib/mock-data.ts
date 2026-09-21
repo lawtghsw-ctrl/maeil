@@ -7,7 +7,10 @@
 
 import {
   CASE_STAGES,
+  CONSULT_TIME_OPTIONS,
   DB_LEAD_STATUSES,
+  DEBT_RANGE_OPTIONS,
+  INCOME_RANGE_OPTIONS,
   STAFF_LIST,
   type BoardPost,
   type CaseRecord,
@@ -16,6 +19,7 @@ import {
   type CaseType,
   type Client,
   type ConsultationInfo,
+  type ConsultDirection,
   type DayAggregate,
   type DbLead,
   type DbLeadStatus,
@@ -147,6 +151,15 @@ function randomCaseType(): CaseType {
   return chance(0.62) ? "개인회생" : "개인파산";
 }
 
+// 상담 후 방향(개인회생/개인파산/워크아웃) — DB·고객 단계의 분류용. 법원 사건(계약관리)은
+// 워크아웃을 다루지 않으므로 CaseRecord.caseType에는 쓰지 않습니다.
+function randomConsultDirection(): ConsultDirection {
+  const r = rand();
+  if (r < 0.55) return "개인회생";
+  if (r < 0.85) return "개인파산";
+  return "워크아웃";
+}
+
 function contractAmountFor(caseType: CaseType): number {
   // 표시용 샘플 금액 — 실제 수임료 기준이 아닌 화면 설계 검증용 임의값
   return caseType === "개인회생"
@@ -222,11 +235,11 @@ export const cases: CaseRecord[] = Array.from({ length: CASE_COUNT }, (_, i) => 
   };
 });
 
-// 신청분류(개인회생/개인파산) — 연결된 계약이 있으면 그 사건유형을 그대로 따르고,
-// 아직 계약이 없는 고객(DB관리에서 막 전환된 경우 등)은 임의로 배정합니다.
+// 상담 후 방향(개인회생/개인파산/워크아웃) — 연결된 계약이 있으면 그 사건유형을 그대로
+// 따르고, 아직 계약이 없는 고객(DB관리에서 막 전환된 경우 등)은 임의로 배정합니다.
 for (const c of clients) {
   const relatedCase = cases.find((cc) => cc.clientId === c.id);
-  c.applicationType = relatedCase ? relatedCase.caseType : chance(0.62) ? "개인회생" : "개인파산";
+  c.applicationType = relatedCase ? relatedCase.caseType : randomConsultDirection();
 }
 
 // 상담일지 데모 샘플 — 고객이 전달한 상담일지 서식이 실제로 어떻게 채워지는지 보여주기
@@ -399,9 +412,28 @@ function randomCallCount(status: DbLeadStatus): number {
   return randInt(1, 4);
 }
 
+// 재통화 예정일 — 현재 관리가 특히 필요한 상태(고려중/재통화필요/상담예정)는 오늘 근처
+// (지난 날짜 포함, 놓친 케이스를 보여주기 위해)로, 그 외는 대체로 비워둬 화면에서
+// "미지정 → +1일 제안" 흐름을 확인할 수 있게 했습니다.
+function randomNextContactAt(status: DbLeadStatus, receivedAtIso: string): string | undefined {
+  const needsFollowUp = status === "고려중" || status === "재통화필요" || status === "상담예정";
+  if (needsFollowUp) {
+    if (chance(0.7)) return isoOf(daysFromNow(randInt(-3, 5)));
+    return undefined; // 일부는 미지정 상태로 남겨 "+1일 제안" UI를 보여줌
+  }
+  if (chance(0.15)) return isoOf(daysFromNow(randInt(-2, 3)));
+  return undefined;
+}
+
+// 광고 인스턴트 양식(채무총금액/실월소득/상담가능시간) — 앞으로 고정 운영할 양식이라
+// 대부분의 리드에 값을 채워두고, 일부만 다른 채널 유입을 흉내내 비워둡니다.
+const LEAD_CONSULTATION_DEMO_IDX = new Set([1, 6]);
+
 export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
   const status = weightedLeadStatus();
   const receivedDaysAgo = randInt(0, 12);
+  const receivedAt = isoOf(daysAgo(receivedDaysAgo));
+  const hasInstantForm = chance(0.88);
 
   let convertedClientId: string | undefined;
   let convertedCaseId: string | undefined;
@@ -411,16 +443,29 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
     convertedCaseId = cases.find((c) => c.clientId === client.id)?.id;
   }
 
+  const consultation: ConsultationInfo | undefined = LEAD_CONSULTATION_DEMO_IDX.has(i)
+    ? {
+        personal: { occupationType: pick(["직장인", "프리랜서", "사업자"] as const), spouse: chance(0.5) },
+        income: { incomeType: "근로소득", monthlyAvgIncome: randInt(180, 320) * 10000 },
+        memo: "DB 단계에서 1차 상담 진행 — 서류 준비 안내 완료, 방향 확정은 다음 통화에서.",
+      }
+    : undefined;
+
   return {
     id: `LEAD-${String(i + 1).padStart(4, "0")}`,
     name: randomName(),
     phone: randomPhone(),
-    applicationType: chance(0.8) ? randomCaseType() : undefined,
-    receivedAt: isoOf(daysAgo(receivedDaysAgo)),
+    applicationType: chance(0.8) ? randomConsultDirection() : undefined,
+    receivedAt,
     status,
     assignedStaff: pick(STAFF),
     memo: chance(0.5) ? pick(LEAD_MEMO_SAMPLES) : undefined,
     callCount: randomCallCount(status),
+    debtRange: hasInstantForm ? pick(DEBT_RANGE_OPTIONS) : undefined,
+    incomeRange: hasInstantForm ? pick(INCOME_RANGE_OPTIONS) : undefined,
+    consultTime: hasInstantForm ? pick(CONSULT_TIME_OPTIONS) : undefined,
+    nextContactAt: randomNextContactAt(status, receivedAt),
+    consultation,
     convertedClientId,
     convertedCaseId,
   };

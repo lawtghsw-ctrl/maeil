@@ -56,7 +56,7 @@ export default function CaseDetailPage() {
           {[
             ["총 채무액", fmtWon(c.totalDebt)],
             ["계약금액", fmtWon(c.contractAmount)],
-            ["기납부액", fmtWon(c.paidAmount)],
+            ["결제금액", fmtWon(c.paidAmount)],
             ["미수금", fmtWon(receivable)],
             ["결제수단", PAYMENT_METHOD_NOTE[c.paymentMethod]],
           ].map(([l, v]) => (

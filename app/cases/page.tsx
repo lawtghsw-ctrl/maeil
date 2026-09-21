@@ -132,10 +132,10 @@ export default function CasesPage() {
 
         {/* 데스크톱: 테이블 */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="admin-responsive-table w-full min-w-[880px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[960px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["의뢰인", "사건번호", "유형", "단계", "담당자", "계약일", "계약금액", "미수금", "상태", ""].map((h) => (
+                {["의뢰인", "사건번호", "유형", "단계", "담당자", "계약일", "계약금액", "결제금액", "미수금", "상태", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -154,6 +154,7 @@ export default function CasesPage() {
                     <td className="px-4 py-3 text-slate-500">{c.assignedStaff}</td>
                     <td className="px-4 py-3 text-slate-500">{fmtDate(c.contractDate)}</td>
                     <td className="px-4 py-3 text-slate-900">{fmtWon(c.contractAmount)}</td>
+                    <td className="px-4 py-3 text-slate-700">{fmtWon(c.paidAmount)}</td>
                     <td className="px-4 py-3">
                       {receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>}
                     </td>
@@ -170,7 +171,7 @@ export default function CasesPage() {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 사건이 없습니다.
                   </td>
                 </tr>

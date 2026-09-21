@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { CircleDollarSign, Users, WalletCards } from "lucide-react";
+import { AlarmClock, CircleDollarSign, PhoneMissed, TrendingUp, UserPlus, Users, WalletCards } from "lucide-react";
 import {
   computeStats,
   isNextBlocked,
@@ -13,7 +13,14 @@ import {
 } from "@/lib/period-engine";
 import { dayMap } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
-import { CASE_TYPE_COLORS, getOverdueList, getStageDistribution, STAGE_CHART_COLORS } from "@/lib/dashboard";
+import {
+  CASE_TYPE_COLORS,
+  getConsiderationTodoList,
+  getLeadKpis,
+  getOverdueList,
+  getStageDistribution,
+  STAGE_CHART_COLORS,
+} from "@/lib/dashboard";
 import { STAGE_GENERIC_LABELS } from "@/lib/types";
 import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
@@ -42,7 +49,7 @@ function inRange(date: string, start: string, end: string): boolean {
 }
 
 export default function DashboardPage() {
-  const { clients, cases, installments, scheduleItems } = useStore();
+  const { clients, cases, installments, scheduleItems, leads } = useStore();
   const initialRange = monthRange();
   const currentMonth = today().slice(0, 7);
   const [rangeStart, setRangeStart] = useState(initialRange.start);
@@ -109,6 +116,11 @@ export default function DashboardPage() {
     [scheduleItems, cases, clients, hearingMonth]
   );
 
+  // ---- TM 영업 관점 KPI ("계약·분납 정보보다 오늘 뭘 해야 하는지가 먼저 보였으면 좋겠다"는
+  // 피드백 반영) — DB관리의 실시간 leads를 기준으로 계산해 상태·콜횟수를 바꾸면 바로 반영됨.
+  const leadKpis = useMemo(() => getLeadKpis(leads), [leads]);
+  const considerationTodo = useMemo(() => getConsiderationTodoList(leads, 8), [leads]);
+
   // ---- 기간별 통계(년/월/주/일) — 기존 로피 기간엔진 이식분을 그대로 유지, 톤만 재적용 ----
   const [mode, setMode] = useState<PeriodMode>("month");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
@@ -145,6 +157,74 @@ export default function DashboardPage() {
           />
         }
       />
+
+      {/* ---- TM 영업 KPI — "계약·분납 정보도 좋지만 오늘 뭘 해야 하는지가 먼저 보였으면"이라는
+          피드백을 반영해 대시보드 맨 위에 배치했습니다. ---- */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {(
+          [
+            [UserPlus, "당일 신규 DB", `${leadKpis.newToday}건`, "normal"],
+            [PhoneMissed, "전일 부재중", `${leadKpis.noAnswerYesterday}명`, leadKpis.noAnswerYesterday > 0 ? "red" : "normal"],
+            [
+              PhoneMissed,
+              "5회 이하 컨택 부재율",
+              `${leadKpis.noAnswerRateUnder5Calls.toFixed(0)}%`,
+              leadKpis.noAnswerRateUnder5Calls >= 40 ? "red" : "normal",
+            ],
+            [
+              TrendingUp,
+              "이번달 신규DB 대비 선임률",
+              `${leadKpis.monthConverted}/${leadKpis.monthNewLeads}건 (${leadKpis.conversionRate.toFixed(1)}%)`,
+              "normal",
+            ],
+          ] as const
+        ).map(([Icon, label, value, tone]) => (
+          <Card key={label} className="p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500">{label}</span>
+              <Icon size={16} className="text-slate-400" />
+            </div>
+            <div className={`mt-3 text-xl font-bold ${tone === "red" ? "text-red-600" : "text-slate-900"}`}>
+              {value}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="mb-4 overflow-hidden">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <AlarmClock size={16} className="text-amber-500" />
+            고려중 의뢰인 재설득 컨택 투두리스트
+          </div>
+          <span className="text-xs text-slate-400">{considerationTodo.length}건</span>
+        </div>
+        {considerationTodo.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-slate-400">현재 '고려중' 상태로 재설득이 필요한 DB가 없습니다.</div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {considerationTodo.map((t) => (
+              <div key={t.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-900">{t.name}</span>
+                    <span className="text-xs text-slate-400">{t.phone}</span>
+                    <span className="text-xs text-slate-400">담당 {t.assignedStaff}</span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    접수 {t.receivedAt.slice(0, 10)}
+                    {t.nextContactAt && ` · 재통화 예정 ${t.nextContactAt}`}
+                    {t.overdue && <span className="ml-1 font-semibold text-red-600">재통화 예정일 지남</span>}
+                  </div>
+                </div>
+                <Link href="/db" className="shrink-0 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
+                  DB관리에서 컨택하기
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {overdue.length > 0 && (
         <Card className="mb-4 flex flex-wrap items-center gap-3 border-red-100 bg-red-50/60 px-4 py-3">

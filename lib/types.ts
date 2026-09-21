@@ -70,6 +70,13 @@ export type CaseStatus = "진행중" | "보류" | "취하" | "종결";
 export const STAFF_LIST = ["직원1", "직원2", "직원3"] as const;
 export type StaffName = (typeof STAFF_LIST)[number];
 
+// 상담 후 진행 방향 — 예전에는 DB 접수 시점에 "신청분류"로 미리 지정했지만, 실제로는
+// 상담을 해봐야 회생/파산/워크아웃 중 어느 방향이 맞는지 알 수 있는 경우가 많아
+// "상담 후 방향"으로 명칭·시점을 바꿨습니다. 법원 사건(계약관리)은 회생/파산만 다루므로
+// CaseType은 그대로 두고, 이 타입은 DB·고객 단계의 분류용으로 별도로 둡니다.
+export const CONSULT_DIRECTIONS = ["개인회생", "개인파산", "워크아웃"] as const;
+export type ConsultDirection = (typeof CONSULT_DIRECTIONS)[number];
+
 export interface Client {
   id: string;
   name: string;
@@ -78,8 +85,8 @@ export interface Client {
   assignedStaff?: StaffName;
   memo?: string;
   fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
-  applicationType?: CaseType; // 신청분류(개인회생/개인파산) — DB관리에서 지정, 고객관리 상단 탭 분류 기준
-  consultation?: ConsultationInfo; // 상담일지(고객정보 수정 팝업에서 작성)
+  applicationType?: ConsultDirection; // 상담 후 방향(개인회생/개인파산/워크아웃) — DB관리에서 승계, 고객관리 상단 탭 분류 기준
+  consultation?: ConsultationInfo; // 상담일지(DB관리 또는 고객관리 수정 팝업에서 작성, 전환 시 승계됨)
 }
 
 // 결제수단 4종 — 회파산 업무매뉴얼 6장(비용구조 안내) 기준. 결제수단에 따라 정산금이
@@ -128,16 +135,60 @@ export const DB_LEAD_STATUS_LABEL: Record<DbLeadStatus, string> = {
   종결_중단: "종결(중단)",
 };
 
+// ---- 광고 인스턴트 양식 응답 (메타 광고 리드 폼 고정 질문 3종) ----
+// "채무 총금액 / 실 월소득 / 상담가능시간" 3개 질문은 앞으로 고정 사용할 예정이라고
+// 하셔서, DB 리드 스키마에 고정 필드로 넣어두었습니다. DB관리 리스트에서 색상 태그로
+// 표시되고, 상담가능시간대는 클릭해서 그 시간대 리드만 걸러볼 수 있는 피벗 필터로도
+// 씁니다.
+export const DEBT_RANGE_OPTIONS = ["3천만원~5천만원", "5천만원~1억원", "1억원 이상"] as const;
+export type DebtRange = (typeof DEBT_RANGE_OPTIONS)[number];
+
+export const INCOME_RANGE_OPTIONS = ["100~200만원", "200~400만원", "400만원 이상"] as const;
+export type IncomeRange = (typeof INCOME_RANGE_OPTIONS)[number];
+
+export const CONSULT_TIME_OPTIONS = [
+  "평일 오전(9시~12시)",
+  "평일 점심(12시~1시)",
+  "평일 오후(1시~6시)",
+  "퇴근 후(6시~9시)",
+] as const;
+export type ConsultTimeSlot = (typeof CONSULT_TIME_OPTIONS)[number];
+
+// 도원 Admin 시절 쓰던 "매일법률사무소 DB 구글시트 DB가공" 탭의 색상 구분 방식을 참고해
+// 카테고리별로 구분되는 색을 지정했습니다(원본 시트 색상표에는 접근할 수 없어 유사한
+// 톤으로 새로 설계 — 필요하면 언제든 값만 바꾸면 됩니다).
+export const DEBT_RANGE_COLOR: Record<DebtRange, string> = {
+  "3천만원~5천만원": "#0ea5e9", // sky-500
+  "5천만원~1억원": "#f59e0b", // amber-500
+  "1억원 이상": "#ef4444", // red-500
+};
+export const INCOME_RANGE_COLOR: Record<IncomeRange, string> = {
+  "100~200만원": "#ef4444", // red-500 (소득 낮음 → 변제여력 낮음)
+  "200~400만원": "#f59e0b", // amber-500
+  "400만원 이상": "#22c55e", // green-500
+};
+export const CONSULT_TIME_COLOR: Record<ConsultTimeSlot, string> = {
+  "평일 오전(9시~12시)": "#2563eb", // blue-600
+  "평일 점심(12시~1시)": "#7c3aed", // violet-600
+  "평일 오후(1시~6시)": "#059669", // emerald-600
+  "퇴근 후(6시~9시)": "#d97706", // amber-600
+};
+
 export interface DbLead {
   id: string;
   name: string;
   phone: string;
-  applicationType?: CaseType; // 신청분류(개인회생/개인파산) — DB관리 리스트에서 드롭다운으로 지정, 고객 전환 시 그대로 승계
+  applicationType?: ConsultDirection; // 상담 후 방향(개인회생/개인파산/워크아웃) — 상담원이 상담 후 지정, 고객 전환 시 그대로 승계
   receivedAt: string; // ISO datetime — DB 접수 시각
   status: DbLeadStatus;
   assignedStaff: StaffName;
   memo?: string; // 상담원이 남기는 기초정보 메모
   callCount?: number; // 콜(통화 시도) 횟수 — DB관리 리스트에서 ▲▼ 버튼으로 직접 증감
+  debtRange?: DebtRange; // 광고 인스턴트 양식 — 채무 총금액
+  incomeRange?: IncomeRange; // 광고 인스턴트 양식 — 실 월소득
+  consultTime?: ConsultTimeSlot; // 광고 인스턴트 양식 — 상담가능시간
+  nextContactAt?: string; // 재통화 예정일 (ISO date) — 미지정 시 화면에서 접수일+1일을 기본 제안
+  consultation?: ConsultationInfo; // 상담일지 — DB 단계에서부터 작성 가능, 고객 전환 시 그대로 승계
   convertedClientId?: string; // 고객관리로 전환된 경우 생성된 Client id
   convertedCaseId?: string;
 }

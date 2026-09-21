@@ -215,6 +215,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           memo: lead.memo,
           fromLeadId: lead.id,
           applicationType: lead.applicationType,
+          consultation: lead.consultation,
         },
       ]);
 
