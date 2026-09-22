@@ -60,37 +60,9 @@ export function lookupMinLivingCost(householdSize: number, table: MinLivingCostT
 // 직접 확정할 수 있도록 자동계산값은 별도 표시만 합니다).
 export function calcKoreanAge(birthDateIso: string | undefined, todayIso?: string): number | undefined {
   if (!birthDateIso) return undefined;
-  const today = todayIso ? new Date(todayIso) : new Date();
-  const raw = birthDateIso.trim();
-
-  // 상담원들이 참고 이미지처럼 730315 형태로 빠르게 적는 경우까지 허용합니다.
-  // YYYY-MM-DD / YYYYMMDD / YYMMDD 세 형식을 지원하고, YYMMDD의 세기는 현재 연도
-  // 두 자리보다 큰 값이면 1900년대, 작거나 같으면 2000년대로 해석합니다.
-  let y: number | undefined;
-  let m: number | undefined;
-  let d: number | undefined;
-  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  const ymd = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
-  const short = raw.match(/^(\d{2})(\d{2})(\d{2})$/);
-  if (iso) {
-    y = Number(iso[1]); m = Number(iso[2]); d = Number(iso[3]);
-  } else if (ymd) {
-    y = Number(ymd[1]); m = Number(ymd[2]); d = Number(ymd[3]);
-  } else if (short) {
-    const yy = Number(short[1]);
-    const currentYY = today.getFullYear() % 100;
-    y = (yy > currentYY ? 1900 : 2000) + yy;
-    m = Number(short[2]); d = Number(short[3]);
-  } else {
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) return undefined;
-    y = parsed.getFullYear(); m = parsed.getMonth() + 1; d = parsed.getDate();
-  }
-
-  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return undefined;
-  const birth = new Date(y, m - 1, d);
-  if (Number.isNaN(birth.getTime()) || birth.getFullYear() !== y || birth.getMonth() !== m - 1 || birth.getDate() !== d) return undefined;
-
+  const [y, m, d] = birthDateIso.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return undefined;
+  const today = todayIso ? new Date(`${todayIso.slice(0, 10)}T12:00:00`) : new Date();
   let age = today.getFullYear() - y;
   const beforeBirthdayThisYear = today.getMonth() + 1 < m || (today.getMonth() + 1 === m && today.getDate() < d);
   if (beforeBirthdayThisYear) age -= 1;
@@ -101,11 +73,11 @@ export function calcKoreanAge(birthDateIso: string | undefined, todayIso?: strin
 // 계산합니다(만 개월 — 당월 1일 미만 잔여일은 버림).
 export function calcTenureMonths(employmentStartDateIso: string | undefined, todayIso?: string): number | undefined {
   if (!employmentStartDateIso) return undefined;
-  const start = new Date(employmentStartDateIso);
-  if (Number.isNaN(start.getTime())) return undefined;
-  const today = todayIso ? new Date(todayIso) : new Date();
-  let months = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
-  if (today.getDate() < start.getDate()) months -= 1;
+  const [y, m, d] = employmentStartDateIso.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return undefined;
+  const today = todayIso ? new Date(`${todayIso.slice(0, 10)}T12:00:00`) : new Date();
+  let months = (today.getFullYear() - y) * 12 + (today.getMonth() + 1 - m);
+  if (today.getDate() < d) months -= 1;
   return months >= 0 ? months : undefined;
 }
 
@@ -184,7 +156,7 @@ export interface RepaymentPlanResult {
 // 예전에는 이 함수 본문에 if문을 하나씩 나열했지만, "필수항목은 코드 여기저기 하드코딩
 // 하지 말고 별도 configuration으로 관리해달라"는 요청에 따라 REQUIRED_CONSULTATION_FIELDS
 // 배열로 옮겼습니다. 필드를 추가/조정하려면 이 배열만 수정하면 되고, 화면(각 Section
-// 컴포넌트)에서는 missingKeys(Set)를 받아 필드별로 하늘색/빨강 강조를 개별 적용합니다.
+// 컴포넌트)에서는 missingKeys(Set)를 받아 필드별로 하늘색 필수 강조를 개별 적용합니다.
 export interface RequiredFieldCheckInput {
   applicationType?: ConsultDirection;
   consultation?: ConsultationInfo;
@@ -201,7 +173,7 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
   {
     key: "applicationType",
     label: "상담 후 방향(개인회생/개인파산/워크아웃) 미지정",
-    group: "상담",
+    group: "기본정보",
     satisfied: (i) => !!i.applicationType,
   },
   {
@@ -212,15 +184,15 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
   },
   {
     key: "residenceRegion",
-    label: "[기본정보] 거주지역 미입력",
+    label: "[기본정보] 거주지역/관할법원 미선택",
     group: "기본정보",
-    satisfied: (i) => !!(i.consultation?.personal?.residenceRegion?.trim() || i.consultation?.personal?.address?.trim()),
+    satisfied: (i) => !!i.consultation?.personal?.residenceRegion?.trim() && !!i.consultation?.personal?.jurisdictionCourt?.trim(),
   },
   {
     key: "workRegion",
-    label: "[기본정보] 회사지역 미입력",
+    label: "[기본정보] 회사지역/관할법원 미선택",
     group: "기본정보",
-    satisfied: (i) => !!i.consultation?.personal?.workRegion?.trim(),
+    satisfied: (i) => !!i.consultation?.personal?.workRegion?.trim() && !!i.consultation?.personal?.workJurisdictionCourt?.trim(),
   },
   {
     key: "spouse",
@@ -230,7 +202,7 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
   },
   {
     key: "basicIncomeNote",
-    label: "[기본정보] 소득 메모 미입력",
+    label: "[기본정보] 소득 확인내용 미입력",
     group: "기본정보",
     satisfied: (i) => !!i.consultation?.personal?.basicIncomeNote?.trim(),
   },
@@ -257,6 +229,86 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
     label: "[기타] 본인명의 다른 재산 미입력",
     group: "기타",
     satisfied: (i) => !!i.consultation?.personal?.otherAssetsNote?.trim(),
+  },
+  {
+    key: "occupationType",
+    label: "[소득] 직군 미선택",
+    group: "소득",
+    satisfied: (i) => !!i.consultation?.personal?.occupationType,
+  },
+  {
+    key: "tenureInfo",
+    label: "[소득] 재직기간 미입력",
+    group: "소득",
+    satisfied: (i) => i.consultation?.personal?.occupationType === "무직" || !!i.consultation?.income?.tenureInfo?.trim(),
+  },
+  {
+    key: "monthlyAvgIncome",
+    label: "[소득] 월 실수령 미입력",
+    group: "소득",
+    satisfied: (i) => !!i.consultation?.income?.monthlyAvgIncome && i.consultation.income.monthlyAvgIncome > 0,
+  },
+  {
+    key: "secondaryIncome",
+    label: "[소득] 추가소득 미입력",
+    group: "소득",
+    satisfied: (i) => i.consultation?.income?.secondaryIncome !== undefined,
+  },
+  {
+    key: "salaryAccountBank",
+    label: "[소득] 급여통장 미입력",
+    group: "소득",
+    satisfied: (i) => !!i.consultation?.income?.salaryAccountBank?.trim(),
+  },
+  {
+    key: "salaryAccountChangeable",
+    label: "[소득] 급통변경 여부 미선택",
+    group: "소득",
+    satisfied: (i) => i.consultation?.income?.salaryAccountChangeable !== undefined,
+  },
+  {
+    key: "housingType",
+    label: "[자산] 거주형태 미선택",
+    group: "자산",
+    satisfied: (i) => !!i.consultation?.housing?.housingType,
+  },
+  {
+    key: "hasDebtAmount",
+    label: "[자산] 총 채무금액 미입력",
+    group: "자산",
+    satisfied: (i) => {
+      const manual = i.consultation?.debtSummaryExtra?.totalDebtAmount ?? 0;
+      const debts = i.consultation?.debts ?? [];
+      const loanRecords = i.consultation?.loanRecords ?? [];
+      return manual > 0 || debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
+    },
+  },
+  {
+    key: "monthlyPaymentAmount",
+    label: "[자산] 월 불입금 미입력",
+    group: "자산",
+    satisfied: (i) => i.consultation?.debtSummaryExtra?.monthlyPaymentAmount !== undefined || (i.consultation?.loanRecords ?? []).some((l) => l.monthlyPayment !== undefined),
+  },
+  {
+    key: "cardPaymentDay",
+    label: "[자산] 대출결제일 미입력",
+    group: "자산",
+    satisfied: (i) => {
+      const day = i.consultation?.debtSummaryExtra?.cardPaymentDay;
+      return day !== undefined && day >= 1 && day <= 31;
+    },
+  },
+  {
+    key: "rehabPlanNote",
+    label: "[플랜] 회생 예상플랜 미입력",
+    group: "플랜",
+    satisfied: (i) => !!i.consultation?.counselPlan?.rehabPlanNote?.trim(),
+  },
+  {
+    key: "recoveryPlanNote",
+    label: "[플랜] 회복 예상플랜 미입력",
+    group: "플랜",
+    satisfied: (i) => !!i.consultation?.counselPlan?.recoveryPlanNote?.trim(),
   },
 ];
 
@@ -322,56 +374,42 @@ export function getConsultationCompletionStats(
 
   const tracked: unknown[] = [
     applicationType,
-    personal.dischargeHistory,
-    personal.dischargeHistoryNote,
-    personal.riskyAssetActivity,
     personal.residenceRegion || personal.address,
-    personal.residenceCourt || personal.jurisdictionCourt,
+    personal.jurisdictionCourt,
     personal.workRegion,
-    personal.workCourt,
-    personal.birthDate || personal.age,
+    personal.workJurisdictionCourt,
+    personal.age ?? personal.birthDate,
+    personal.occupationType,
     personal.spouse,
     personal.basicIncomeNote,
     personal.childrenCount,
     personal.parentCount,
-    personal.parentAgeStatus,
     personal.parentSupportNote,
+    personal.dischargeHistory,
+    personal.riskyAssetActivity,
     personal.callRequestTime,
     personal.otherAssetsNote,
-    personal.personalDebtNote,
-    personal.debtDisclosureShared,
-    personal.occupationType,
-    income.hasFourInsurances,
-    income.employmentStartDate || income.tenureInfo,
+    income.tenureInfo,
     income.monthlyAvgIncome,
-    income.secondaryIncomeNote || income.secondaryIncome,
-    income.severancePayEstimate,
-    income.salaryAccountBank || income.salaryAccount,
+    income.secondaryIncome,
+    income.hasFourInsurances,
+    income.salaryAccountBank,
     income.salaryAccountChangeable,
     housing.housingType,
-    housing.housingNote,
     housing.hasVehicle,
-    housing.spouseHasVehicle,
     judgment.workoutFeasible,
     judgment.workoutGuided,
-    judgment.costGuided,
-    judgment.workoutInProgress,
     counselPlan.rehabPlanNote,
     counselPlan.recoveryPlanNote,
-    counselPlan.principalReductionRange || counselPlan.principalReductionPct,
-    counselPlan.paymentReductionRange || counselPlan.paymentReductionPct,
+    counselPlan.principalReductionRange ?? counselPlan.principalReductionPct,
     debtSummaryExtra.totalDebtAmount,
-    debtSummaryExtra.totalCreditAmount,
-    debtSummaryExtra.totalSecuredAmount,
-    debtSummaryExtra.totalInterestAmount,
-    debtSummaryExtra.monthlyDebtPayment,
+    debtSummaryExtra.monthlyPaymentAmount,
     debtSummaryExtra.salaryPayDay,
-    debtSummaryExtra.cardPaymentAmount,
     debtSummaryExtra.cardPaymentDay,
     debtSummaryExtra.heldCreditCards,
     recentLoanInsurance.recentLoanUsage,
-    recentLoanInsurance.insuranceNote || recentLoanInsurance.insurancePremium,
-    (consultation?.loanRecords ?? []).length > 0,
+    recentLoanInsurance.insurancePremium,
+    (consultation?.debts ?? []).some((d) => (d.amount || 0) > 0) || (consultation?.loanRecords ?? []).length > 0,
     (consultation?.memoLog ?? []).length > 0,
   ];
 

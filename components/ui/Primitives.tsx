@@ -174,7 +174,6 @@ export function Modal({
   children,
   onClose,
   size = "md",
-  contentClassName,
 }: {
   open: boolean;
   title: string;
@@ -185,7 +184,6 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
   size?: ModalSize;
-  contentClassName?: string;
 }) {
   if (!open) return null;
   // md/lg/xl은 기존과 동일하게 내용물 높이에 맞춰 늘어나고 뷰포트를 넘지 않도록만 제한.
@@ -195,7 +193,7 @@ export function Modal({
     md: "max-w-2xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
     lg: "max-w-4xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
     xl: "max-w-5xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
-    full: "max-w-[1900px] w-[98vw] h-[calc(100dvh-12px)] sm:h-[96vh] sm:max-h-[1100px]",
+    full: "max-w-[1920px] w-[98vw] h-[96dvh] max-h-[96dvh]",
   };
   return (
     <div
@@ -209,7 +207,7 @@ export function Modal({
         )}
         onMouseDown={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4">
+        <div className={cn("flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white", size === "full" ? "px-3 py-2" : "px-4 py-3 sm:px-5 sm:py-4")}>
           <h2 className="min-w-0 break-keep pr-3 font-bold">{title}</h2>
           <div className="flex shrink-0 items-center gap-2">
             {headerExtra}
@@ -221,7 +219,7 @@ export function Modal({
             </button>
           </div>
         </div>
-        <div className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5", contentClassName)}>{children}</div>
+        <div className={cn("overflow-y-auto overscroll-contain", size === "full" ? "p-2 sm:p-2.5" : "p-4 sm:p-5")}>{children}</div>
       </div>
     </div>
   );

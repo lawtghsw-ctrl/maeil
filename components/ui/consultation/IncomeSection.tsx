@@ -1,18 +1,18 @@
 "use client";
 
-// 상담일지 중단 상단 "소득". 사용자 지정 순서와 한 줄 병합 규칙(|)을 그대로 반영했습니다.
-// 직군/거주형태 같은 빠른 선택은 버튼 그룹, 재직기간은 첫 취직일을 기준으로 만 개월 자동계산합니다.
+// 상담일지 중단 상단 "소득". 참고 이미지처럼 라벨/입력 셀을 가로 한 줄로 붙여 배치하고,
+// 직군은 한 줄 버튼 선택으로 유지합니다. 선택형 버튼은 같은 값을 한 번 더 누르면 미선택으로
+// 돌아갑니다. 첫 취직일을 고르면 재직 개월 수를 자동 계산합니다.
 import type { ChangeEvent } from "react";
 import type { ConsultationIncome, OccupationType } from "@/lib/types";
+import { Input } from "@/components/ui/Primitives";
 import { calcTenureMonths } from "@/lib/consultation";
 import {
-  DenseButtonGroup,
-  DenseRow,
+  FieldRow,
   ManwonInput,
   OXToggle,
   SectionCard,
-  UnitNumberInput,
-  denseInputClass,
+  compactInputClass,
 } from "./shared";
 
 const OCCUPATION_TYPES: OccupationType[] = ["직장인", "사업자", "연금소득", "프리랜서", "기타"];
@@ -22,8 +22,8 @@ export function IncomeSection({
   patchIncome,
   occupationType,
   onOccupationTypeChange,
-  requiredKeys: _requiredKeys,
-  missingKeys: _missingKeys,
+  requiredKeys,
+  missingKeys,
 }: {
   income: ConsultationIncome;
   patchIncome: (p: Partial<ConsultationIncome>) => void;
@@ -32,75 +32,82 @@ export function IncomeSection({
   requiredKeys: Set<string>;
   missingKeys: Set<string>;
 }) {
+  const required = (key: string) => requiredKeys.has(key);
+  const missing = (key: string) => missingKeys.has(key);
+
   function handleStartDateChange(v: string) {
     const months = calcTenureMonths(v || undefined);
     patchIncome({
       employmentStartDate: v || undefined,
       tenureMonths: months,
-      tenureInfo: months !== undefined ? `${months}개월` : income.tenureInfo,
+      tenureInfo: months !== undefined ? `${months}개월` : undefined,
     });
   }
 
   return (
-    <SectionCard title="소득">
-      <DenseRow label="직군">
-        <DenseButtonGroup options={OCCUPATION_TYPES} value={occupationType} onChange={onOccupationTypeChange} />
-      </DenseRow>
+    <SectionCard title="소득" className="shrink-0">
+      <FieldRow label="직군" required={required("occupationType")} missing={missing("occupationType")}>
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+          {OCCUPATION_TYPES.map((o) => (
+            <button
+              key={o}
+              type="button"
+              onClick={() => onOccupationTypeChange(occupationType === o ? undefined : o)}
+              className={`h-7 flex-1 whitespace-nowrap rounded border px-1 text-[10px] font-bold transition ${
+                occupationType === o
+                  ? "border-blue-600 bg-blue-600 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      </FieldRow>
 
-      <DenseRow label="4대유무">
+      <FieldRow label="4대유무">
         <OXToggle value={income.hasFourInsurances} onChange={(v) => patchIncome({ hasFourInsurances: v })} />
-      </DenseRow>
+      </FieldRow>
 
-      <DenseRow label="재직기간">
+      <FieldRow label="재직기간" required={required("tenureInfo")} missing={missing("tenureInfo")}>
         <input
           type="date"
-          className={denseInputClass}
+          className={compactInputClass}
           value={income.employmentStartDate ?? ""}
           onChange={(e: ChangeEvent<HTMLInputElement>) => handleStartDateChange(e.target.value)}
-          title="첫 취직일"
         />
-        <UnitNumberInput
-          value={income.tenureMonths}
-          onChange={(v) => patchIncome({ tenureMonths: v, tenureInfo: `${v}개월` })}
-          unit="개월"
-          className="max-w-[116px]"
-        />
-      </DenseRow>
+        <div className="flex h-7 min-w-[86px] items-center justify-center rounded border border-slate-200 bg-slate-50 px-2 text-[11px] font-bold text-slate-700">
+          {income.tenureMonths === undefined ? "- 개월" : `${income.tenureMonths}개월`}
+        </div>
+      </FieldRow>
 
-      <DenseRow label="월실수령">
-        <ManwonInput value={income.monthlyAvgIncome} onChange={(v) => patchIncome({ monthlyAvgIncome: v })} className="max-w-[150px]" />
-        <span className="ml-auto shrink-0 border-l border-slate-200 pl-2 text-[11px] font-semibold text-slate-600">추가소득</span>
-        <input
-          className={`${denseInputClass} max-w-[135px]`}
-          value={income.secondaryIncomeNote ?? (income.secondaryIncome ? `${Math.round(income.secondaryIncome / 10000)}만원` : "")}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => {
-            const text = e.target.value;
-            const digits = text.replace(/[^0-9.]/g, "");
-            const manwon = digits ? Number(digits) : 0;
-            patchIncome({
-              secondaryIncomeNote: text,
-              secondaryIncome: Number.isFinite(manwon) ? Math.max(0, manwon) * 10000 : 0,
-            });
-          }}
-          placeholder="없음"
-        />
-      </DenseRow>
+      <div className="grid grid-cols-2">
+        <FieldRow label="월실수령" required={required("monthlyAvgIncome")} missing={missing("monthlyAvgIncome")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)] border-r">
+          <ManwonInput value={income.monthlyAvgIncome} onChange={(v) => patchIncome({ monthlyAvgIncome: v })} />
+        </FieldRow>
+        <FieldRow label="추가소득" required={required("secondaryIncome")} missing={missing("secondaryIncome")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)]">
+          <ManwonInput value={income.secondaryIncome} onChange={(v) => patchIncome({ secondaryIncome: v })} />
+        </FieldRow>
+      </div>
 
-      <DenseRow label="퇴직금">
-        <ManwonInput value={income.severancePayEstimate} onChange={(v) => patchIncome({ severancePayEstimate: v })} className="max-w-[170px]" />
-      </DenseRow>
+      <FieldRow label="퇴직금">
+        <ManwonInput value={income.severancePayEstimate} onChange={(v) => patchIncome({ severancePayEstimate: v })} />
+      </FieldRow>
 
-      <DenseRow label="급여통장">
-        <input
-          className={`${denseInputClass} max-w-[150px]`}
-          value={income.salaryAccountBank ?? income.salaryAccount ?? ""}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => patchIncome({ salaryAccountBank: e.target.value })}
-          placeholder="은행명"
-        />
-        <span className="shrink-0 text-[11px] text-slate-500">은행</span>
-        <span className="ml-auto shrink-0 border-l border-slate-200 pl-2 text-[11px] font-semibold text-slate-600">급통변경</span>
-        <OXToggle value={income.salaryAccountChangeable} onChange={(v) => patchIncome({ salaryAccountChangeable: v })} />
-      </DenseRow>
+      <div className="grid grid-cols-2">
+        <FieldRow label="급여통장" required={required("salaryAccountBank")} missing={missing("salaryAccountBank")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)] border-r">
+          <Input
+            className={compactInputClass}
+            value={income.salaryAccountBank ?? ""}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => patchIncome({ salaryAccountBank: e.target.value })}
+            placeholder="은행명"
+          />
+          <span className="shrink-0 text-[10px] text-slate-500">은행</span>
+        </FieldRow>
+        <FieldRow label="급통변경" required={required("salaryAccountChangeable")} missing={missing("salaryAccountChangeable")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)]">
+          <OXToggle value={income.salaryAccountChangeable} onChange={(v) => patchIncome({ salaryAccountChangeable: v })} />
+        </FieldRow>
+      </div>
     </SectionCard>
   );
 }

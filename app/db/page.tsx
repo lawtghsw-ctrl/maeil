@@ -182,7 +182,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       onClose={onClose}
       displayName={lead.name}
       displayPhone={lead.phone}
-      joinedAtLabel={fmtDateTime(lead.receivedAt)}
+      joinedAtLabel={fmtDate(lead.receivedAt)}
       caseNumberLabel="- (법원 접수 전)"
       applicationType={applicationType}
       onApplicationTypeChange={setApplicationType}
@@ -555,26 +555,28 @@ export default function DbManagementPage() {
                           필수항목 미입력
                         </span>
                       )}
-                      <Button
-                        variant="secondary"
-                        className="px-2.5 py-1.5"
-                        onClick={() => {
-                          setBlockedNotice(null);
-                          setConsultTarget(lead);
-                        }}
-                      >
-                        <ClipboardList size={14} />
-                        상담일지
-                      </Button>
-                      {lead.convertedClientId ? (
-                        <Link href="/clients" className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
-                          고객관리로 이동
-                        </Link>
-                      ) : (
-                        <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
-                          고객 전환
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="secondary"
+                          className="px-2.5 py-1.5"
+                          onClick={() => {
+                            setBlockedNotice(null);
+                            setConsultTarget(lead);
+                          }}
+                        >
+                          <ClipboardList size={14} />
+                          상담일지
                         </Button>
-                      )}
+                        {lead.convertedClientId ? (
+                          <Link href="/clients" className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                            고객관리로 이동
+                          </Link>
+                        ) : (
+                          <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
+                            고객 전환
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>

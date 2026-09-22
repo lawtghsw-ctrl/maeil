@@ -1,13 +1,24 @@
 "use client";
 
-// 최종 상담일지 레이아웃:
-// - 브라우저 창에 거의 꽉 차는 대형 팝업
-// - 좌/중/우 동일 폭 3열
-// - 좌측은 기본정보→기타, 중단은 소득→자산, 우측은 의사→플랜
-// - 기대출리스트는 참고 이미지처럼 중단+우측 하단(2개 컬럼)을 합쳐 배치
-// - 각 섹션 제목은 회색 '구분 바'일 뿐 클릭/입력 액션이 없음
-// - 전체 팝업 스크롤을 최소화하고, 필요한 경우 각 컬럼/기대출 표 내부에서만 스크롤
-// 기존 데이터 필드는 삭제하지 않고 화면에서 요구된 항목만 재배치합니다.
+// 상담일지 대형 팝업(v12 전면개편, v13 레이아웃 정밀개편) — 기본정보→소득→자산→상담판단→
+// 채무→상담메모를 스크롤 없이(내부 스크롤은 각 표/리스트 안에서만) 한 화면에서 확인·수정할
+// 수 있는 단일 팝업으로 통합했습니다. DB관리(app/db/page.tsx)의 LeadConsultationModal과
+// 고객관리(app/clients/page.tsx)의 ClientConsultationModal이 이 컴포넌트 하나를 공유하며,
+// "상담 후 방향"(applicationType)·"상세 단계"(detailStage) 선택만 화면별로 다르게 보여줄
+// 수 있도록 옵션으로 뺐습니다(고객관리에는 detailStage 개념이 없음).
+//
+// ---- v13 레이아웃 정밀개편 (사용자가 이미지 대신 정밀한 필드 배치를 텍스트로 재요청) ----
+// 좌측(기본정보+기타) / 중단(소득+자산+채무요약) / 우측(의사+플랜+최근대출·보험)을 명시적
+// 3개 컬럼 div로 배치하고(이전처럼 CSS Grid auto-flow에 기대지 않음 — 순서 보장 목적),
+// 하단 전체폭에 "기대출리스트"(파일업로드+수기입력 통합) → 상담메모 순으로 이어붙였습니다.
+// "[기본정보][소득][의사][자산][기대출리스트][기타][플랜]"은 shared.tsx의 SectionBar로
+// 순수 회색 구분 바(액션 불가)로 렌더링됩니다.
+//
+// ---- 저장 방식에 대한 설계 결정 (Section 11, v12에서 확정, 변경 없음) ----
+// 프로젝트 전체가 예외 없이 "취소/저장" 명시적 버튼 구조라, 이 모달도 자동저장 대신
+// 명시적 저장 버튼을 유지합니다. 헤더에는 자동저장 상태 대신 "상담일지 작성률/필수항목
+// 충족" 배지를 보여줍니다(고객전환 가능 여부는 이 배지가 아니라 필수항목 충족 여부로만
+// 판정 — Section 24).
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   REQUIRED_CONSULTATION_FIELDS,
@@ -38,7 +49,7 @@ import type {
   RepaymentPlanInput,
 } from "@/lib/types";
 import { CONSULT_DIRECTIONS, DB_DETAIL_STAGE_GROUPS, DB_DETAIL_STAGE_TRACKS } from "@/lib/types";
-import { Button, Modal } from "@/components/ui/Primitives";
+import { Button, Modal, Select } from "@/components/ui/Primitives";
 import { BasicInfoSection } from "./BasicInfoSection";
 import { IncomeSection } from "./IncomeSection";
 import { AssetSection } from "./AssetSection";
@@ -46,8 +57,7 @@ import { DecisionSection } from "./DecisionSection";
 import { PlanSection } from "./PlanSection";
 import { DebtListSection } from "./DebtListSection";
 import { ConsultationMemoSection } from "./ConsultationMemoSection";
-import { denseSelectClass } from "./shared";
-import { Download, MessageSquareText, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Download, ShieldCheck, ShieldAlert } from "lucide-react";
 
 type Updater<T> = (updater: T | ((prev: T) => T)) => void;
 
@@ -73,6 +83,8 @@ export function ConsultationModal({
   onExportExcel,
 }: {
   open: boolean;
+  // 대상(리드/고객)이 바뀔 때마다 내부 draft 상태를 다시 초기화하기 위한 키. 보통
+  // lead.id 또는 client.id를 그대로 넘기면 됩니다.
   resetKey: string;
   onClose: () => void;
   displayName: string;
@@ -81,11 +93,16 @@ export function ConsultationModal({
   caseNumberLabel: string;
   applicationType: ConsultDirection | undefined;
   onApplicationTypeChange: (v: ConsultDirection | undefined) => void;
+  // 상세 DB관리 분류(detailStage)는 DB관리 화면에만 있는 개념이라(고객관리 Client에는
+  // 없음), 화면별로 켜고 끌 수 있도록 옵션으로 뺐습니다.
   showDetailStage?: boolean;
   detailStage?: DbDetailStage;
   onDetailStageChange?: (v: DbDetailStage | undefined) => void;
   initialConsultation: ConsultationInfo | undefined;
   onSave: (consultation: ConsultationInfo) => void;
+  // 고객관리 화면에만 있는 "고객 상담 엑셀 다운로드" 버튼 — 지금 화면에서 편집 중인
+  // draft 스냅샷을 그대로 넘겨줘야 해서(저장하지 않고도 다운로드 가능), 콜백 형태로
+  // 뺐습니다. 전달하지 않으면 버튼 자체가 보이지 않습니다(DB관리 화면은 사용 안 함).
   onExportExcel?: (draft: ConsultationInfo) => void;
 }) {
   const [personal, setPersonal] = useState<ConsultationPersonal>(initialConsultation?.personal ?? {});
@@ -101,8 +118,9 @@ export function ConsultationModal({
   const [counselPlan, setCounselPlan] = useState<ConsultationCounselPlan>(initialConsultation?.counselPlan ?? {});
   const [debtSummaryExtra, setDebtSummaryExtra] = useState<ConsultationDebtSummaryExtra>(initialConsultation?.debtSummaryExtra ?? {});
   const [recentLoanInsurance, setRecentLoanInsurance] = useState<ConsultationRecentLoanInsurance>(initialConsultation?.recentLoanInsurance ?? {});
-  const [showMemo, setShowMemo] = useState(false);
 
+  // 대상이 바뀌면(resetKey 변경) 모든 draft를 해당 대상의 값으로 다시 채웁니다 — 기존
+  // LeadConsultationModal/CustomerEditModal과 동일한 패턴.
   useEffect(() => {
     if (!open) return;
     setPersonal(initialConsultation?.personal ?? {});
@@ -118,7 +136,6 @@ export function ConsultationModal({
     setCounselPlan(initialConsultation?.counselPlan ?? {});
     setDebtSummaryExtra(initialConsultation?.debtSummaryExtra ?? {});
     setRecentLoanInsurance(initialConsultation?.recentLoanInsurance ?? {});
-    setShowMemo(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, resetKey]);
 
@@ -136,6 +153,9 @@ export function ConsultationModal({
     [income, assets, debts, plan]
   );
 
+  // "지금 이 화면에서 편집 중인 값 전체"를 하나의 ConsultationInfo 스냅샷으로 모아
+  // 필수값 검사·작성률 계산·저장에 공통으로 씁니다. (구) 단일 memo 필드는 이 화면에서
+  // 더 이상 편집하지 않으므로 기존 값을 그대로 승계합니다.
   const draft: ConsultationInfo = useMemo(
     () => ({
       personal,
@@ -168,151 +188,126 @@ export function ConsultationModal({
 
   const headerExtra = (
     <span
-      title={completeness.ok ? "필수항목 입력 완료" : completeness.missing.join("\n")}
-      className={`hidden shrink-0 items-center gap-1 rounded px-2 py-1 text-[11px] font-bold sm:inline-flex ${
+      className={`hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold sm:inline-flex ${
         completeness.ok ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700"
       }`}
     >
       {completeness.ok ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
-      작성률 {stats.percent}% · 필수 {REQUIRED_CONSULTATION_FIELDS.length - missingKeys.size}/{REQUIRED_CONSULTATION_FIELDS.length}
+      작성률 {stats.percent}% · 필수항목 {REQUIRED_CONSULTATION_FIELDS.length - missingKeys.size}/{REQUIRED_CONSULTATION_FIELDS.length}
     </span>
   );
 
   return (
-    <>
-      <Modal
-        open={open}
-        title={`${displayName} · 상담일지`}
-        headerExtra={headerExtra}
-        onClose={onClose}
-        size="full"
-        contentClassName="overflow-hidden !p-2 sm:!p-2.5"
-      >
-        <div className="flex h-full min-h-0 flex-col gap-2">
-          {/* 기존 상담후방향/상세단계 기능은 없애지 않고 높이 32px짜리 얇은 툴바로 이동 */}
-          <div className="flex min-h-8 shrink-0 items-center gap-2 rounded-[5px] border border-slate-300 bg-slate-50 px-2 py-1">
-            <span className="shrink-0 text-[11px] font-semibold text-slate-600">상담 후 방향</span>
-            <select
-              value={applicationType ?? ""}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => onApplicationTypeChange((e.target.value || undefined) as ConsultDirection | undefined)}
-              className={`${denseSelectClass} w-[150px] ${missingKeys.has("applicationType") ? "border-sky-400 bg-sky-50" : ""}`}
-            >
-              <option value="">미지정</option>
-              {CONSULT_DIRECTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+    <Modal open={open} title={`${displayName} · 상담일지`} headerExtra={headerExtra} onClose={onClose} size="full">
+      <div className="space-y-1">
+        <div className="flex min-h-8 flex-wrap items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
+          <span className="shrink-0 whitespace-nowrap rounded bg-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">상담 후 방향</span>
+          <Select
+            value={applicationType ?? ""}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => onApplicationTypeChange((e.target.value || undefined) as ConsultDirection | undefined)}
+            className={`h-7 min-w-[150px] px-2 text-[11px] sm:h-7 sm:text-[11px] ${!applicationType ? "border-sky-400 bg-sky-50" : ""}`}
+          >
+            <option value="">미지정</option>
+            {CONSULT_DIRECTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+          </Select>
 
-            {showDetailStage && (
-              <>
-                <span className="ml-1 shrink-0 text-[11px] font-semibold text-slate-600">상세 단계</span>
-                <select
-                  value={detailStage ?? ""}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => onDetailStageChange?.((e.target.value || undefined) as DbDetailStage | undefined)}
-                  className={`${denseSelectClass} w-[180px]`}
-                >
-                  <option value="">미지정</option>
-                  {DB_DETAIL_STAGE_TRACKS.map((track) => (
-                    <optgroup key={track} label={track}>
-                      {DB_DETAIL_STAGE_GROUPS[track].map((s) => <option key={s} value={s}>{s}</option>)}
-                    </optgroup>
-                  ))}
-                </select>
-              </>
-            )}
+          {showDetailStage && (
+            <>
+              <span className="ml-1 shrink-0 whitespace-nowrap rounded bg-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">상세 단계</span>
+              <Select
+                value={detailStage ?? ""}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => onDetailStageChange?.((e.target.value || undefined) as DbDetailStage | undefined)}
+                className="h-7 sm:h-7 min-w-[190px] px-2 text-[11px]"
+              >
+                <option value="">미지정</option>
+                {DB_DETAIL_STAGE_TRACKS.map((track) => (
+                  <optgroup key={track} label={track}>
+                    {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                  </optgroup>
+                ))}
+              </Select>
+            </>
+          )}
 
-            <div className="ml-auto flex items-center gap-2 text-[10px] text-slate-500">
-              {attachedFiles.length > 0 && <span>첨부 {attachedFiles.length}건</span>}
-              {!completeness.ok && (
-                <span className="font-semibold text-red-600" title={completeness.missing.join("\n")}>필수 미입력 {completeness.missing.length}건</span>
-              )}
-            </div>
-          </div>
+          <span className={`ml-auto shrink-0 whitespace-nowrap rounded px-2 py-1 text-[10px] font-bold ${completeness.ok ? "bg-emerald-50 text-emerald-700" : "bg-sky-100 text-sky-700"}`}>
+            {completeness.ok ? "필수항목 입력완료" : `필수 미입력 ${completeness.missing.length}건`}
+          </span>
+        </div>
 
-          {/* 3열 동일 폭. 기대출리스트는 중단+우측의 하단을 합친 2열 폭. */}
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 xl:grid-cols-3 xl:grid-rows-[minmax(0,1fr)_245px]">
-            <div className="min-h-0 xl:row-span-2 xl:overflow-y-auto xl:pr-0.5">
-              <BasicInfoSection
-                personal={personal}
-                patchPersonal={patchPersonal}
-                income={income}
-                patchIncome={patchIncome}
-                requiredKeys={requiredKeys}
-                missingKeys={missingKeys}
-                displayName={displayName}
-                displayPhone={displayPhone}
-                joinedAtLabel={joinedAtLabel}
-                caseNumberLabel={caseNumberLabel}
-              />
-            </div>
-
-            <div className="min-h-0 space-y-2 xl:overflow-y-auto xl:pr-0.5">
-              <IncomeSection
-                income={income}
-                patchIncome={patchIncome}
-                occupationType={personal.occupationType}
-                onOccupationTypeChange={(v: OccupationType | undefined) => patchPersonal({ occupationType: v })}
-                requiredKeys={requiredKeys}
-                missingKeys={missingKeys}
-              />
-              <AssetSection
-                housing={housing}
-                patchHousing={patchHousing}
-                assets={assets}
-                setAssets={setAssets}
-                loanRecords={loanRecords}
-                debtSummaryExtra={debtSummaryExtra}
-                patchDebtSummaryExtra={patchDebtSummaryExtra}
-                requiredKeys={requiredKeys}
-                missingKeys={missingKeys}
-              />
-            </div>
-
-            <div className="min-h-0 space-y-2 xl:overflow-y-auto xl:pr-0.5">
-              <DecisionSection judgment={judgment} patchJudgment={patchJudgment} />
-              <PlanSection
-                counselPlan={counselPlan}
-                patchCounselPlan={patchCounselPlan}
-                plan={plan}
-                patchPlan={patchPlan}
-                result={result}
-                recentLoanInsurance={recentLoanInsurance}
-                patchRecentLoanInsurance={patchRecentLoanInsurance}
-              />
-            </div>
-
-            <DebtListSection
-              className="h-full min-h-0 xl:col-start-2 xl:col-span-2 xl:row-start-2"
-              loanRecords={loanRecords}
-              setLoanRecords={setLoanRecords}
-              setAttachedFiles={setAttachedFiles}
+        {/* v14 레이아웃: 상단 3열은 같은 grid row를 공유해 전체 높이가 일치합니다.
+            좌=기본정보/기타, 중=소득/자산, 우=의사/플랜. 하단에는 좌측 상담메모와
+            중+우 2열을 합친 기대출리스트를 붙여 배치해 빈 여백을 최소화했습니다. */}
+        <div className="grid grid-cols-1 items-stretch gap-0.5 xl:grid-cols-3">
+          <div className="h-full min-h-0">
+            <BasicInfoSection
+              personal={personal}
+              patchPersonal={patchPersonal}
+              requiredKeys={requiredKeys}
+              missingKeys={missingKeys}
+              displayName={displayName}
+              displayPhone={displayPhone}
+              joinedAtLabel={joinedAtLabel}
+              caseNumberLabel={caseNumberLabel}
             />
           </div>
 
-          <div className="flex h-9 shrink-0 items-center justify-between border-t border-slate-200 pt-1.5">
-            <div className="flex items-center gap-1.5">
-              <Button variant="secondary" className="h-7 rounded-[4px] px-2 text-[11px]" onClick={() => setShowMemo(true)}>
-                <MessageSquareText size={13} /> 상담메모 {memoLog.length > 0 ? `(${memoLog.length})` : ""}
-              </Button>
-              {onExportExcel && (
-                <Button variant="secondary" className="h-7 rounded-[4px] px-2 text-[11px]" onClick={() => onExportExcel(draft)}>
-                  <Download size={13} /> 엑셀 다운로드
-                </Button>
-              )}
-            </div>
-            <div className="flex gap-1.5">
-              <Button variant="secondary" className="h-7 rounded-[4px] px-3 text-[11px]" onClick={onClose}>취소</Button>
-              <Button className="h-7 rounded-[4px] px-3 text-[11px]" onClick={save}>저장</Button>
-            </div>
+          <div className="flex h-full min-h-0 flex-col gap-0.5">
+            <IncomeSection
+              income={income}
+              patchIncome={patchIncome}
+              occupationType={personal.occupationType}
+              onOccupationTypeChange={(v: OccupationType | undefined) => patchPersonal({ occupationType: v })}
+              requiredKeys={requiredKeys}
+              missingKeys={missingKeys}
+            />
+            <AssetSection
+              housing={housing}
+              patchHousing={patchHousing}
+              loanRecords={loanRecords}
+              debtSummaryExtra={debtSummaryExtra}
+              patchDebtSummaryExtra={patchDebtSummaryExtra}
+              requiredKeys={requiredKeys}
+              missingKeys={missingKeys}
+            />
+          </div>
+
+          <div className="flex h-full min-h-0 flex-col gap-0.5">
+            <DecisionSection judgment={judgment} patchJudgment={patchJudgment} />
+            <PlanSection
+              counselPlan={counselPlan}
+              patchCounselPlan={patchCounselPlan}
+              plan={plan}
+              patchPlan={patchPlan}
+              result={result}
+              recentLoanInsurance={recentLoanInsurance}
+              patchRecentLoanInsurance={patchRecentLoanInsurance}
+              requiredKeys={requiredKeys}
+              missingKeys={missingKeys}
+            />
+          </div>
+
+          <div className="min-h-[190px] xl:col-start-1">
+            <ConsultationMemoSection memoLog={memoLog} setMemoLog={setMemoLog} />
+          </div>
+          <div className="min-h-[190px] xl:col-span-2 xl:col-start-2">
+            <DebtListSection loanRecords={loanRecords} setLoanRecords={setLoanRecords} setAttachedFiles={setAttachedFiles} />
           </div>
         </div>
-      </Modal>
+      </div>
 
-      {/* 메모 기능은 기존 요구사항을 보존하되 메인 상담일지 높이를 잡아먹지 않도록 별도 팝업으로 분리 */}
-      <Modal open={open && showMemo} title={`${displayName} · 상담메모`} onClose={() => setShowMemo(false)} size="lg">
-        <ConsultationMemoSection memoLog={memoLog} setMemoLog={setMemoLog} />
-        <div className="mt-3 flex justify-end">
-          <Button onClick={() => setShowMemo(false)}>확인</Button>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
+        <div>
+          {onExportExcel && (
+            <Button variant="secondary" className="h-7 sm:h-7 px-2 text-[10px]" onClick={() => onExportExcel(draft)}>
+              <Download size={12} /> 고객 상담 엑셀 다운로드
+            </Button>
+          )}
         </div>
-      </Modal>
-    </>
+        <div className="flex gap-1">
+          <Button variant="secondary" className="h-7 sm:h-7 px-3 text-[10px]" onClick={onClose}>취소</Button>
+          <Button className="h-7 sm:h-7 px-3 text-[10px]" onClick={save}>저장</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

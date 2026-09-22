@@ -265,12 +265,10 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     dependentNote: "배우자 소득 없음",
     // ---- v12 추가 필드 데모 시딩(additive) ----
     age: 40,
-    residenceRegion: "서울 관악구",
-    workRegion: "서울 강남구",
-    residenceCourt: "서울회생법원",
-    workCourt: "서울회생법원",
+    residenceRegion: "서울특별시",
+    workRegion: "서울특별시",
+    workJurisdictionCourt: "서울회생법원",
     maritalNote: "배우자와 동거 중, 이혼 계획 없음",
-    basicIncomeNote: "배우자 소득은 없고 본인 근로소득으로 생계 유지",
     parentCount: 2,
     parentAgeStatus: "부 72세(무직), 모 68세(무직)",
     parentSupportNote: "부모님 별도 소득 없음, 부양 부담 있음",
@@ -282,6 +280,7 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     personalDebtNote: "",
     debtDisclosureShared: true,
     debtDisclosureNote: "배우자에게만 공유, 부모님께는 미공유",
+    basicIncomeNote: "근로소득 유지 중, 양육비 등 별도 정기지출 확인",
   },
   income: {
     incomeType: "근로소득",
@@ -293,7 +292,6 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     employmentStartDate: "2021-09-01",
     monthlyAvgIncome: 2800000,
     secondaryIncome: 0,
-    secondaryIncomeNote: "없음",
     pensionIncome: 0,
     note: "급여명세서 3개월분 수령 예정",
     // ---- v12 추가 ----
@@ -375,7 +373,7 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
   // ---- v12 추가 — 상담 플랜 ----
   counselPlan: {
     rehabPlanNote: "변제기간 36개월, 월 변제금 예상 45만원 내외",
-    recoveryPlanNote: "",
+    recoveryPlanNote: "워크아웃은 보조안으로 안내, 회생 우선 진행",
     principalReductionPct: 30,
     paymentReductionPct: 20,
     // ---- v13 추가 — 구간 드롭다운 데모 시딩(기존 숫자값(principalReductionPct 30%) ----
@@ -385,6 +383,11 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
   },
   // ---- v12 추가 — 채무 요약 보조 항목 ----
   debtSummaryExtra: {
+    totalDebtAmount: 24500000,
+    totalCreditAmount: 24500000,
+    totalSecuredAmount: 0,
+    totalInterestAmount: 4445000,
+    monthlyPaymentAmount: 600000,
     salaryPayDay: 25,
     cardPaymentAmount: 350000,
     cardPaymentDay: 14,
