@@ -44,7 +44,7 @@ export function ConsultationMemoSection({
 
   return (
     <SectionCard title={`상담메모 (${memoLog.length}건, 최신순)`} className="xl:col-span-3">
-      <div className="space-y-2.5 rounded-lg border border-slate-100 bg-slate-50/50 p-3">
+      <div className="m-2 space-y-2.5 rounded-lg border border-slate-100 bg-slate-50/50 p-3">
         <textarea
           className={textareaClass + " min-h-20 bg-white"}
           value={memoDraft}
@@ -83,11 +83,11 @@ export function ConsultationMemoSection({
       </div>
 
       {memoLog.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-xs text-slate-400">
+        <div className="mx-2 mb-2 rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-xs text-slate-400">
           아직 작성된 메모가 없습니다. 위에서 작성 후 [추가]를 눌러주세요.
         </div>
       ) : (
-        <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-100">
+        <ul className="mx-2 mb-2 max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-100">
           {memoLog.map((entry) => (
             <li key={entry.id} className="px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center gap-1.5">

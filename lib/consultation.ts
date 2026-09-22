@@ -60,12 +60,39 @@ export function lookupMinLivingCost(householdSize: number, table: MinLivingCostT
 // 직접 확정할 수 있도록 자동계산값은 별도 표시만 합니다).
 export function calcKoreanAge(birthDateIso: string | undefined, todayIso?: string): number | undefined {
   if (!birthDateIso) return undefined;
-  const birth = new Date(birthDateIso);
-  if (Number.isNaN(birth.getTime())) return undefined;
   const today = todayIso ? new Date(todayIso) : new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  const beforeBirthdayThisYear =
-    today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate());
+  const raw = birthDateIso.trim();
+
+  // 상담원들이 참고 이미지처럼 730315 형태로 빠르게 적는 경우까지 허용합니다.
+  // YYYY-MM-DD / YYYYMMDD / YYMMDD 세 형식을 지원하고, YYMMDD의 세기는 현재 연도
+  // 두 자리보다 큰 값이면 1900년대, 작거나 같으면 2000년대로 해석합니다.
+  let y: number | undefined;
+  let m: number | undefined;
+  let d: number | undefined;
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const ymd = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  const short = raw.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (iso) {
+    y = Number(iso[1]); m = Number(iso[2]); d = Number(iso[3]);
+  } else if (ymd) {
+    y = Number(ymd[1]); m = Number(ymd[2]); d = Number(ymd[3]);
+  } else if (short) {
+    const yy = Number(short[1]);
+    const currentYY = today.getFullYear() % 100;
+    y = (yy > currentYY ? 1900 : 2000) + yy;
+    m = Number(short[2]); d = Number(short[3]);
+  } else {
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return undefined;
+    y = parsed.getFullYear(); m = parsed.getMonth() + 1; d = parsed.getDate();
+  }
+
+  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return undefined;
+  const birth = new Date(y, m - 1, d);
+  if (Number.isNaN(birth.getTime()) || birth.getFullYear() !== y || birth.getMonth() !== m - 1 || birth.getDate() !== d) return undefined;
+
+  let age = today.getFullYear() - y;
+  const beforeBirthdayThisYear = today.getMonth() + 1 < m || (today.getMonth() + 1 === m && today.getDate() < d);
   if (beforeBirthdayThisYear) age -= 1;
   return age >= 0 ? age : undefined;
 }
@@ -174,8 +201,14 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
   {
     key: "applicationType",
     label: "상담 후 방향(개인회생/개인파산/워크아웃) 미지정",
-    group: "기본정보",
+    group: "상담",
     satisfied: (i) => !!i.applicationType,
+  },
+  {
+    key: "dischargeHistory",
+    label: "[기본정보] 면책이력 여부 미선택",
+    group: "기본정보",
+    satisfied: (i) => i.consultation?.personal?.dischargeHistory !== undefined,
   },
   {
     key: "residenceRegion",
@@ -183,43 +216,6 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
     group: "기본정보",
     satisfied: (i) => !!(i.consultation?.personal?.residenceRegion?.trim() || i.consultation?.personal?.address?.trim()),
   },
-  {
-    key: "occupationType",
-    label: "[기본정보] 직군 미선택",
-    group: "소득",
-    satisfied: (i) => !!i.consultation?.personal?.occupationType,
-  },
-  {
-    key: "tenureInfo",
-    label: "[소득] 재직기간 미입력",
-    group: "소득",
-    // 무직은 재직기간 자체가 없을 수 있어 예외 처리
-    satisfied: (i) => i.consultation?.personal?.occupationType === "무직" || !!i.consultation?.income?.tenureInfo?.trim(),
-  },
-  {
-    key: "monthlyAvgIncome",
-    label: "[소득] 월 실수령 미입력",
-    group: "소득",
-    satisfied: (i) => !!i.consultation?.income?.monthlyAvgIncome && i.consultation.income.monthlyAvgIncome > 0,
-  },
-  {
-    key: "housingType",
-    label: "[자산] 거주형태 미선택",
-    group: "자산",
-    satisfied: (i) => !!i.consultation?.housing?.housingType,
-  },
-  {
-    key: "hasDebtAmount",
-    label: "[채무] 총 채무금액 미입력(채무현황 표 또는 채무 리스트 중 하나는 있어야 함)",
-    group: "채무",
-    satisfied: (i) => {
-      const debts = i.consultation?.debts ?? [];
-      const loanRecords = i.consultation?.loanRecords ?? [];
-      return debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
-    },
-  },
-  // ---- v13 추가 — 상담일지 레이아웃 정밀개편 요청에서 "*"로 표시된 필수 항목들을
-  // REQUIRED_CONSULTATION_FIELDS에 additive로 추가했습니다(기존 7개 항목은 그대로 유지).
   {
     key: "workRegion",
     label: "[기본정보] 회사지역 미입력",
@@ -231,6 +227,12 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
     label: "[기본정보] 결혼 여부 미선택",
     group: "기본정보",
     satisfied: (i) => i.consultation?.personal?.spouse !== undefined,
+  },
+  {
+    key: "basicIncomeNote",
+    label: "[기본정보] 소득 메모 미입력",
+    group: "기본정보",
+    satisfied: (i) => !!i.consultation?.personal?.basicIncomeNote?.trim(),
   },
   {
     key: "childrenCount",
@@ -249,12 +251,6 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
     label: "[기본정보] 부모소득 미입력",
     group: "기본정보",
     satisfied: (i) => !!i.consultation?.personal?.parentSupportNote?.trim(),
-  },
-  {
-    key: "dischargeHistory",
-    label: "[기본정보] 면책이력 여부 미선택",
-    group: "기본정보",
-    satisfied: (i) => i.consultation?.personal?.dischargeHistory !== undefined,
   },
   {
     key: "otherAssetsNote",
@@ -326,36 +322,56 @@ export function getConsultationCompletionStats(
 
   const tracked: unknown[] = [
     applicationType,
-    personal.residenceRegion || personal.address,
-    personal.workRegion,
-    personal.age ?? personal.birthDate,
-    personal.occupationType,
-    personal.spouse,
-    personal.childrenCount,
     personal.dischargeHistory,
+    personal.dischargeHistoryNote,
     personal.riskyAssetActivity,
-    personal.callRequestTime,
+    personal.residenceRegion || personal.address,
+    personal.residenceCourt || personal.jurisdictionCourt,
     personal.workRegion,
+    personal.workCourt,
+    personal.birthDate || personal.age,
     personal.spouse,
+    personal.basicIncomeNote,
     personal.childrenCount,
     personal.parentCount,
+    personal.parentAgeStatus,
     personal.parentSupportNote,
+    personal.callRequestTime,
     personal.otherAssetsNote,
-    income.tenureInfo,
-    income.monthlyAvgIncome,
+    personal.personalDebtNote,
+    personal.debtDisclosureShared,
+    personal.occupationType,
     income.hasFourInsurances,
-    income.salaryAccountBank,
+    income.employmentStartDate || income.tenureInfo,
+    income.monthlyAvgIncome,
+    income.secondaryIncomeNote || income.secondaryIncome,
+    income.severancePayEstimate,
+    income.salaryAccountBank || income.salaryAccount,
+    income.salaryAccountChangeable,
     housing.housingType,
+    housing.housingNote,
     housing.hasVehicle,
+    housing.spouseHasVehicle,
     judgment.workoutFeasible,
     judgment.workoutGuided,
-    counselPlan.rehabPlanNote || counselPlan.recoveryPlanNote,
-    counselPlan.principalReductionPct,
+    judgment.costGuided,
+    judgment.workoutInProgress,
+    counselPlan.rehabPlanNote,
+    counselPlan.recoveryPlanNote,
+    counselPlan.principalReductionRange || counselPlan.principalReductionPct,
+    counselPlan.paymentReductionRange || counselPlan.paymentReductionPct,
+    debtSummaryExtra.totalDebtAmount,
+    debtSummaryExtra.totalCreditAmount,
+    debtSummaryExtra.totalSecuredAmount,
+    debtSummaryExtra.totalInterestAmount,
+    debtSummaryExtra.monthlyDebtPayment,
     debtSummaryExtra.salaryPayDay,
+    debtSummaryExtra.cardPaymentAmount,
+    debtSummaryExtra.cardPaymentDay,
     debtSummaryExtra.heldCreditCards,
     recentLoanInsurance.recentLoanUsage,
-    recentLoanInsurance.insurancePremium,
-    (consultation?.debts ?? []).some((d) => (d.amount || 0) > 0) || (consultation?.loanRecords ?? []).length > 0,
+    recentLoanInsurance.insuranceNote || recentLoanInsurance.insurancePremium,
+    (consultation?.loanRecords ?? []).length > 0,
     (consultation?.memoLog ?? []).length > 0,
   ];
 

@@ -174,6 +174,7 @@ export function Modal({
   children,
   onClose,
   size = "md",
+  contentClassName,
 }: {
   open: boolean;
   title: string;
@@ -184,6 +185,7 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
   size?: ModalSize;
+  contentClassName?: string;
 }) {
   if (!open) return null;
   // md/lg/xl은 기존과 동일하게 내용물 높이에 맞춰 늘어나고 뷰포트를 넘지 않도록만 제한.
@@ -193,7 +195,7 @@ export function Modal({
     md: "max-w-2xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
     lg: "max-w-4xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
     xl: "max-w-5xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
-    full: "max-w-[1800px] w-[96vw] max-h-[calc(100dvh-16px)] sm:max-h-[min(94vh,1050px)]",
+    full: "max-w-[1900px] w-[98vw] h-[calc(100dvh-12px)] sm:h-[96vh] sm:max-h-[1100px]",
   };
   return (
     <div
@@ -219,7 +221,7 @@ export function Modal({
             </button>
           </div>
         </div>
-        <div className="overflow-y-auto overscroll-contain p-4 sm:p-5">{children}</div>
+        <div className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5", contentClassName)}>{children}</div>
       </div>
     </div>
   );

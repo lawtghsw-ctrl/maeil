@@ -267,7 +267,10 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     age: 40,
     residenceRegion: "서울 관악구",
     workRegion: "서울 강남구",
+    residenceCourt: "서울회생법원",
+    workCourt: "서울회생법원",
     maritalNote: "배우자와 동거 중, 이혼 계획 없음",
+    basicIncomeNote: "배우자 소득은 없고 본인 근로소득으로 생계 유지",
     parentCount: 2,
     parentAgeStatus: "부 72세(무직), 모 68세(무직)",
     parentSupportNote: "부모님 별도 소득 없음, 부양 부담 있음",
@@ -290,6 +293,7 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     employmentStartDate: "2021-09-01",
     monthlyAvgIncome: 2800000,
     secondaryIncome: 0,
+    secondaryIncomeNote: "없음",
     pensionIncome: 0,
     note: "급여명세서 3개월분 수령 예정",
     // ---- v12 추가 ----

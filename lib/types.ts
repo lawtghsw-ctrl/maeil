@@ -369,7 +369,7 @@ export interface BoardPost {
 //    (최저생계비는 1인가구 기준값만 참고로 채워둠) 또는 참고 메모로만 다룹니다.
 
 export type Gender = "남" | "여";
-export type OccupationType = "사업자" | "직장인" | "프리랜서" | "무직" | "기타";
+export type OccupationType = "사업자" | "직장인" | "연금소득" | "프리랜서" | "무직" | "기타";
 
 export interface ConsultationPersonal {
   birthDate?: string; // 생년월일
@@ -388,6 +388,10 @@ export interface ConsultationPersonal {
   residenceRegion?: string; // 거주지역(시/군/구 요약) — address(상세주소)와 별개의 짧은 지역명
   workRegion?: string; // 회사지역
   maritalNote?: string; // 혼인/이혼 및 배우자 관련 메모
+  basicIncomeNote?: string; // 기본정보의 "소득" 자유기재란 — 월 실수령액과 별개
+  residenceCourt?: string; // 거주지역 기준 회생법원/관할법원 표기
+  workCourt?: string; // 회사지역 기준 회생법원/관할법원 표기
+  caseNumberDraft?: string; // DB 단계에서 법원 접수 전 임시로 적는 사건번호 메모
   parentCount?: number; // 부모 수
   parentAgeStatus?: string; // 부모 연령/상태
   parentSupportNote?: string; // 부모 소득 또는 부양여부
@@ -411,6 +415,7 @@ export interface ConsultationIncome {
   tenureMonths?: number; // 재직기간(개월수) — v12 추가. tenureInfo(자유기재)와 별도로 "OO개월" 단위 빠른입력용
   monthlyAvgIncome?: number; // 월평균소득(최근 3개월)
   secondaryIncome?: number; // 2중소득(부업)
+  secondaryIncomeNote?: string; // 추가소득 자유기재(예: 없음, 현금 부업 50만원)
   pensionIncome?: number; // 연금소득(국민/노령)
   note?: string;
   // ---- v12 추가 ----
@@ -481,8 +486,8 @@ export interface RepaymentPlanInput {
 
 // 기대출 리스트 — 채무현황 탭의 5개 고정 카테고리 합계표와는 별도로, 개별 대출 건을
 // 하나씩 추가/삭제하며 기록하는 상세 목록입니다. 본인신용정보 열람서비스에서 내려받은
-// 채무 내역을 보면서 하나씩 옮겨 적거나(파일 자동추출은 현재 미지원 — 서류를 보며
-// 수기로 추가), 상담 중 구두로 확인한 대출을 즉시 추가할 수 있습니다.
+// xlsx/xls/csv 파일은 provider-adapter 파서로 자동 추출할 수 있고, 파일이 없거나 파싱이
+// 어려운 경우 상담 중 구두로 확인한 대출을 수기로 즉시 추가할 수도 있습니다.
 // v13(레이아웃 정밀개편) 요청 예시("신용/담보/개인")에 맞춰 "개인"을 추가했습니다. 기존
 // "보증"/"기타" 값은 이미 저장된 데이터 호환을 위해 삭제하지 않고 그대로 유지합니다.
 export const LOAN_KIND1_OPTIONS = ["신용", "담보", "개인", "보증", "기타"] as const;
@@ -508,8 +513,8 @@ export interface LoanRecord {
 }
 
 // 상담기록지에 첨부한 파일(신용정보 열람서비스 다운로드 파일 등)의 메타정보만 기록합니다.
-// 이 데모에는 파일 업로드 백엔드가 없어 실제 파일 내용은 서버에 저장되지 않고, 첨부
-// 사실과 파일명만 상담기록에 남습니다 — 실제 자동 추출(OCR/파싱)은 아직 지원하지 않습니다.
+// 이 데모에는 파일 업로드 백엔드가 없어 실제 파일 내용은 서버에 저장되지 않고 첨부
+// 사실과 파일명만 상담기록에 남습니다. 파일 바이트는 브라우저에서 즉시 파싱한 뒤 버립니다.
 export interface AttachedFileMeta {
   id: string;
   name: string;
@@ -570,6 +575,13 @@ export interface ConsultationCounselPlan {
 
 // ---- v12 추가 — "채무 요약"의 자동계산 대상이 아닌 수동 입력 보조 항목 ----
 export interface ConsultationDebtSummaryExtra {
+  // 상담원 수기 입력을 허용하는 채무요약 값. 값이 없으면 화면에서 기대출 리스트 합계를
+  // 자동 계산해 보여주므로 파일 파싱과 수기 보정이 동시에 가능합니다.
+  totalDebtAmount?: number;
+  totalCreditAmount?: number;
+  totalSecuredAmount?: number;
+  totalInterestAmount?: number;
+  monthlyDebtPayment?: number;
   salaryPayDay?: number; // 급여일(1~31)
   cardPaymentAmount?: number; // 카드결제금액
   cardPaymentDay?: number; // 카드결제일(1~31) — v13 화면에서는 "매출결제일"이라는 라벨로

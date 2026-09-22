@@ -182,7 +182,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       onClose={onClose}
       displayName={lead.name}
       displayPhone={lead.phone}
-      joinedAtLabel={fmtDate(lead.receivedAt)}
+      joinedAtLabel={fmtDateTime(lead.receivedAt)}
       caseNumberLabel="- (법원 접수 전)"
       applicationType={applicationType}
       onApplicationTypeChange={setApplicationType}

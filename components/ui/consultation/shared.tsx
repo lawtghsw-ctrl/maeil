@@ -1,13 +1,26 @@
 "use client";
 
-// 상담일지 대형 팝업(ConsultationModal) 전용 공용 UI 조각 — O/X 빠른선택, 만원 단위
-// 숫자입력, 섹션 카드 타이틀 등. 여러 Section 컴포넌트가 공유합니다.
+// 상담일지 전용 고밀도 UI. 참고 이미지처럼 한 화면에 최대한 많은 정보를 배치하기 위해
+// 일반 어드민 폼보다 입력 높이/여백/라벨 폭을 줄이고, 섹션은 회색 구분바 + 표 형태 행으로
+// 구성합니다. 필수 항목은 사용자가 지정한 '*' 필드처럼 라벨 영역 자체를 연한 하늘색으로
+// 표시하며, 미입력 상태는 빨간 테두리로 한 번 더 구분합니다.
 import type { ChangeEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { Card } from "@/components/ui/Primitives";
 
-// 워크아웃 진행여부/도박이력 등 boolean 판단 항목을 빠르게 누를 수 있는 [O]/[X] 토글.
-// value===undefined(미선택)는 두 버튼 모두 비활성 톤으로 표시합니다.
+export const denseInputClass =
+  "h-7 w-full min-w-0 rounded-[4px] border border-slate-300 bg-white px-2 text-[12px] leading-none text-slate-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
+
+export const denseSelectClass =
+  "h-7 min-w-0 rounded-[4px] border border-slate-300 bg-white px-1.5 text-[12px] text-slate-800 outline-none focus:border-blue-400";
+
+export const denseTextareaClass =
+  "min-h-[44px] w-full resize-none rounded-[4px] border border-slate-300 bg-white px-2 py-1.5 text-[12px] leading-4 text-slate-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100";
+
+export const dateInputClass = denseInputClass;
+export const compactTextareaClass = denseTextareaClass;
+export const textareaClass =
+  "min-h-20 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
+
 export function OXToggle({
   value,
   onChange,
@@ -18,14 +31,14 @@ export function OXToggle({
   disabled?: boolean;
 }) {
   return (
-    <div className="inline-flex h-9 overflow-hidden rounded-lg border border-slate-200">
+    <div className="inline-flex h-7 overflow-hidden rounded-[4px] border border-slate-300 align-middle">
       <button
         type="button"
         disabled={disabled}
         onClick={() => onChange(true)}
         className={cn(
-          "w-10 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50",
-          value === true ? "bg-blue-600 text-white" : "bg-white text-slate-400 hover:bg-slate-50"
+          "w-8 text-[12px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50",
+          value === true ? "bg-blue-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"
         )}
       >
         O
@@ -35,8 +48,8 @@ export function OXToggle({
         disabled={disabled}
         onClick={() => onChange(false)}
         className={cn(
-          "w-10 border-l border-slate-200 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50",
-          value === false ? "bg-slate-800 text-white" : "bg-white text-slate-400 hover:bg-slate-50"
+          "w-8 border-l border-slate-300 text-[12px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50",
+          value === false ? "bg-blue-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"
         )}
       >
         X
@@ -45,9 +58,7 @@ export function OXToggle({
   );
 }
 
-// 금액 입력 — 표시/입력은 "만원" 단위(예: 370)로 하되, 실제 저장값은 기존 필드와 동일하게
-// 원(₩) 단위를 그대로 씁니다(computeRepaymentPlan/fmtWon 등 기존 계산·표시 로직과 호환
-// 유지 목적). 10,000원 미만 단수는 저장 시 반올림됩니다.
+// 금액 입력 — 화면은 만원 단위, 내부 데이터는 기존 계산 로직 호환을 위해 원 단위로 유지.
 export function ManwonInput({
   value,
   onChange,
@@ -63,14 +74,11 @@ export function ManwonInput({
 }) {
   const manwon = value ? Math.round(value / 10000) : 0;
   return (
-    <div className={cn("flex items-center gap-1.5", className)}>
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
       <input
         inputMode="numeric"
         disabled={disabled}
-        className={cn(
-          "h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-9",
-          disabled && "bg-slate-100 text-slate-500"
-        )}
+        className={denseInputClass}
         value={manwon ? manwon.toLocaleString("ko-KR") : ""}
         placeholder="0"
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
@@ -79,13 +87,42 @@ export function ManwonInput({
           onChange(Number.isFinite(n) ? Math.max(min, n) * 10000 : min);
         }}
       />
-      <span className="shrink-0 text-xs font-semibold text-slate-400">만원</span>
+      <span className="shrink-0 text-[11px] font-semibold text-slate-500">만원</span>
     </div>
   );
 }
 
-// 일반 숫자 입력 + 임의 단위(개월/명/일/% 등) — 단위는 값 자체에 타이핑하지 않고
-// input 바깥에 별도 표시합니다.
+// 원 단위 입력 — 송달료/인지대처럼 실제 원 단위 금액을 기록할 때 사용.
+export function WonInput({
+  value,
+  onChange,
+  disabled,
+  className,
+}: {
+  value: number | undefined;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      <input
+        inputMode="numeric"
+        disabled={disabled}
+        className={denseInputClass}
+        value={value ? Math.round(value).toLocaleString("ko-KR") : ""}
+        placeholder="0"
+        onChange={(e: ChangeEvent<HTMLInputElement>) => {
+          const raw = e.target.value.replace(/[^0-9-]/g, "");
+          const n = raw === "" ? 0 : Number(raw);
+          onChange(Number.isFinite(n) ? Math.max(0, n) : 0);
+        }}
+      />
+      <span className="shrink-0 text-[11px] font-semibold text-slate-500">원</span>
+    </div>
+  );
+}
+
 export function UnitNumberInput({
   value,
   onChange,
@@ -104,15 +141,12 @@ export function UnitNumberInput({
   className?: string;
 }) {
   return (
-    <div className={cn("flex items-center gap-1.5", className)}>
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
       <input
         inputMode="numeric"
         disabled={disabled}
-        className={cn(
-          "h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-9",
-          disabled && "bg-slate-100 text-slate-500"
-        )}
-        value={value ? String(value) : ""}
+        className={denseInputClass}
+        value={value === undefined || value === null ? "" : String(value)}
         placeholder="0"
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const raw = e.target.value.replace(/[^0-9-]/g, "");
@@ -123,29 +157,15 @@ export function UnitNumberInput({
           onChange(n);
         }}
       />
-      <span className="shrink-0 text-xs font-semibold text-slate-400">{unit}</span>
+      <span className="shrink-0 text-[11px] font-semibold text-slate-500">{unit}</span>
     </div>
   );
 }
 
-// 구 ConsultationTabsEditor.tsx에서 옮겨온 공용 클래스 — app/clients/page.tsx의 "계약
-// 관련 메모" textarea 등 상담일지 밖에서도 재사용되고 있어 여기로 이전했습니다.
-export const dateInputClass =
-  "h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-10 sm:text-sm";
-export const textareaClass =
-  "min-h-32 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:text-sm";
-// 상담일지 대형 팝업 안에서 쓰는 좀 더 낮은(컴팩트) textarea
-export const compactTextareaClass =
-  "min-h-20 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
-
-// v13(상담일지 레이아웃 정밀개편) 요청 반영 — "[기본정보][소득][의사][자산][기대출리스트]
-// [기타][플랜]은 섹션을 구분하기 위한 '바' 형식으로 만들고 회색 처리, 아무런 작성/액션도
-// 불가능한 순수 구분용 바로 만들어달라"는 지침에 따라 신설한 컴포넌트입니다. 버튼이나
-// 뱃지 등 액션성 요소는 절대 이 바 안에 넣지 않고(요청사항 3번), 필요하면 바 아래 본문
-// 영역에 별도 줄로 둡니다(예: 기대출리스트의 "파일 선택/추출/추가" 버튼 행).
+// 순수 구분용 회색 바. 액션/입력 요소는 절대 넣지 않습니다.
 export function SectionBar({ label }: { label: string }) {
   return (
-    <div className="mb-2 select-none rounded-md bg-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold tracking-wide text-slate-600">
+    <div className="select-none border-b border-slate-300 bg-slate-100 px-2 py-1 text-[12px] font-semibold text-slate-600">
       {label}
     </div>
   );
@@ -161,14 +181,83 @@ export function SectionCard({
   className?: string;
 }) {
   return (
-    <Card className={cn("flex flex-col p-3", className)}>
+    <section className={cn("overflow-hidden rounded-[5px] border border-slate-300 bg-white", className)}>
       <SectionBar label={title} />
-      <div className="flex-1 space-y-2">{children}</div>
-    </Card>
+      <div>{children}</div>
+    </section>
   );
 }
 
-// Label 하나에 라벨 텍스트 + 컴팩트 간격을 적용한 공용 wrapper. Primitives의 Label을
-// 그대로 쓰되(필수/누락 시 하늘색·빨강 강조 로직 재사용), 대형 모달의 고밀도 레이아웃에
-// 맞춰 text-xs로 통일합니다.
+// 참고 이미지의 '라벨 셀 + 입력 셀' 구조. required=true이면 라벨 배경을 항상 하늘색으로,
+// missing=true이면 해당 행 전체에 빨간 inset 테두리를 추가합니다.
+export function DenseRow({
+  label,
+  required = false,
+  missing = false,
+  children,
+  labelWidth = "84px",
+  className,
+  contentClassName,
+}: {
+  label: string;
+  required?: boolean;
+  missing?: boolean;
+  children: ReactNode;
+  labelWidth?: string;
+  className?: string;
+  contentClassName?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid min-h-[32px] border-b border-slate-200 last:border-b-0",
+        missing && "shadow-[inset_0_0_0_1px_rgba(239,68,68,.85)]",
+        className
+      )}
+      style={{ gridTemplateColumns: `${labelWidth} minmax(0,1fr)` }}
+    >
+      <div
+        className={cn(
+          "flex items-center border-r border-slate-200 px-1.5 py-1 text-[11px] font-semibold leading-4 text-slate-600",
+          required ? "bg-sky-100" : "bg-slate-50",
+          missing && "text-red-700"
+        )}
+      >
+        {label}
+      </div>
+      <div className={cn("flex min-w-0 items-center gap-1.5 px-1.5 py-0.5", contentClassName)}>{children}</div>
+    </div>
+  );
+}
+
+export function DenseButtonGroup<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: readonly T[];
+  value: T | undefined;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1">
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onChange(option)}
+          className={cn(
+            "h-7 rounded-[4px] border px-2 text-[11px] font-semibold transition",
+            value === option
+              ? "border-blue-500 bg-blue-500 text-white"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          )}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export const compactLabelText = "text-xs font-semibold";
