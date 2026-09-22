@@ -274,12 +274,20 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     callRequestTime: "평일 저녁 8시 이후",
     dischargeHistory: false,
     riskyAssetActivity: false,
+    // ---- v13 추가 필드 데모 시딩(additive) ----
+    otherAssetsNote: "본인 명의 다른 부동산·차량 없음",
+    personalDebtNote: "",
+    debtDisclosureShared: true,
+    debtDisclosureNote: "배우자에게만 공유, 부모님께는 미공유",
   },
   income: {
     incomeType: "근로소득",
     workplaceName: "㈜한빛물류",
     tenureInfo: "재직 4년차",
     tenureMonths: 48,
+    // ---- v13 추가 — 재직기간 자동계산 데모(첫 취직일 기준 tenureMonths와 대략 일치하도록
+    // 4년 전 날짜로 시딩) ----
+    employmentStartDate: "2021-09-01",
     monthlyAvgIncome: 2800000,
     secondaryIncome: 0,
     pensionIncome: 0,
@@ -366,6 +374,10 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     recoveryPlanNote: "",
     principalReductionPct: 30,
     paymentReductionPct: 20,
+    // ---- v13 추가 — 구간 드롭다운 데모 시딩(기존 숫자값(principalReductionPct 30%) ----
+    // 과 대략 맞는 구간으로 채워둠) ----
+    principalReductionRange: "20~30%",
+    paymentReductionRange: "10~20%",
   },
   // ---- v12 추가 — 채무 요약 보조 항목 ----
   debtSummaryExtra: {

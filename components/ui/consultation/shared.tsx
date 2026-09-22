@@ -138,24 +138,32 @@ export const textareaClass =
 export const compactTextareaClass =
   "min-h-20 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
 
+// v13(상담일지 레이아웃 정밀개편) 요청 반영 — "[기본정보][소득][의사][자산][기대출리스트]
+// [기타][플랜]은 섹션을 구분하기 위한 '바' 형식으로 만들고 회색 처리, 아무런 작성/액션도
+// 불가능한 순수 구분용 바로 만들어달라"는 지침에 따라 신설한 컴포넌트입니다. 버튼이나
+// 뱃지 등 액션성 요소는 절대 이 바 안에 넣지 않고(요청사항 3번), 필요하면 바 아래 본문
+// 영역에 별도 줄로 둡니다(예: 기대출리스트의 "파일 선택/추출/추가" 버튼 행).
+export function SectionBar({ label }: { label: string }) {
+  return (
+    <div className="mb-2 select-none rounded-md bg-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold tracking-wide text-slate-600">
+      {label}
+    </div>
+  );
+}
+
 export function SectionCard({
   title,
-  action,
   children,
   className,
 }: {
   title: string;
-  action?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <Card className={cn("flex flex-col p-3.5", className)}>
-      <div className="mb-2.5 flex items-center justify-between gap-2">
-        <div className="text-[13px] font-bold text-slate-900">{title}</div>
-        {action}
-      </div>
-      <div className="flex-1 space-y-2.5">{children}</div>
+    <Card className={cn("flex flex-col p-3", className)}>
+      <SectionBar label={title} />
+      <div className="flex-1 space-y-2">{children}</div>
     </Card>
   );
 }

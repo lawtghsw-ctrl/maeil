@@ -1,11 +1,12 @@
 "use client";
 
-// 상담일지 대형 팝업 — "의사/상담판단" 섹션(신규, ConsultationJudgment). 상담자가 빠르게
-// 판단해 기록하는 항목이라 필수값으로 두지는 않았습니다(참고 이미지에도 필수 표시 없음).
+// 상담일지 대형 팝업 — "의사" 섹션(ConsultationJudgment). v13 레이아웃 정밀개편 요청의
+// 필드 순서(추후 워크아웃 가능여부/안내여부 한 줄 → 부채발급비용 등 안내여부+금액 한 줄
+// → 워크아웃 진행여부)에 맞춰 재배치했습니다. 값 자체(judgment.*)는 기존 그대로입니다.
 import type { ChangeEvent } from "react";
 import type { ConsultationJudgment } from "@/lib/types";
 import { Label } from "@/components/ui/Primitives";
-import { ManwonInput, OXToggle, SectionCard, compactTextareaClass } from "./shared";
+import { ManwonInput, OXToggle, SectionCard } from "./shared";
 
 export function DecisionSection({
   judgment,
@@ -15,27 +16,29 @@ export function DecisionSection({
   patchJudgment: (p: Partial<ConsultationJudgment>) => void;
 }) {
   return (
-    <SectionCard title="의사 / 상담판단">
-      <div className="grid grid-cols-2 gap-x-2.5 gap-y-2">
+    <SectionCard title="의사">
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
         <Label text="추후 워크아웃 가능 여부">
           <OXToggle value={judgment.workoutFeasible} onChange={(v) => patchJudgment({ workoutFeasible: v })} />
         </Label>
         <Label text="안내 여부">
           <OXToggle value={judgment.workoutGuided} onChange={(v) => patchJudgment({ workoutGuided: v })} />
         </Label>
-        <Label text="부채발급비용/송달료/인지대 안내">
+      </div>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 border-t border-slate-100 pt-2">
+        <Label text="부채발급비용/송달료/인지대 안내여부">
           <OXToggle value={judgment.costGuided} onChange={(v) => patchJudgment({ costGuided: v })} />
         </Label>
-        <Label text="워크아웃 진행 여부">
-          <OXToggle value={judgment.workoutInProgress} onChange={(v) => patchJudgment({ workoutInProgress: v })} />
+        <Label text="금액">
+          <ManwonInput value={judgment.workoutAmount} onChange={(v) => patchJudgment({ workoutAmount: v })} />
         </Label>
       </div>
-      <Label text="금액">
-        <ManwonInput value={judgment.workoutAmount} onChange={(v) => patchJudgment({ workoutAmount: v })} />
+      <Label text="워크아웃 진행 여부">
+        <OXToggle value={judgment.workoutInProgress} onChange={(v) => patchJudgment({ workoutInProgress: v })} />
       </Label>
       <Label text="판단 관련 메모">
         <textarea
-          className={compactTextareaClass}
+          className="min-h-14 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
           value={judgment.judgmentNote ?? ""}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => patchJudgment({ judgmentNote: e.target.value })}
         />

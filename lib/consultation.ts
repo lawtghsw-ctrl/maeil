@@ -54,6 +54,34 @@ export function lookupMinLivingCost(householdSize: number, table: MinLivingCostT
   return base + (size - 6) * (table.extraPerPerson || 0);
 }
 
+// ---- v13 추가 — "나이"/"재직기간" 자동계산 헬퍼 ----
+// 나이: 생년월일(personal.birthDate)이 있으면 만 나이를 자동 계산해 화면에 참고로
+// 보여줍니다(수동 입력한 age 필드를 덮어쓰지는 않음 — 상담원이 최종적으로 age를
+// 직접 확정할 수 있도록 자동계산값은 별도 표시만 합니다).
+export function calcKoreanAge(birthDateIso: string | undefined, todayIso?: string): number | undefined {
+  if (!birthDateIso) return undefined;
+  const birth = new Date(birthDateIso);
+  if (Number.isNaN(birth.getTime())) return undefined;
+  const today = todayIso ? new Date(todayIso) : new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const beforeBirthdayThisYear =
+    today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate());
+  if (beforeBirthdayThisYear) age -= 1;
+  return age >= 0 ? age : undefined;
+}
+
+// 재직기간: 첫 취직일(income.employmentStartDate)이 있으면 오늘까지 개월수를 자동
+// 계산합니다(만 개월 — 당월 1일 미만 잔여일은 버림).
+export function calcTenureMonths(employmentStartDateIso: string | undefined, todayIso?: string): number | undefined {
+  if (!employmentStartDateIso) return undefined;
+  const start = new Date(employmentStartDateIso);
+  if (Number.isNaN(start.getTime())) return undefined;
+  const today = todayIso ? new Date(todayIso) : new Date();
+  let months = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
+  if (today.getDate() < start.getDate()) months -= 1;
+  return months >= 0 ? months : undefined;
+}
+
 export function emptyAssetRows(): AssetRow[] {
   return ASSET_CATEGORIES.map((category) => ({
     category,
@@ -190,6 +218,50 @@ export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
       return debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
     },
   },
+  // ---- v13 추가 — 상담일지 레이아웃 정밀개편 요청에서 "*"로 표시된 필수 항목들을
+  // REQUIRED_CONSULTATION_FIELDS에 additive로 추가했습니다(기존 7개 항목은 그대로 유지).
+  {
+    key: "workRegion",
+    label: "[기본정보] 회사지역 미입력",
+    group: "기본정보",
+    satisfied: (i) => !!i.consultation?.personal?.workRegion?.trim(),
+  },
+  {
+    key: "spouse",
+    label: "[기본정보] 결혼 여부 미선택",
+    group: "기본정보",
+    satisfied: (i) => i.consultation?.personal?.spouse !== undefined,
+  },
+  {
+    key: "childrenCount",
+    label: "[기본정보] 미성년 자녀 수 미입력",
+    group: "기본정보",
+    satisfied: (i) => i.consultation?.personal?.childrenCount !== undefined,
+  },
+  {
+    key: "parentCount",
+    label: "[기본정보] 부모 수 미입력",
+    group: "기본정보",
+    satisfied: (i) => i.consultation?.personal?.parentCount !== undefined,
+  },
+  {
+    key: "parentSupportNote",
+    label: "[기본정보] 부모소득 미입력",
+    group: "기본정보",
+    satisfied: (i) => !!i.consultation?.personal?.parentSupportNote?.trim(),
+  },
+  {
+    key: "dischargeHistory",
+    label: "[기본정보] 면책이력 여부 미선택",
+    group: "기본정보",
+    satisfied: (i) => i.consultation?.personal?.dischargeHistory !== undefined,
+  },
+  {
+    key: "otherAssetsNote",
+    label: "[기타] 본인명의 다른 재산 미입력",
+    group: "기타",
+    satisfied: (i) => !!i.consultation?.personal?.otherAssetsNote?.trim(),
+  },
 ];
 
 export interface RequiredFieldMiss {
@@ -263,6 +335,12 @@ export function getConsultationCompletionStats(
     personal.dischargeHistory,
     personal.riskyAssetActivity,
     personal.callRequestTime,
+    personal.workRegion,
+    personal.spouse,
+    personal.childrenCount,
+    personal.parentCount,
+    personal.parentSupportNote,
+    personal.otherAssetsNote,
     income.tenureInfo,
     income.monthlyAvgIncome,
     income.hasFourInsurances,

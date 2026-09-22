@@ -1,14 +1,18 @@
 "use client";
 
-// 상담일지 대형 팝업 — "상담 플랜" 섹션. 위쪽은 v12에서 새로 추가된 자유기재 플랜
-// 메모(ConsultationCounselPlan)이고, 아래 "법원 변제계획 자동계산"은 기존 RepaymentPlanInput
-// + computeRepaymentPlan 로직을 그대로 접어서 담았습니다(계산식 변경 없음) — 카드가
-// 복잡해지는 것을 막기 위해 기본은 접혀있고 필요할 때만 펼쳐 봅니다.
+// 상담일지 대형 팝업 — "플랜" 섹션. v13 레이아웃 정밀개편 요청에 따라:
+// 1) 원금탕감율/변제금감소율을 숫자 직접입력 대신 구간 드롭다운(10~20%~90~100%)으로 변경.
+// 2) 최근대출/보험(구 RecentLoanInsuranceSection) 두 줄을 별도 "바" 없이 이 섹션 안에
+//    이어붙였습니다(요청 원문에서 플랜 항목 바로 아래에 이어져 있고 별도 구분 바가
+//    없었기 때문 — 값 자체는 기존 ConsultationRecentLoanInsurance 필드 그대로 재사용).
+// 아래 "법원 변제계획 자동계산"(RepaymentPlanInput/computeRepaymentPlan)은 기존 그대로
+// 접어서 유지합니다(계산식 변경 없음).
 import { useState, type ChangeEvent } from "react";
 import { useStore } from "@/lib/store";
-import type { ConsultationCounselPlan, RepaymentPlanInput } from "@/lib/types";
+import type { ConsultationCounselPlan, ConsultationRecentLoanInsurance, PctRange, RepaymentPlanInput } from "@/lib/types";
+import { PCT_RANGE_OPTIONS } from "@/lib/types";
 import { lookupMinLivingCost, type RepaymentPlanResult } from "@/lib/consultation";
-import { NumberInput, Label } from "@/components/ui/Primitives";
+import { NumberInput, Label, Select, Input } from "@/components/ui/Primitives";
 import { ManwonInput, SectionCard, compactTextareaClass } from "./shared";
 import { fmtWon } from "@/lib/format";
 import { ChevronRight } from "lucide-react";
@@ -19,18 +23,22 @@ export function PlanSection({
   plan,
   patchPlan,
   result,
+  recentLoanInsurance,
+  patchRecentLoanInsurance,
 }: {
   counselPlan: ConsultationCounselPlan;
   patchCounselPlan: (p: Partial<ConsultationCounselPlan>) => void;
   plan: RepaymentPlanInput;
   patchPlan: (p: Partial<RepaymentPlanInput>) => void;
   result: RepaymentPlanResult;
+  recentLoanInsurance: ConsultationRecentLoanInsurance;
+  patchRecentLoanInsurance: (p: Partial<ConsultationRecentLoanInsurance>) => void;
 }) {
   const { minLivingCostTable } = useStore();
   const [showAuto, setShowAuto] = useState(false);
 
   return (
-    <SectionCard title="상담 플랜">
+    <SectionCard title="플랜">
       <Label text="회생 예상플랜">
         <textarea className={compactTextareaClass} value={counselPlan.rehabPlanNote ?? ""} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => patchCounselPlan({ rehabPlanNote: e.target.value })} />
       </Label>
@@ -41,17 +49,50 @@ export function PlanSection({
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => patchCounselPlan({ recoveryPlanNote: e.target.value })}
         />
       </Label>
-      <div className="grid grid-cols-2 gap-x-2.5 gap-y-2">
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
         <Label text="원금 탕감율">
-          <div className="flex items-center gap-1.5">
-            <NumberInput value={counselPlan.principalReductionPct ?? 0} onChange={(v) => patchCounselPlan({ principalReductionPct: v })} />
-            <span className="shrink-0 text-xs font-semibold text-slate-400">%</span>
-          </div>
+          <Select
+            value={counselPlan.principalReductionRange ?? ""}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => patchCounselPlan({ principalReductionRange: (e.target.value || undefined) as PctRange | undefined })}
+            className="w-full"
+          >
+            <option value="">미지정</option>
+            {PCT_RANGE_OPTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </Select>
         </Label>
         <Label text="변제금 감소율">
+          <Select
+            value={counselPlan.paymentReductionRange ?? ""}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => patchCounselPlan({ paymentReductionRange: (e.target.value || undefined) as PctRange | undefined })}
+            className="w-full"
+          >
+            <option value="">미지정</option>
+            {PCT_RANGE_OPTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </Select>
+        </Label>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 border-t border-slate-100 pt-2">
+        <Label text="최근 3개월 내 대출 사용처">
+          <Input
+            value={recentLoanInsurance.recentLoanUsage ?? ""}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => patchRecentLoanInsurance({ recentLoanUsage: e.target.value })}
+            placeholder="예: OO캐피탈 300만원(2026-08)"
+          />
+        </Label>
+        <Label text="보험료 / 환급금액">
           <div className="flex items-center gap-1.5">
-            <NumberInput value={counselPlan.paymentReductionPct ?? 0} onChange={(v) => patchCounselPlan({ paymentReductionPct: v })} />
-            <span className="shrink-0 text-xs font-semibold text-slate-400">%</span>
+            <ManwonInput value={recentLoanInsurance.insurancePremium} onChange={(v) => patchRecentLoanInsurance({ insurancePremium: v })} />
+            <span className="shrink-0 text-slate-300">/</span>
+            <ManwonInput value={recentLoanInsurance.insuranceRefundAmount} onChange={(v) => patchRecentLoanInsurance({ insuranceRefundAmount: v })} />
           </div>
         </Label>
       </div>

@@ -1,22 +1,24 @@
 "use client";
 
-// 상담일지 대형 팝업(v12 전면개편) — 기본정보→소득→자산→상담판단→채무→상담메모를 스크롤
-// 없이(내부 스크롤은 각 표/리스트 안에서만) 한 화면에서 확인·수정할 수 있는 단일 팝업으로
-// 통합했습니다(Section 1). DB관리(app/db/page.tsx)의 옛 LeadConsultationModal과
-// 고객관리(app/clients/page.tsx)의 CustomerEditModal 안 상담일지 탭들을 이 컴포넌트 하나로
-// 대체하며, "상담 후 방향"(applicationType)·"상세 단계"(detailStage) 선택만 화면별로
-// 다르게 보여줄 수 있도록 옵션으로 뺐습니다(고객관리에는 detailStage 개념이 없음).
+// 상담일지 대형 팝업(v12 전면개편, v13 레이아웃 정밀개편) — 기본정보→소득→자산→상담판단→
+// 채무→상담메모를 스크롤 없이(내부 스크롤은 각 표/리스트 안에서만) 한 화면에서 확인·수정할
+// 수 있는 단일 팝업으로 통합했습니다. DB관리(app/db/page.tsx)의 LeadConsultationModal과
+// 고객관리(app/clients/page.tsx)의 ClientConsultationModal이 이 컴포넌트 하나를 공유하며,
+// "상담 후 방향"(applicationType)·"상세 단계"(detailStage) 선택만 화면별로 다르게 보여줄
+// 수 있도록 옵션으로 뺐습니다(고객관리에는 detailStage 개념이 없음).
 //
-// ---- 저장 방식에 대한 설계 결정 (Section 11) ----
-// 요청 원문의 "자동저장" 항목은 "단, 기존 프로젝트가 명시적인 저장 버튼 구조로 통일되어
-// 있다면 기존 UX를 먼저 분석하고 충돌 없는 방식으로 구현해달라"는 단서를 달고 있습니다.
-// 이 프로젝트 전체(InstallmentModal/EformStubModal/DocGuideModal/CustomerEditModal/구
-// LeadConsultationModal 등 모든 팝업)를 확인한 결과 예외 없이 전부 "취소/저장" 명시적
-// 버튼 구조이고 자동저장을 쓰는 화면이 하나도 없어, 이 모달에서만 자동저장을 도입하면
-// 오히려 프로젝트 전체 UX와 충돌합니다. 그래서 기존 관례를 그대로 따라 "취소/저장" 버튼을
-// 유지했고, 대신 헤더에는 자동저장 상태 대신 Section 24가 요구하는 "상담일지 작성률/필수
-// 항목 충족" 배지를 보여줍니다(고객전환 가능 여부 판정에는 이 배지가 아니라 필수항목
-// 충족 여부만 사용됨 — Section 24 명시 사항).
+// ---- v13 레이아웃 정밀개편 (사용자가 이미지 대신 정밀한 필드 배치를 텍스트로 재요청) ----
+// 좌측(기본정보+기타) / 중단(소득+자산+채무요약) / 우측(의사+플랜+최근대출·보험)을 명시적
+// 3개 컬럼 div로 배치하고(이전처럼 CSS Grid auto-flow에 기대지 않음 — 순서 보장 목적),
+// 하단 전체폭에 "기대출리스트"(파일업로드+수기입력 통합) → 상담메모 순으로 이어붙였습니다.
+// "[기본정보][소득][의사][자산][기대출리스트][기타][플랜]"은 shared.tsx의 SectionBar로
+// 순수 회색 구분 바(액션 불가)로 렌더링됩니다.
+//
+// ---- 저장 방식에 대한 설계 결정 (Section 11, v12에서 확정, 변경 없음) ----
+// 프로젝트 전체가 예외 없이 "취소/저장" 명시적 버튼 구조라, 이 모달도 자동저장 대신
+// 명시적 저장 버튼을 유지합니다. 헤더에는 자동저장 상태 대신 "상담일지 작성률/필수항목
+// 충족" 배지를 보여줍니다(고객전환 가능 여부는 이 배지가 아니라 필수항목 충족 여부로만
+// 판정 — Section 24).
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   REQUIRED_CONSULTATION_FIELDS,
@@ -48,16 +50,12 @@ import type {
 } from "@/lib/types";
 import { CONSULT_DIRECTIONS, DB_DETAIL_STAGE_GROUPS, DB_DETAIL_STAGE_TRACKS } from "@/lib/types";
 import { Button, Label, Modal, Select } from "@/components/ui/Primitives";
-import { SectionCard } from "./shared";
 import { BasicInfoSection } from "./BasicInfoSection";
 import { IncomeSection } from "./IncomeSection";
 import { AssetSection } from "./AssetSection";
 import { DecisionSection } from "./DecisionSection";
 import { PlanSection } from "./PlanSection";
-import { RecentLoanInsuranceSection } from "./RecentLoanInsuranceSection";
-import { DebtSummary } from "./DebtSummary";
-import { DebtUploader } from "./DebtUploader";
-import { DebtTable } from "./DebtTable";
+import { DebtListSection } from "./DebtListSection";
 import { ConsultationMemoSection } from "./ConsultationMemoSection";
 import { Download, ShieldCheck, ShieldAlert } from "lucide-react";
 
@@ -155,9 +153,9 @@ export function ConsultationModal({
     [income, assets, debts, plan]
   );
 
-  // 채무 요약(DebtSummary)의 자동계산과 별개로, "지금 이 화면에서 편집 중인 값 전체"를
-  // 하나의 ConsultationInfo 스냅샷으로 모아 필수값 검사·작성률 계산·저장에 공통으로 씁니다.
-  // (구) 단일 memo 필드는 이 화면에서 더 이상 편집하지 않으므로 기존 값을 그대로 승계합니다.
+  // "지금 이 화면에서 편집 중인 값 전체"를 하나의 ConsultationInfo 스냅샷으로 모아
+  // 필수값 검사·작성률 계산·저장에 공통으로 씁니다. (구) 단일 memo 필드는 이 화면에서
+  // 더 이상 편집하지 않으므로 기존 값을 그대로 승계합니다.
   const draft: ConsultationInfo = useMemo(
     () => ({
       personal,
@@ -250,13 +248,16 @@ export function ConsultationModal({
           )}
         </div>
 
-        {/* 3열 그리드(1fr 1.05fr 1fr) — 정보는 많지만 한 화면에서 오갈 필요 없이 훑어볼 수
-            있도록, 각 섹션은 SectionCard 하나의 카드 안에서만 스크롤되고(재산현황/채무
-            리스트 등) 팝업 전체는 스크롤하지 않는 것을 기본으로 합니다. */}
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1.05fr_1fr]">
+        {/* 좌/중/우 3열 — v13: 순서를 명확히 보장하기 위해 CSS Grid auto-flow 대신 컬럼별
+            div로 명시 배치합니다(좌: 기본정보+기타 / 중단: 소득+자산+채무요약 / 우: 의사+
+            플랜+최근대출·보험). 각 컬럼 내부는 space-y-3으로 섹션 카드를 쌓고, 카드 각각은
+            내부적으로만(재산현황 표·채무리스트 등) 스크롤됩니다. */}
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
           <BasicInfoSection
             personal={personal}
             patchPersonal={patchPersonal}
+            income={income}
+            patchIncome={patchIncome}
             requiredKeys={requiredKeys}
             missingKeys={missingKeys}
             displayName={displayName}
@@ -264,33 +265,50 @@ export function ConsultationModal({
             joinedAtLabel={joinedAtLabel}
             caseNumberLabel={caseNumberLabel}
           />
-          <IncomeSection
-            income={income}
-            patchIncome={patchIncome}
-            occupationType={personal.occupationType}
-            onOccupationTypeChange={(v: OccupationType | undefined) => patchPersonal({ occupationType: v })}
-            requiredKeys={requiredKeys}
-            missingKeys={missingKeys}
-          />
-          <DecisionSection judgment={judgment} patchJudgment={patchJudgment} />
 
-          <PlanSection counselPlan={counselPlan} patchCounselPlan={patchCounselPlan} plan={plan} patchPlan={patchPlan} result={result} />
-          <AssetSection housing={housing} patchHousing={patchHousing} assets={assets} setAssets={setAssets} requiredKeys={requiredKeys} missingKeys={missingKeys} />
-          <RecentLoanInsuranceSection value={recentLoanInsurance} patch={patchRecentLoanInsurance} />
+          <div className="space-y-3">
+            <IncomeSection
+              income={income}
+              patchIncome={patchIncome}
+              occupationType={personal.occupationType}
+              onOccupationTypeChange={(v: OccupationType | undefined) => patchPersonal({ occupationType: v })}
+              requiredKeys={requiredKeys}
+              missingKeys={missingKeys}
+            />
+            <AssetSection
+              housing={housing}
+              patchHousing={patchHousing}
+              assets={assets}
+              setAssets={setAssets}
+              loanRecords={loanRecords}
+              debtSummaryExtra={debtSummaryExtra}
+              patchDebtSummaryExtra={patchDebtSummaryExtra}
+              requiredKeys={requiredKeys}
+              missingKeys={missingKeys}
+            />
+          </div>
 
-          <DebtSummary loanRecords={loanRecords} extra={debtSummaryExtra} patchExtra={patchDebtSummaryExtra} />
+          <div className="space-y-3">
+            <DecisionSection judgment={judgment} patchJudgment={patchJudgment} />
+            <PlanSection
+              counselPlan={counselPlan}
+              patchCounselPlan={patchCounselPlan}
+              plan={plan}
+              patchPlan={patchPlan}
+              result={result}
+              recentLoanInsurance={recentLoanInsurance}
+              patchRecentLoanInsurance={patchRecentLoanInsurance}
+            />
+          </div>
+        </div>
 
-          <SectionCard title="채무 파일 업로드" className="xl:col-span-3">
-            <DebtUploader loanRecords={loanRecords} setLoanRecords={setLoanRecords} setAttachedFiles={setAttachedFiles} />
-            {attachedFiles.length > 0 && (
-              <div className="mt-1 text-[11px] text-slate-400">
-                첨부된 파일 {attachedFiles.length}건 — {attachedFiles.map((f) => f.name).join(", ")}
-              </div>
-            )}
-          </SectionCard>
-
-          <DebtTable loanRecords={loanRecords} setLoanRecords={setLoanRecords} />
-
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+          <DebtListSection loanRecords={loanRecords} setLoanRecords={setLoanRecords} setAttachedFiles={setAttachedFiles} />
+          {attachedFiles.length > 0 && (
+            <div className="xl:col-span-3 -mt-2 text-[11px] text-slate-400">
+              첨부된 파일 {attachedFiles.length}건 — {attachedFiles.map((f) => f.name).join(", ")}
+            </div>
+          )}
           <ConsultationMemoSection memoLog={memoLog} setMemoLog={setMemoLog} />
         </div>
       </div>

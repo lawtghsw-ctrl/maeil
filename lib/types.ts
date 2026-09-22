@@ -396,6 +396,12 @@ export interface ConsultationPersonal {
   dischargeHistoryNote?: string; // 면책이력 상세내용
   riskyAssetActivity?: boolean; // 코인/주식/도박/사행성 여부
   riskyAssetNote?: string; // 관련 메모
+  // ---- v13 추가 — 상담일지 레이아웃 정밀개편(좌/중/우 3열+회색 구분바) 요청 반영,
+  // "기타" 구분 바 아래 항목들. 기존 필드는 위 그대로 유지 ----
+  otherAssetsNote?: string; // 본인명의 다른 재산
+  personalDebtNote?: string; // 개인채무
+  debtDisclosureShared?: boolean; // 채무사실공유 여부
+  debtDisclosureNote?: string; // 채무사실공유 관련 메모
 }
 
 export interface ConsultationIncome {
@@ -413,6 +419,12 @@ export interface ConsultationIncome {
   salaryAccountBank?: string; // 급여통장 은행 (계좌 자체는 salaryAccount로 별도 기록)
   salaryAccount?: string; // 급여통장(은행 제외 계좌 메모 — 예: 입출금통장/OO은행 급여이체 등)
   salaryAccountChangeable?: boolean; // 급여통장 변경 가능 여부
+  // ---- v13 추가 — "재직기간"을 [날짜지정달력(첫 취직일)] → [자동계산 개월수] 방식으로
+  // 입력받기 위한 필드. employmentStartDate가 입력되면 화면에서 자동으로 tenureMonths와
+  // tenureInfo(예: "66개월")를 함께 채워, 기존 필수항목 체크(tenureInfo 기준)와도 그대로
+  // 호환됩니다. employmentStartDate가 없으면 기존처럼 tenureMonths/tenureInfo를 수동
+  // 입력해도 동작합니다(하위 호환).
+  employmentStartDate?: string; // 첫 취직일(ISO date) — 재직기간 자동계산용
 }
 
 // 재산현황(청산가치 산정용) — 상담일지 서식의 고정 행 구성을 그대로 사용
@@ -471,7 +483,9 @@ export interface RepaymentPlanInput {
 // 하나씩 추가/삭제하며 기록하는 상세 목록입니다. 본인신용정보 열람서비스에서 내려받은
 // 채무 내역을 보면서 하나씩 옮겨 적거나(파일 자동추출은 현재 미지원 — 서류를 보며
 // 수기로 추가), 상담 중 구두로 확인한 대출을 즉시 추가할 수 있습니다.
-export const LOAN_KIND1_OPTIONS = ["신용", "담보", "보증", "기타"] as const;
+// v13(레이아웃 정밀개편) 요청 예시("신용/담보/개인")에 맞춰 "개인"을 추가했습니다. 기존
+// "보증"/"기타" 값은 이미 저장된 데이터 호환을 위해 삭제하지 않고 그대로 유지합니다.
+export const LOAN_KIND1_OPTIONS = ["신용", "담보", "개인", "보증", "기타"] as const;
 export type LoanKind1 = (typeof LOAN_KIND1_OPTIONS)[number];
 
 export interface LoanRecord {
@@ -527,20 +541,40 @@ export interface ConsultationJudgment {
   judgmentNote?: string; // 판단 관련 메모
 }
 
+// 원금 탕감율 / 변제금 감소율 — v13에서 숫자 직접입력 대신 구간 드롭다운으로 바뀌었습니다.
+export const PCT_RANGE_OPTIONS = [
+  "10~20%",
+  "20~30%",
+  "30~40%",
+  "40~50%",
+  "50~60%",
+  "60~70%",
+  "70~80%",
+  "80~90%",
+  "90~100%",
+] as const;
+export type PctRange = (typeof PCT_RANGE_OPTIONS)[number];
+
 // ---- v12 추가 — "상담 플랜" 영역. 법원 변제계획 자동계산(RepaymentPlanInput/Result,
 // 기존 그대로 유지)과 달리 상담원이 자유롭게 적는 예상 플랜·비율 메모입니다.
 export interface ConsultationCounselPlan {
   rehabPlanNote?: string; // 회생 예상플랜
   recoveryPlanNote?: string; // 회복 예상플랜
-  principalReductionPct?: number; // 원금 탕감율(%)
-  paymentReductionPct?: number; // 변제금 감소율(%)
+  principalReductionPct?: number; // (구) 원금 탕감율(%) 직접입력값 — v13부터 화면에서는 더
+  // 이상 쓰지 않지만 과거 데이터 호환을 위해 필드는 유지합니다.
+  paymentReductionPct?: number; // (구) 변제금 감소율(%) 직접입력값 — 위와 동일하게 유지.
+  // ---- v13 추가 — 구간 드롭다운(10~20% ~ 90~100%) 방식으로 변경 ----
+  principalReductionRange?: PctRange; // 원금 탕감율(구간)
+  paymentReductionRange?: PctRange; // 변제금 감소율(구간)
 }
 
 // ---- v12 추가 — "채무 요약"의 자동계산 대상이 아닌 수동 입력 보조 항목 ----
 export interface ConsultationDebtSummaryExtra {
   salaryPayDay?: number; // 급여일(1~31)
   cardPaymentAmount?: number; // 카드결제금액
-  cardPaymentDay?: number; // 카드결제일(1~31)
+  cardPaymentDay?: number; // 카드결제일(1~31) — v13 화면에서는 "매출결제일"이라는 라벨로
+  // 표시합니다(자영업자·사업자 기준 매출/카드 결제일을 같은 의미로 씀). 필드명은 기존
+  // 데이터 호환을 위해 그대로 두고 화면 라벨만 바꿨습니다.
   heldCreditCards?: string; // 보유중인 신용카드(자유 텍스트, 콤마 구분)
 }
 
