@@ -120,38 +120,171 @@ export interface RepaymentPlanResult {
   feasibilityNote: string;
 }
 
-// ---- 상담기록지 필수항목 체크 ----
+// ---- 상담기록지 필수항목 체크 (v12: 하드코딩 나열 → config 배열로 재구성) ----
 // "실제 계약(=완결된 상담기록지)을 하지 않는 이상 고객관리로 넘기지 않도록" 요청 반영.
 // 상담기록지 전체를 다 채우도록 강제하면 오히려 상담 초기 단계 기록이 막혀버리므로,
 // '고객 전환' 판단에 실제로 필요한 핵심 항목만 필수로 두었습니다. 화면에서는 이 항목이
 // 비어있으면 하늘색으로 강조 표시하고, 하나라도 비어있으면 '고객 전환' 버튼을 막습니다.
-// 필요에 따라 이 목록은 언제든 추가/조정할 수 있습니다.
+//
+// 예전에는 이 함수 본문에 if문을 하나씩 나열했지만, "필수항목은 코드 여기저기 하드코딩
+// 하지 말고 별도 configuration으로 관리해달라"는 요청에 따라 REQUIRED_CONSULTATION_FIELDS
+// 배열로 옮겼습니다. 필드를 추가/조정하려면 이 배열만 수정하면 되고, 화면(각 Section
+// 컴포넌트)에서는 missingKeys(Set)를 받아 필드별로 하늘색/빨강 강조를 개별 적용합니다.
+export interface RequiredFieldCheckInput {
+  applicationType?: ConsultDirection;
+  consultation?: ConsultationInfo;
+}
+
+export interface RequiredFieldDef {
+  key: string; // Section 컴포넌트가 개별 필드 강조 표시에 사용하는 고유 키
+  label: string; // 사람이 읽을 수 있는 설명(누락 안내 목록에 그대로 표시)
+  group: string; // 화면 섹션명(안내 배너 그룹핑용)
+  satisfied: (input: RequiredFieldCheckInput) => boolean;
+}
+
+export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
+  {
+    key: "applicationType",
+    label: "상담 후 방향(개인회생/개인파산/워크아웃) 미지정",
+    group: "기본정보",
+    satisfied: (i) => !!i.applicationType,
+  },
+  {
+    key: "residenceRegion",
+    label: "[기본정보] 거주지역 미입력",
+    group: "기본정보",
+    satisfied: (i) => !!(i.consultation?.personal?.residenceRegion?.trim() || i.consultation?.personal?.address?.trim()),
+  },
+  {
+    key: "occupationType",
+    label: "[기본정보] 직군 미선택",
+    group: "소득",
+    satisfied: (i) => !!i.consultation?.personal?.occupationType,
+  },
+  {
+    key: "tenureInfo",
+    label: "[소득] 재직기간 미입력",
+    group: "소득",
+    // 무직은 재직기간 자체가 없을 수 있어 예외 처리
+    satisfied: (i) => i.consultation?.personal?.occupationType === "무직" || !!i.consultation?.income?.tenureInfo?.trim(),
+  },
+  {
+    key: "monthlyAvgIncome",
+    label: "[소득] 월 실수령 미입력",
+    group: "소득",
+    satisfied: (i) => !!i.consultation?.income?.monthlyAvgIncome && i.consultation.income.monthlyAvgIncome > 0,
+  },
+  {
+    key: "housingType",
+    label: "[자산] 거주형태 미선택",
+    group: "자산",
+    satisfied: (i) => !!i.consultation?.housing?.housingType,
+  },
+  {
+    key: "hasDebtAmount",
+    label: "[채무] 총 채무금액 미입력(채무현황 표 또는 채무 리스트 중 하나는 있어야 함)",
+    group: "채무",
+    satisfied: (i) => {
+      const debts = i.consultation?.debts ?? [];
+      const loanRecords = i.consultation?.loanRecords ?? [];
+      return debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
+    },
+  },
+];
+
+export interface RequiredFieldMiss {
+  key: string;
+  label: string;
+  group: string;
+}
+
 export interface ConsultationCompleteness {
   ok: boolean;
-  missing: string[]; // 사람이 읽을 수 있는 누락 항목 설명
+  missing: string[]; // 사람이 읽을 수 있는 누락 항목 설명(기존 화면 호환용)
+  missingFields: RequiredFieldMiss[]; // 필드 키 포함 상세 목록(개별 필드 강조 표시용)
 }
 
 export function checkConsultationRequired(
   applicationType: ConsultDirection | undefined,
   consultation: ConsultationInfo | undefined
 ): ConsultationCompleteness {
-  const missing: string[] = [];
+  const input: RequiredFieldCheckInput = { applicationType, consultation };
+  const missingFields = REQUIRED_CONSULTATION_FIELDS.filter((f) => !f.satisfied(input)).map((f) => ({
+    key: f.key,
+    label: f.label,
+    group: f.group,
+  }));
+  return {
+    ok: missingFields.length === 0,
+    missing: missingFields.map((f) => f.label),
+    missingFields,
+  };
+}
 
-  if (!applicationType) missing.push("상담 후 방향(개인회생/개인파산/워크아웃) 미지정");
+// ---- 상담일지 작성률 (참고용 — 고객전환 가능 여부는 이 값이 아니라 위 필수항목 충족
+// 여부로만 판단합니다) ----
+// 필수항목보다 넓게, 상담일지에서 사람이 직접 입력하는 주요 필드 전체를 대상으로
+// "채워진 필드 수 / 전체 필드 수"를 계산합니다.
+export interface ConsultationCompletionStats {
+  filledCount: number;
+  totalCount: number;
+  percent: number; // 0~100
+}
 
-  const personal = consultation?.personal;
-  if (!personal?.address?.trim()) missing.push("[인적사항] 거주지(초본주소) 미입력");
-  if (!personal?.occupationType) missing.push("[인적사항] 직업 미선택");
+export function getConsultationCompletionStats(
+  applicationType: ConsultDirection | undefined,
+  consultation: ConsultationInfo | undefined
+): ConsultationCompletionStats {
+  const personal = consultation?.personal ?? {};
+  const income = consultation?.income ?? {};
+  const housing = consultation?.housing ?? {};
+  const judgment = consultation?.judgment ?? {};
+  const counselPlan = consultation?.counselPlan ?? {};
+  const debtSummaryExtra = consultation?.debtSummaryExtra ?? {};
+  const recentLoanInsurance = consultation?.recentLoanInsurance ?? {};
 
-  const income = consultation?.income;
-  if (!income?.monthlyAvgIncome || income.monthlyAvgIncome <= 0) missing.push("[소득현황] 월평균소득 미입력");
+  // 값이 "채워졌다"고 볼 수 있는지 판정 — boolean은 undefined만 아니면 채워진 것으로 간주
+  const isFilled = (v: unknown): boolean => {
+    if (v === undefined || v === null) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "boolean") return true;
+    return true;
+  };
 
-  const debts = consultation?.debts ?? [];
-  const loanRecords = consultation?.loanRecords ?? [];
-  const hasDebtAmount = debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
-  if (!hasDebtAmount) missing.push("[채무현황] 총 채무금액 미입력(채무현황 표 또는 기대출 리스트 중 하나는 있어야 함)");
+  const tracked: unknown[] = [
+    applicationType,
+    personal.residenceRegion || personal.address,
+    personal.workRegion,
+    personal.age ?? personal.birthDate,
+    personal.occupationType,
+    personal.spouse,
+    personal.childrenCount,
+    personal.dischargeHistory,
+    personal.riskyAssetActivity,
+    personal.callRequestTime,
+    income.tenureInfo,
+    income.monthlyAvgIncome,
+    income.hasFourInsurances,
+    income.salaryAccountBank,
+    housing.housingType,
+    housing.hasVehicle,
+    judgment.workoutFeasible,
+    judgment.workoutGuided,
+    counselPlan.rehabPlanNote || counselPlan.recoveryPlanNote,
+    counselPlan.principalReductionPct,
+    debtSummaryExtra.salaryPayDay,
+    debtSummaryExtra.heldCreditCards,
+    recentLoanInsurance.recentLoanUsage,
+    recentLoanInsurance.insurancePremium,
+    (consultation?.debts ?? []).some((d) => (d.amount || 0) > 0) || (consultation?.loanRecords ?? []).length > 0,
+    (consultation?.memoLog ?? []).length > 0,
+  ];
 
-  return { ok: missing.length === 0, missing };
+  const totalCount = tracked.length;
+  const filledCount = tracked.filter(isFilled).length;
+  const percent = totalCount > 0 ? Math.round((filledCount / totalCount) * 100) : 0;
+  return { filledCount, totalCount, percent };
 }
 
 // ---- 콜 경고 판정 ----

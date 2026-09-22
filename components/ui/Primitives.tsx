@@ -170,22 +170,30 @@ export type ModalSize = "md" | "lg" | "xl" | "full";
 export function Modal({
   open,
   title,
+  headerExtra,
   children,
   onClose,
   size = "md",
 }: {
   open: boolean;
   title: string;
+  // 헤더 우측(닫기 버튼 왼쪽)에 붙는 부가 콘텐츠 — 예: 상담일지 자동저장 상태("저장
+  // 중.../저장됨")나 작성률 뱃지처럼 제목 옆에 작게 보여줘야 하는 요소. 옵션 prop이라
+  // 기존 Modal 호출부는 전혀 영향받지 않습니다.
+  headerExtra?: ReactNode;
   children: ReactNode;
   onClose: () => void;
   size?: ModalSize;
 }) {
   if (!open) return null;
+  // md/lg/xl은 기존과 동일하게 내용물 높이에 맞춰 늘어나고 뷰포트를 넘지 않도록만 제한.
+  // full은 "상담일지를 한 화면에" 요청에 맞춰 뷰포트에 최대한 맞춘 고정 크기로 열리고,
+  // 내용이 넘치면 카드 자체가(스티키 헤더 아래) 내부 스크롤됩니다.
   const sizeClass: Record<ModalSize, string> = {
-    md: "max-w-2xl",
-    lg: "max-w-4xl",
-    xl: "max-w-5xl",
-    full: "max-w-[1800px]",
+    md: "max-w-2xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
+    lg: "max-w-4xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
+    xl: "max-w-5xl max-h-[calc(100dvh-16px)] sm:max-h-[90vh]",
+    full: "max-w-[1800px] w-[96vw] max-h-[calc(100dvh-16px)] sm:max-h-[min(94vh,1050px)]",
   };
   return (
     <div
@@ -194,21 +202,24 @@ export function Modal({
     >
       <div
         className={cn(
-          "max-h-[calc(100dvh-16px)] w-full overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-2xl",
+          "flex w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl sm:rounded-2xl",
           sizeClass[size]
         )}
         onMouseDown={(e: MouseEvent<HTMLDivElement>) => e.stopPropagation()}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3 sm:px-5 sm:py-4">
           <h2 className="min-w-0 break-keep pr-3 font-bold">{title}</h2>
-          <button
-            onClick={onClose}
-            className="grid size-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 sm:size-8"
-          >
-            ✕
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerExtra}
+            <button
+              onClick={onClose}
+              className="grid size-10 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 sm:size-8"
+            >
+              ✕
+            </button>
+          </div>
         </div>
-        <div className="p-4 sm:p-5">{children}</div>
+        <div className="overflow-y-auto overscroll-contain p-4 sm:p-5">{children}</div>
       </div>
     </div>
   );

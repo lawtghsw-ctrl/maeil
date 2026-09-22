@@ -263,15 +263,33 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     otherDependents: "",
     seriousIllness: false,
     dependentNote: "배우자 소득 없음",
+    // ---- v12 추가 필드 데모 시딩(additive) ----
+    age: 40,
+    residenceRegion: "서울 관악구",
+    workRegion: "서울 강남구",
+    maritalNote: "배우자와 동거 중, 이혼 계획 없음",
+    parentCount: 2,
+    parentAgeStatus: "부 72세(무직), 모 68세(무직)",
+    parentSupportNote: "부모님 별도 소득 없음, 부양 부담 있음",
+    callRequestTime: "평일 저녁 8시 이후",
+    dischargeHistory: false,
+    riskyAssetActivity: false,
   },
   income: {
     incomeType: "근로소득",
     workplaceName: "㈜한빛물류",
     tenureInfo: "재직 4년차",
+    tenureMonths: 48,
     monthlyAvgIncome: 2800000,
     secondaryIncome: 0,
     pensionIncome: 0,
     note: "급여명세서 3개월분 수령 예정",
+    // ---- v12 추가 ----
+    hasFourInsurances: true,
+    severancePayEstimate: 8000000,
+    salaryAccountBank: "국민은행",
+    salaryAccount: "입출금통장(급여이체)",
+    salaryAccountChangeable: true,
   },
   assets: emptyAssetRows().map((a) =>
     a.category === "예금/적금" ? { ...a, value: 1200000 } : a.category === "자동차" ? { ...a, value: 3000000 } : a
@@ -296,6 +314,73 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
       tag: "일반",
     },
   ],
+  // ---- v12 추가 — 채무 리스트(개별 대출 상세). 기존 5개 고정 카테고리 채무현황(debts)
+  // 표와는 별개로, 상담일지 대형 팝업의 "채무 리스트"에 개별 대출 건이 보이도록 시딩.
+  loanRecords: [
+    {
+      id: "LOAN-SEED-SAMPLE-1",
+      kind1: "신용",
+      kind2: "신용대출",
+      lender: "OO저축은행",
+      executedAt: "2023-02-10",
+      balance: 18000000,
+      originalAmount: 20000000,
+      monthlyPayment: 420000,
+      interestRate: 17.5,
+      source: "manual",
+      note: "",
+    },
+    {
+      id: "LOAN-SEED-SAMPLE-2",
+      kind1: "신용",
+      kind2: "카드론",
+      lender: "OO카드",
+      executedAt: "2024-01-05",
+      balance: 6500000,
+      originalAmount: 7000000,
+      monthlyPayment: 180000,
+      interestRate: 19.9,
+      source: "manual",
+      note: "",
+    },
+  ],
+  // ---- v12 추가 — 자산(거주형태·차량) ----
+  housing: {
+    housingType: "전세",
+    housingNote: "보증금 8000만원, 계약만료 2027-03",
+    hasVehicle: true,
+    vehicleInfo: "2019년식 아반떼, 시세 약 800만원",
+    spouseHasVehicle: false,
+  },
+  // ---- v12 추가 — 의사/상담판단 ----
+  judgment: {
+    workoutFeasible: false,
+    workoutGuided: true,
+    costGuided: true,
+    workoutInProgress: false,
+    judgmentNote: "채무 규모상 개인회생이 더 적합하다고 판단, 워크아웃은 안내만 진행함",
+  },
+  // ---- v12 추가 — 상담 플랜 ----
+  counselPlan: {
+    rehabPlanNote: "변제기간 36개월, 월 변제금 예상 45만원 내외",
+    recoveryPlanNote: "",
+    principalReductionPct: 30,
+    paymentReductionPct: 20,
+  },
+  // ---- v12 추가 — 채무 요약 보조 항목 ----
+  debtSummaryExtra: {
+    salaryPayDay: 25,
+    cardPaymentAmount: 350000,
+    cardPaymentDay: 14,
+    heldCreditCards: "국민카드, 현대카드",
+  },
+  // ---- v12 추가 — 최근 대출 / 보험 ----
+  recentLoanInsurance: {
+    recentLoanUsage: "생활비 부족으로 OO카드 카드론 700만원 실행(2024-01)",
+    insurancePremium: 45000,
+    insuranceRefundAmount: 320000,
+    insuranceNote: "실손보험 1건 유지 중, 해지 시 환급금 약 32만원",
+  },
 };
 if (clients[0]) clients[0].consultation = SAMPLE_CONSULTATION;
 
@@ -516,8 +601,17 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
 
   const consultation: ConsultationInfo | undefined = LEAD_CONSULTATION_DEMO_IDX.has(i)
     ? {
-        personal: { occupationType: pick(["직장인", "프리랜서", "사업자"] as const), spouse: chance(0.5) },
-        income: { incomeType: "근로소득", monthlyAvgIncome: randInt(180, 320) * 10000 },
+        // v12: 필수항목 검증(REQUIRED_CONSULTATION_FIELDS) 데모를 위해, DB 단계에서부터
+        // 상담일지를 일부 작성한 리드 샘플에도 거주지역/재직기간/월 실수령/거주형태처럼
+        // 새로 추가된 필수 항목을 일부 채워 넣었습니다(일부러 전부 채우지는 않아 "필수
+        // 항목 미입력 — 고객 전환 불가" 배지도 함께 확인할 수 있게 함).
+        personal: {
+          occupationType: pick(["직장인", "프리랜서", "사업자"] as const),
+          spouse: chance(0.5),
+          residenceRegion: pick(["서울 관악구", "경기 수원시", "인천 남동구"]),
+        },
+        income: { incomeType: "근로소득", monthlyAvgIncome: randInt(180, 320) * 10000, tenureInfo: "재직 2년차" },
+        housing: { housingType: pick(["전세", "월세", "자가"] as const) },
         memoLog:
           memoLog.length > 0
             ? memoLog

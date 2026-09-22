@@ -4,28 +4,21 @@ import { useEffect, useMemo, useState, type ChangeEvent, type MouseEvent } from 
 import Link from "next/link";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type {
-  AssetRow,
-  AttachedFileMeta,
   CaseRecord,
   Client,
   ConsultationInfo,
   ConsultDirection,
-  DebtRow,
   InstallmentStatus,
-  LoanRecord,
-  MemoLogEntry,
   PaymentMethod,
-  RepaymentPlanInput,
   StaffName,
 } from "@/lib/types";
 import { CONSULT_DIRECTIONS, PAYMENT_METHOD_NOTE, STAFF_LIST } from "@/lib/types";
 import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { fmtDate, fmtWon } from "@/lib/format";
-import { computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput } from "@/lib/consultation";
 import { exportConsultationExcel } from "@/lib/excel-export";
 import { StatusBadge } from "@/components/ui/Badge";
 import { DocumentChecklist } from "@/components/ui/DocumentChecklist";
-import { ConsultationTabsEditor, textareaClass } from "@/components/ui/ConsultationTabsEditor";
+import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import {
   Button,
   Card,
@@ -40,7 +33,7 @@ import {
   pageRows,
 } from "@/components/ui/Primitives";
 import { ConfirmDelete } from "@/components/ui/ConfirmDelete";
-import { Download, FileSignature, Percent, Plus, RefreshCw, Send, Trash2, WalletCards } from "lucide-react";
+import { ClipboardList, FileSignature, Percent, Plus, RefreshCw, Send, Trash2, WalletCards } from "lucide-react";
 
 const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
 const TYPE_FILTERS: Array<ConsultDirection | "전체"> = ["전체", ...CONSULT_DIRECTIONS];
@@ -64,6 +57,7 @@ export default function ClientsPage() {
   const [typeFilter, setTypeFilter] = useState<ConsultDirection | "전체">("전체");
   const [page, setPage] = useState(1);
   const [editTarget, setEditTarget] = useState<Client | null>(null);
+  const [consultTarget, setConsultTarget] = useState<Client | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [eformOpen, setEformOpen] = useState(false);
@@ -315,6 +309,7 @@ export default function ClientsPage() {
           clientCases={selected.cases}
           receivable={selected.receivable}
           onEdit={() => setEditTarget(selected.client)}
+          onConsultation={() => setConsultTarget(selected.client)}
           onInstallments={() => setInstallOpen(true)}
           onEform={() => setEformOpen(true)}
           onDocGuide={() => setDocGuideOpen(true)}
@@ -359,11 +354,24 @@ export default function ClientsPage() {
           client={editTarget}
           primaryCase={cases.find((c) => c.clientId === editTarget.id)}
           onClose={() => setEditTarget(null)}
-          onSave={(clientPatch, consultation, contractMemo, primaryCaseId, paymentMethod) => {
-            updateClient(editTarget.id, { ...clientPatch, consultation });
+          onSave={(clientPatch, contractMemo, primaryCaseId, paymentMethod) => {
+            // v12: 상담일지(인적사항~상담메모)는 더 이상 이 모달이 다루지 않으므로, patch에
+            // consultation 키 자체가 없어 updateClient의 {...c, ...patch} 병합 규칙상 기존
+            // client.consultation 값은 그대로 보존됩니다.
+            updateClient(editTarget.id, clientPatch);
             if (primaryCaseId) updateCase(primaryCaseId, { memo: contractMemo, ...(paymentMethod ? { paymentMethod } : {}) });
             setEditTarget(null);
           }}
+        />
+      )}
+
+      {consultTarget && (
+        <ClientConsultationModal
+          key={consultTarget.id}
+          open={!!consultTarget}
+          client={consultTarget}
+          primaryCase={cases.find((c) => c.clientId === consultTarget.id)}
+          onClose={() => setConsultTarget(null)}
         />
       )}
 
@@ -388,6 +396,7 @@ function CustomerDetail({
   clientCases,
   receivable,
   onEdit,
+  onConsultation,
   onInstallments,
   onEform,
   onDocGuide,
@@ -397,6 +406,7 @@ function CustomerDetail({
   clientCases: CaseRecord[];
   receivable: number;
   onEdit: () => void;
+  onConsultation: () => void;
   onInstallments: () => void;
   onEform: () => void;
   onDocGuide: () => void;
@@ -417,6 +427,10 @@ function CustomerDetail({
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={onEdit}>
             고객정보 수정
+          </Button>
+          <Button variant="secondary" onClick={onConsultation}>
+            <ClipboardList size={15} />
+            상담일지
           </Button>
           <Button disabled={clientCases.length === 0} onClick={onInstallments}>
             <WalletCards size={15} />
@@ -796,12 +810,16 @@ function DocGuideModal({
   );
 }
 
-// ---- 고객정보 수정 팝업 — 상담일지(개인회생·개인파산 상담일지) 전 항목을 탭으로 분류 ----
-// 도원 Admin의 '수정 팝업 + 메모/체크리스트' 상호작용 패턴을 이식하되, 내용은 고객이
-// 전달한 상담일지 엑셀 서식(인적사항/소득현황/재산현황/채무현황/변제계획/상담메모)을
-// 그대로 반영해 상담 중 빠뜨리기 쉬운 항목이 없도록 구성했습니다.
-type TabKey = "기본정보" | "인적사항" | "소득현황" | "재산현황" | "채무현황" | "변제계획" | "상담메모" | "서류체크리스트";
-const TABS: TabKey[] = ["기본정보", "인적사항", "소득현황", "재산현황", "채무현황", "변제계획", "상담메모", "서류체크리스트"];
+// ---- 고객정보 수정 팝업 ----
+// v12: 예전에는 이 팝업 안에 인적사항~상담메모까지 상담일지 전 항목이 탭으로 함께 들어
+// 있었지만, 상담일지가 별도의 대형 단일 팝업(ConsultationModal, 아래 ClientConsultationModal
+// 참고)으로 독립되면서 이 팝업은 원래 목적대로 "고객 레코드 자체"(이름/연락처/담당자/
+// 상담후방향/메모, 그리고 연동된 계약의 메모·결제방식)와 서류체크리스트만 다룹니다.
+// 상담일지 팝업을 이 팝업 안에 중첩시키지 않고(Section 31의 "팝업 중첩 금지"와 같은
+// 취지) 고객상세 화면에서 "상담일지" 버튼으로 별도로 열도록 했습니다(DB관리 화면의
+// 상담일지 팝업과 동일한 구조).
+type TabKey = "기본정보" | "서류체크리스트";
+const TABS: TabKey[] = ["기본정보", "서류체크리스트"];
 
 function CustomerEditModal({
   open,
@@ -816,7 +834,6 @@ function CustomerEditModal({
   onClose: () => void;
   onSave: (
     clientPatch: Pick<Client, "name" | "phone" | "assignedStaff" | "memo" | "applicationType">,
-    consultation: ConsultationInfo,
     contractMemo: string,
     primaryCaseId: string | undefined,
     paymentMethod: PaymentMethod | undefined
@@ -831,15 +848,6 @@ function CustomerEditModal({
   const [contractMemo, setContractMemo] = useState(primaryCase?.memo ?? "");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | undefined>(primaryCase?.paymentMethod);
 
-  const [personal, setPersonal] = useState(client.consultation?.personal ?? {});
-  const [income, setIncome] = useState(client.consultation?.income ?? {});
-  const [assets, setAssets] = useState<AssetRow[]>(client.consultation?.assets ?? emptyAssetRows());
-  const [debts, setDebts] = useState<DebtRow[]>(client.consultation?.debts ?? emptyDebtRows());
-  const [plan, setPlan] = useState<RepaymentPlanInput>(client.consultation?.plan ?? emptyPlanInput());
-  const [memoLog, setMemoLog] = useState<MemoLogEntry[]>(client.consultation?.memoLog ?? []);
-  const [loanRecords, setLoanRecords] = useState<LoanRecord[]>(client.consultation?.loanRecords ?? []);
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFileMeta[]>(client.consultation?.attachedFiles ?? []);
-
   useEffect(() => {
     if (!open) return;
     setTab("기본정보");
@@ -850,27 +858,13 @@ function CustomerEditModal({
     setMemo(client.memo ?? "");
     setContractMemo(primaryCase?.memo ?? "");
     setPaymentMethod(primaryCase?.paymentMethod);
-    setPersonal(client.consultation?.personal ?? {});
-    setIncome(client.consultation?.income ?? {});
-    setAssets(client.consultation?.assets ?? emptyAssetRows());
-    setDebts(client.consultation?.debts ?? emptyDebtRows());
-    setPlan(client.consultation?.plan ?? emptyPlanInput());
-    setMemoLog(client.consultation?.memoLog ?? []);
-    setLoanRecords(client.consultation?.loanRecords ?? []);
-    setAttachedFiles(client.consultation?.attachedFiles ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, client.id]);
-
-  const result = useMemo(
-    () => computeRepaymentPlan(income.monthlyAvgIncome ?? 0, income.secondaryIncome ?? 0, income.pensionIncome ?? 0, assets, debts, plan),
-    [income, assets, debts, plan]
-  );
 
   function save() {
     if (!name.trim() || !phone.trim()) return;
     onSave(
       { name: name.trim(), phone: phone.trim(), assignedStaff, memo: memo.trim() || undefined, applicationType },
-      { personal, income, assets, debts, plan, memoLog, loanRecords, attachedFiles },
       contractMemo.trim(),
       primaryCase?.id,
       paymentMethod
@@ -878,7 +872,7 @@ function CustomerEditModal({
   }
 
   return (
-    <Modal open={open} title={`${client.name} 고객정보 수정`} onClose={onClose} size="xl">
+    <Modal open={open} title={`${client.name} 고객정보 수정`} onClose={onClose} size="lg">
       <div className="mb-4 flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
         {TABS.map((t) => (
           <button
@@ -933,7 +927,7 @@ function CustomerEditModal({
           </Label>
           <Label text="계약 관련 메모 (계약관리 사건 메모와 연동)">
             <textarea
-              className={textareaClass}
+              className="min-h-32 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:text-sm"
               placeholder={primaryCase ? "계약 진행 관련 특이사항을 기록하세요." : "연결된 계약이 없어 저장 시 반영되지 않습니다."}
               value={contractMemo}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setContractMemo(e.target.value)}
@@ -958,29 +952,11 @@ function CustomerEditModal({
               <div className="mt-1 text-[11px] text-slate-400">{paymentMethod ? PAYMENT_METHOD_NOTE[paymentMethod] : "결제방식을 선택하면 정산 메뉴에 적용요율이 자동 반영됩니다."}</div>
             )}
           </Label>
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-400">
+            인적사항·소득·자산·채무·상담메모 등 상담일지 내용은 &ldquo;상담일지&rdquo; 버튼에서 별도로 작성/수정합니다.
+          </div>
         </div>
       )}
-
-      <ConsultationTabsEditor
-        activeTab={tab}
-        personal={personal}
-        setPersonal={setPersonal}
-        income={income}
-        setIncome={setIncome}
-        assets={assets}
-        setAssets={setAssets}
-        debts={debts}
-        setDebts={setDebts}
-        plan={plan}
-        setPlan={setPlan}
-        memoLog={memoLog}
-        setMemoLog={setMemoLog}
-        loanRecords={loanRecords}
-        setLoanRecords={setLoanRecords}
-        attachedFiles={attachedFiles}
-        setAttachedFiles={setAttachedFiles}
-        result={result}
-      />
 
       {tab === "서류체크리스트" &&
         (primaryCase ? (
@@ -991,36 +967,72 @@ function CustomerEditModal({
           </div>
         ))}
 
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
-        <Button
-          variant="secondary"
-          onClick={() =>
-            exportConsultationExcel({
-              clientName: name.trim() || client.name,
-              phone: phone.trim() || client.phone,
-              registeredAt: client.registeredAt,
-              assignedStaff,
-              applicationType,
-              personal,
-              income,
-              assets,
-              debts,
-              plan,
-              memoLog,
-              contractMemo,
-            })
-          }
-        >
-          <Download size={15} />
-          고객 상담 엑셀 다운로드
+      <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+        <Button variant="secondary" onClick={onClose}>
+          취소
         </Button>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={onClose}>
-            취소
-          </Button>
-          <Button onClick={save}>저장</Button>
-        </div>
+        <Button onClick={save}>저장</Button>
       </div>
     </Modal>
+  );
+}
+
+// ---- 상담일지 팝업 (고객관리 단계) ----
+// DB관리 화면의 LeadConsultationModal과 동일한 얇은 래퍼 패턴 — 공용 ConsultationModal을
+// 감싸서 고객관리에만 있는 요소(연결된 계약의 사건번호를 "사건번호"로 표시, "고객 상담
+// 엑셀 다운로드" 버튼)만 추가로 연결합니다. 고객관리에는 DB관리의 "상세 단계
+// (detailStage)" 개념이 없으므로 showDetailStage는 전달하지 않습니다(기본값 false).
+function ClientConsultationModal({
+  open,
+  client,
+  primaryCase,
+  onClose,
+}: {
+  open: boolean;
+  client: Client;
+  primaryCase?: CaseRecord;
+  onClose: () => void;
+}) {
+  const { updateClient } = useStore();
+  const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(client.applicationType);
+
+  useEffect(() => {
+    if (!open) return;
+    setApplicationType(client.applicationType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, client.id]);
+
+  return (
+    <ConsultationModal
+      open={open}
+      resetKey={client.id}
+      onClose={onClose}
+      displayName={client.name}
+      displayPhone={client.phone}
+      joinedAtLabel={fmtDate(client.registeredAt)}
+      caseNumberLabel={primaryCase?.caseNumber ?? "- (연결된 계약 없음)"}
+      applicationType={applicationType}
+      onApplicationTypeChange={setApplicationType}
+      initialConsultation={client.consultation}
+      onSave={(consultation) => {
+        updateClient(client.id, { applicationType, consultation });
+      }}
+      onExportExcel={(draft: ConsultationInfo) =>
+        exportConsultationExcel({
+          clientName: client.name,
+          phone: client.phone,
+          registeredAt: client.registeredAt,
+          assignedStaff: client.assignedStaff,
+          applicationType,
+          personal: draft.personal ?? {},
+          income: draft.income ?? {},
+          assets: draft.assets ?? [],
+          debts: draft.debts ?? [],
+          plan: draft.plan ?? { householdSize: 1, minLivingCost: 0, otherDeduction: 0, repaymentMonths: 36 },
+          memoLog: draft.memoLog,
+          contractMemo: primaryCase?.memo,
+        })
+      }
+    />
   );
 }

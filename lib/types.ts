@@ -383,16 +383,36 @@ export interface ConsultationPersonal {
   otherDependents?: string; // 기타 부양가족
   seriousIllness?: boolean; // 중대질환·장기요양 여부
   dependentNote?: string; // 부양가족 특이사항
+  // ---- v12 추가 — 상담일지 전면개편(대형 팝업) 요청 반영, 기존 필드는 위 그대로 유지 ----
+  age?: number; // 나이 (생년월일을 모르는 경우를 위한 수동 입력 — 있으면 화면에 우선 표시)
+  residenceRegion?: string; // 거주지역(시/군/구 요약) — address(상세주소)와 별개의 짧은 지역명
+  workRegion?: string; // 회사지역
+  maritalNote?: string; // 혼인/이혼 및 배우자 관련 메모
+  parentCount?: number; // 부모 수
+  parentAgeStatus?: string; // 부모 연령/상태
+  parentSupportNote?: string; // 부모 소득 또는 부양여부
+  callRequestTime?: string; // 통화 요청시간(자유 기재) — 광고 인스턴트양식의 상담가능시간(consultTime)과 별개로 상담 중 확인한 시간대
+  dischargeHistory?: boolean; // 면책이력 여부
+  dischargeHistoryNote?: string; // 면책이력 상세내용
+  riskyAssetActivity?: boolean; // 코인/주식/도박/사행성 여부
+  riskyAssetNote?: string; // 관련 메모
 }
 
 export interface ConsultationIncome {
   incomeType?: string; // 소득유형(근로소득/사업소득 등)
   workplaceName?: string; // 회사명·사업자명
-  tenureInfo?: string; // 재직기간·사업장정보
+  tenureInfo?: string; // 재직기간·사업장정보(자유 기재 — 기존 필드, 그대로 유지)
+  tenureMonths?: number; // 재직기간(개월수) — v12 추가. tenureInfo(자유기재)와 별도로 "OO개월" 단위 빠른입력용
   monthlyAvgIncome?: number; // 월평균소득(최근 3개월)
   secondaryIncome?: number; // 2중소득(부업)
   pensionIncome?: number; // 연금소득(국민/노령)
   note?: string;
+  // ---- v12 추가 ----
+  hasFourInsurances?: boolean; // 4대보험 여부
+  severancePayEstimate?: number; // 퇴직금(예상액) — 재산현황 표의 "퇴직금" 청산가치 평가액과는 별개로, 상담 중 확인한 개략 금액을 바로 기록
+  salaryAccountBank?: string; // 급여통장 은행 (계좌 자체는 salaryAccount로 별도 기록)
+  salaryAccount?: string; // 급여통장(은행 제외 계좌 메모 — 예: 입출금통장/OO은행 급여이체 등)
+  salaryAccountChangeable?: boolean; // 급여통장 변경 가능 여부
 }
 
 // 재산현황(청산가치 산정용) — 상담일지 서식의 고정 행 구성을 그대로 사용
@@ -462,6 +482,15 @@ export interface LoanRecord {
   executedAt?: string; // 실행일(ISO date)
   balance: number; // 잔액(원)
   note?: string;
+  // ---- v12 추가 — 채무 파일 업로드 파서(lib/debt-parsers)가 채워주는 정규화 필드.
+  // 기존 5개(kind1/kind2/lender/executedAt/balance) + note는 그대로 두고, 자동계산(채무
+  // 요약: 총이자·월불입금 등)과 파일 파싱 출처 구분에 필요한 필드만 additive로 추가했습니다.
+  originalAmount?: number; // 실행 당시 원금
+  monthlyPayment?: number; // 월 납입금
+  interestRate?: number; // 금리(%)
+  securedAmount?: number; // 담보설정액(담보대출인 경우)
+  source?: "manual" | "file"; // 입력 경로 — 수기입력 / 파일 업로드에서 자동 추출
+  sourceFileName?: string; // 파일에서 가져온 경우 원본 파일명(첨부파일 목록과 연결 참고용)
 }
 
 // 상담기록지에 첨부한 파일(신용정보 열람서비스 다운로드 파일 등)의 메타정보만 기록합니다.
@@ -474,6 +503,55 @@ export interface AttachedFileMeta {
   attachedAt: string; // ISO datetime
 }
 
+// ---- v12 추가 — "자산" 영역(거주형태·차량). 기존 재산현황(AssetRow, 청산가치 산정용
+// 표)과는 성격이 달라 별도 타입으로 두었습니다(기존 assets 필드는 그대로 유지).
+export const HOUSING_TYPES = ["자가", "전세", "월세", "배우자 자가", "배우자 전세", "기타"] as const;
+export type HousingType = (typeof HOUSING_TYPES)[number];
+
+export interface ConsultationHousing {
+  housingType?: HousingType;
+  housingNote?: string; // 거주 관련 메모
+  hasVehicle?: boolean; // 차량 보유 여부
+  vehicleInfo?: string; // 차량 정보
+  spouseHasVehicle?: boolean; // 배우자 차량 보유 여부
+  spouseVehicleInfo?: string; // 배우자 차량 정보
+}
+
+// ---- v12 추가 — "의사/상담판단" 영역 ----
+export interface ConsultationJudgment {
+  workoutFeasible?: boolean; // 추후 워크아웃 가능 여부
+  workoutGuided?: boolean; // 안내 여부
+  costGuided?: boolean; // 부채발급비용/송달료/인지대 안내 여부
+  workoutInProgress?: boolean; // 워크아웃 진행 여부
+  workoutAmount?: number; // 금액
+  judgmentNote?: string; // 판단 관련 메모
+}
+
+// ---- v12 추가 — "상담 플랜" 영역. 법원 변제계획 자동계산(RepaymentPlanInput/Result,
+// 기존 그대로 유지)과 달리 상담원이 자유롭게 적는 예상 플랜·비율 메모입니다.
+export interface ConsultationCounselPlan {
+  rehabPlanNote?: string; // 회생 예상플랜
+  recoveryPlanNote?: string; // 회복 예상플랜
+  principalReductionPct?: number; // 원금 탕감율(%)
+  paymentReductionPct?: number; // 변제금 감소율(%)
+}
+
+// ---- v12 추가 — "채무 요약"의 자동계산 대상이 아닌 수동 입력 보조 항목 ----
+export interface ConsultationDebtSummaryExtra {
+  salaryPayDay?: number; // 급여일(1~31)
+  cardPaymentAmount?: number; // 카드결제금액
+  cardPaymentDay?: number; // 카드결제일(1~31)
+  heldCreditCards?: string; // 보유중인 신용카드(자유 텍스트, 콤마 구분)
+}
+
+// ---- v12 추가 — "최근 대출 / 보험" 영역 ----
+export interface ConsultationRecentLoanInsurance {
+  recentLoanUsage?: string; // 최근 3개월 내 대출 사용처
+  insurancePremium?: number; // 보험료
+  insuranceRefundAmount?: number; // 환급금액
+  insuranceNote?: string; // 보험 관련 메모
+}
+
 export interface ConsultationInfo {
   personal?: ConsultationPersonal;
   income?: ConsultationIncome;
@@ -484,4 +562,10 @@ export interface ConsultationInfo {
   memoLog?: MemoLogEntry[]; // 상담메모 게시판 — 작성자·시각·태그(재통화/부재중/일반)가 남는 누적 로그
   loanRecords?: LoanRecord[]; // 기대출 리스트(개별 대출 상세)
   attachedFiles?: AttachedFileMeta[]; // 첨부파일 메타정보
+  // ---- v12 추가 — 아래 5개는 모두 additive. 기존 필드는 이름·의미 변경 없이 그대로 둠 ----
+  housing?: ConsultationHousing;
+  judgment?: ConsultationJudgment;
+  counselPlan?: ConsultationCounselPlan;
+  debtSummaryExtra?: ConsultationDebtSummaryExtra;
+  recentLoanInsurance?: ConsultationRecentLoanInsurance;
 }

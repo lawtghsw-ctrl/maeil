@@ -35,7 +35,7 @@ import type {
   StaffName,
 } from "./types";
 import { STAFF_LIST } from "./types";
-import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
+import { checkConsultationRequired, defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 
 type DocumentState = Record<string, Record<string, boolean>>; // caseId -> itemId -> checked
 
@@ -195,11 +195,26 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   // leads를 직접 참조해야 해서(이미 전환됐는지 확인) 의존성 배열에 leads를 포함함.
+  //
+  // v12: "필수값 validation을 프론트에만 구현하지 말고 DB/API 레벨에서도 한 번 더
+  // 수행해서 우회가 불가능하게 해달라"는 요청 반영. 실제 백엔드가 없는 이 데모에서는
+  // store의 convertLeadToClient() 자체가 "API 레벨"에 해당하므로, 화면(UI)의 사전 확인과
+  // 별개로 이 함수 내부에서도 checkConsultationRequired()를 다시 실행합니다 — 화면의
+  // "고객 전환" 버튼을 우회해 이 함수를 직접 호출하더라도(예: 콘솔에서 store 메서드를
+  // 바로 호출) 필수항목이 비어있으면 변환이 거부되고 상태가 전혀 바뀌지 않습니다.
   const convertLeadToClient = useCallback(
     (leadId: string): string | undefined => {
       const lead = leads.find((l) => l.id === leadId);
       if (!lead) return undefined;
       if (lead.convertedClientId) return lead.convertedClientId;
+
+      const completeness = checkConsultationRequired(lead.applicationType, lead.consultation);
+      if (!completeness.ok) {
+        // 화면단 검증을 우회해 직접 호출된 경우 — 상태 변경 없이 조용히 거부.
+        // (호출부인 app/db/page.tsx의 tryConvert()가 이미 동일한 검증으로 사용자에게
+        // 누락 항목을 안내하고 상담일지 팝업을 열어주므로, 여기서는 이중 안내를 하지 않음)
+        return undefined;
+      }
 
       clientSeqRef.current += 1;
       const newClientId = `CL-${String(clientSeqRef.current).padStart(4, "0")}`;
