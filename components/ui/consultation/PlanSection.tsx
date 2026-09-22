@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import type { ChangeEvent } from "react";
 import { useStore } from "@/lib/store";
 import type { ConsultationCounselPlan, ConsultationRecentLoanInsurance, PctRange, RepaymentPlanInput } from "@/lib/types";
 import { PCT_RANGE_OPTIONS } from "@/lib/types";
@@ -14,7 +14,6 @@ import {
   compactTextareaClass,
 } from "./shared";
 import { fmtWon } from "@/lib/format";
-import { ChevronRight } from "lucide-react";
 
 export function PlanSection({
   counselPlan,
@@ -38,7 +37,6 @@ export function PlanSection({
   missingKeys: Set<string>;
 }) {
   const { minLivingCostTable } = useStore();
-  const [showAuto, setShowAuto] = useState(false);
   const required = (key: string) => requiredKeys.has(key);
   const missing = (key: string) => missingKeys.has(key);
 
@@ -96,22 +94,20 @@ export function PlanSection({
         <ManwonInput value={recentLoanInsurance.insuranceRefundAmount} onChange={(v) => patchRecentLoanInsurance({ insuranceRefundAmount: v })} />
       </FieldRow>
 
-      <div className="p-1">
-        <button
-          type="button"
-          onClick={() => setShowAuto((v) => !v)}
-          className="flex h-7 w-full items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 text-[10px] font-semibold text-slate-500 hover:bg-slate-100"
-        >
-          법원 변제계획 자동계산 {showAuto ? "접기" : "펼치기"}
-          <ChevronRight size={12} className={`transition-transform ${showAuto ? "rotate-90" : ""}`} />
-        </button>
-      </div>
-
-      {showAuto && (
-        <div className="grid grid-cols-2 gap-1 border-t border-slate-200 p-1 text-[10px]">
+      {/* 접기/펼치기 없이 상담자가 항상 결과를 보도록 상시 노출합니다. */}
+      <div className="border-t border-slate-200">
+        <div className="select-none border-b border-slate-200 bg-slate-100 px-2 py-1 text-center text-[10px] font-extrabold text-slate-600">
+          법원 변제계획 자동계산
+        </div>
+        <div className="grid grid-cols-2 gap-1 p-1 text-[10px]">
           <div className="flex items-center gap-1">
             <span className="w-16 shrink-0 text-center font-semibold text-slate-500">가구원수</span>
-            <NumberInput className="h-7 px-2 text-[11px] sm:h-7 sm:text-[11px]" min={1} value={plan.householdSize} onChange={(v) => patchPlan({ householdSize: v || 1, minLivingCost: lookupMinLivingCost(v || 1, minLivingCostTable) })} />
+            <NumberInput
+              className="h-7 px-2 text-[11px] sm:h-7 sm:text-[11px]"
+              min={1}
+              value={plan.householdSize}
+              onChange={(v) => patchPlan({ householdSize: v || 1, minLivingCost: lookupMinLivingCost(v || 1, minLivingCostTable) })}
+            />
           </div>
           <div className="flex items-center gap-1">
             <span className="w-16 shrink-0 text-center font-semibold text-slate-500">최저생계비</span>
@@ -120,7 +116,7 @@ export function PlanSection({
           <div className="rounded bg-blue-50 px-2 py-1 text-blue-700">최종 월 변제금: <b>{fmtWon(result.finalMonthlyRepayment)}</b></div>
           <div className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">탕감률: <b>{result.writeOffRate.toFixed(1)}%</b></div>
         </div>
-      )}
+      </div>
     </SectionCard>
   );
 }

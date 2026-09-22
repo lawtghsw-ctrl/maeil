@@ -82,10 +82,10 @@ export function IncomeSection({
       </FieldRow>
 
       <div className="grid grid-cols-2">
-        <FieldRow label="월실수령" required={required("monthlyAvgIncome")} missing={missing("monthlyAvgIncome")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)] border-r">
+        <FieldRow label="월실수령" required={required("monthlyAvgIncome")} missing={missing("monthlyAvgIncome")} labelClassName="w-[126px]" className="grid-cols-[126px_minmax(0,1fr)] border-r">
           <ManwonInput value={income.monthlyAvgIncome} onChange={(v) => patchIncome({ monthlyAvgIncome: v })} />
         </FieldRow>
-        <FieldRow label="추가소득" required={required("secondaryIncome")} missing={missing("secondaryIncome")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)]">
+        <FieldRow label="추가소득" required={required("secondaryIncome")} missing={missing("secondaryIncome")} labelClassName="w-[126px]" className="grid-cols-[126px_minmax(0,1fr)]">
           <ManwonInput value={income.secondaryIncome} onChange={(v) => patchIncome({ secondaryIncome: v })} />
         </FieldRow>
       </div>
@@ -95,7 +95,7 @@ export function IncomeSection({
       </FieldRow>
 
       <div className="grid grid-cols-2">
-        <FieldRow label="급여통장" required={required("salaryAccountBank")} missing={missing("salaryAccountBank")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)] border-r">
+        <FieldRow label="급여통장" required={required("salaryAccountBank")} missing={missing("salaryAccountBank")} labelClassName="w-[126px]" className="grid-cols-[126px_minmax(0,1fr)] border-r">
           <Input
             className={compactInputClass}
             value={income.salaryAccountBank ?? ""}
@@ -104,7 +104,7 @@ export function IncomeSection({
           />
           <span className="shrink-0 text-[10px] text-slate-500">은행</span>
         </FieldRow>
-        <FieldRow label="급통변경" required={required("salaryAccountChangeable")} missing={missing("salaryAccountChangeable")} labelClassName="w-[82px]" className="grid-cols-[82px_minmax(0,1fr)]">
+        <FieldRow label="급통변경" required={required("salaryAccountChangeable")} missing={missing("salaryAccountChangeable")} labelClassName="w-[126px]" className="grid-cols-[126px_minmax(0,1fr)]">
           <OXToggle value={income.salaryAccountChangeable} onChange={(v) => patchIncome({ salaryAccountChangeable: v })} />
         </FieldRow>
       </div>

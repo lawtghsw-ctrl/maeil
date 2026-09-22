@@ -169,9 +169,19 @@ export function BasicInfoSection({
           <UnitNumberInput value={personal.childrenCount} onChange={(v) => patchPersonal({ childrenCount: v })} unit="명" />
         </FieldRow>
 
-        <FieldRow label="부모" required={required("parentCount")} missing={missing("parentCount")}>
-          <UnitNumberInput value={personal.parentCount} onChange={(v) => patchPersonal({ parentCount: v })} unit="명" className="max-w-[45%]" />
-          <span className="text-[10px] text-slate-400">/</span>
+        <FieldRow
+          label="부모"
+          required={required("parentCount")}
+          missing={missing("parentCount")}
+          contentClassName="grid grid-cols-[112px_10px_minmax(0,1fr)] gap-1"
+        >
+          <UnitNumberInput
+            value={personal.parentCount}
+            onChange={(v) => patchPersonal({ parentCount: v })}
+            unit="명"
+            className="w-full flex-none"
+          />
+          <span className="text-center text-[10px] text-slate-400">/</span>
           <Input
             className={compactInputClass}
             value={personal.parentAgeStatus ?? ""}
