@@ -293,10 +293,35 @@ export function StatusTabs<T extends string>({
   );
 }
 
-export function Label({ text, children }: { text: string; children: ReactNode }) {
+// required/missing — 상담기록지 필수항목을 하늘색으로 강조 표시하기 위한 옵션.
+// required만 true면 옅은 "필수" 뱃지만 붙고, missing까지 true면(필수인데 비어있음)
+// 라벨 전체를 하늘색 박스로 감싸 한눈에 띄도록 합니다.
+export function Label({
+  text,
+  children,
+  required,
+  missing,
+}: {
+  text: string;
+  children: ReactNode;
+  required?: boolean;
+  missing?: boolean;
+}) {
   return (
-    <label className="text-sm font-semibold">
-      {text}
+    <label
+      className={cn(
+        "text-sm font-semibold",
+        missing && "block rounded-lg border-2 border-sky-300 bg-sky-50 p-2"
+      )}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {text}
+        {required && (
+          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold", missing ? "bg-sky-500 text-white" : "bg-slate-100 text-slate-400")}>
+            필수
+          </span>
+        )}
+      </span>
       <div className="mt-1.5">{children}</div>
     </label>
   );

@@ -13,8 +13,10 @@ import {
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_COLOR,
   INCOME_RANGE_OPTIONS,
+  LEAD_SOURCE_OPTIONS,
   STAFF_LIST,
   type AssetRow,
+  type AttachedFileMeta,
   type ConsultDirection,
   type ConsultTimeSlot,
   type DbLead,
@@ -22,17 +24,32 @@ import {
   type DebtRange,
   type DebtRow,
   type IncomeRange,
+  type LeadSource,
+  type LoanRecord,
   type RepaymentPlanInput,
   type StaffName,
 } from "@/lib/types";
-import { computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput } from "@/lib/consultation";
-import { ConsultationTabsEditor, CONSULTATION_TABS, type ConsultationTabKey } from "@/components/ui/ConsultationTabsEditor";
-import { Button, Card, Modal, PageHeader, Pagination, SearchBox, pageRows } from "@/components/ui/Primitives";
+import { checkConsultationRequired, computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput } from "@/lib/consultation";
+import { ConsultationTabsEditor, CONSULTATION_TABS } from "@/components/ui/ConsultationTabsEditor";
+import { Button, Card, Label, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate } from "@/lib/format";
-import { AlarmClock, ClipboardList } from "lucide-react";
+import { AlarmClock, ClipboardList, PhoneCall, ShieldAlert } from "lucide-react";
 
-// 콜(통화 시도) 횟수 — 0부터 시작해 ▲▼ 버튼으로 담당자가 직접 증감시키는 단순 카운터.
-function CallCounter({ value, disabled, onChange }: { value: number; disabled?: boolean; onChange: (v: number) => void }) {
+// 콜(통화 시도) 횟수 — 0부터 시작하는 단순 카운터. ▲(증가) 버튼은 실제 통화 시도로 간주해
+// store의 콜 로그(callLog)에 기록되고("하루 최소 콜 횟수" 집계에 사용), ▼(감소) 버튼은
+// 잘못 누른 걸 되돌리는 보정 용도라 로그를 남기지 않습니다 — 그래서 두 버튼을 서로 다른
+// 콜백(onIncrement/onDecrement)으로 분리했습니다.
+function CallCounter({
+  value,
+  disabled,
+  onIncrement,
+  onDecrement,
+}: {
+  value: number;
+  disabled?: boolean;
+  onIncrement: () => void;
+  onDecrement: () => void;
+}) {
   return (
     <div className={`inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${disabled ? "opacity-60" : ""}`}>
       <span className="min-w-[18px] text-center text-sm font-semibold text-slate-700">{value}</span>
@@ -40,7 +57,7 @@ function CallCounter({ value, disabled, onChange }: { value: number; disabled?: 
         <button
           type="button"
           disabled={disabled}
-          onClick={() => onChange(value + 1)}
+          onClick={onIncrement}
           className="grid h-3.5 w-4 place-items-center text-[9px] text-slate-500 hover:text-blue-600 disabled:cursor-not-allowed"
           aria-label="콜횟수 증가"
         >
@@ -49,7 +66,7 @@ function CallCounter({ value, disabled, onChange }: { value: number; disabled?: 
         <button
           type="button"
           disabled={disabled}
-          onClick={() => onChange(Math.max(0, value - 1))}
+          onClick={onDecrement}
           className="grid h-3.5 w-4 place-items-center text-[9px] text-slate-500 hover:text-blue-600 disabled:cursor-not-allowed"
           aria-label="콜횟수 감소"
         >
@@ -193,25 +210,36 @@ function NextContactCell({ lead, onSet }: { lead: DbLead; onSet: (iso: string) =
 // 고객관리로 전환하기 전, DB 상담 단계에서부터 상담일지(인적사항~상담메모)를 작성할 수
 // 있게 해달라는 요청 반영. 고객관리 CustomerEditModal과 동일한 ConsultationTabsEditor를
 // 재사용하며, 여기서 작성한 내용은 고객 전환 시 그대로 승계됩니다(store.tsx 참고).
+//
+// "기존처럼 카테고리를 각각 눌러 들어가는 탭 방식 대신, 사진1처럼 하나의 큰 팝업에서
+// 전체 항목을 한눈에 보이게 해달라"는 요청 반영 — 탭 전환 없이 6개 섹션을 모두 세로로
+// 쌓아 한 화면(스크롤)에서 바로 확인·입력할 수 있게 바꿨습니다. 필수 항목은 하늘색으로
+// 강조되고(Primitives.tsx의 Label required/missing), 상단에 전체 완료 여부 요약 배너를
+// 둬서 무엇이 비어있는지 한눈에 보이게 했습니다. 필수 항목이 하나라도 비어있으면
+// DbManagementPage의 '고객 전환' 버튼이 막힙니다(checkConsultationRequired 참고).
 function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: DbLead; onClose: () => void }) {
   const { updateLead } = useStore();
-  const [tab, setTab] = useState<ConsultationTabKey>("인적사항");
+  const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
   const [personal, setPersonal] = useState(lead.consultation?.personal ?? {});
   const [income, setIncome] = useState(lead.consultation?.income ?? {});
   const [assets, setAssets] = useState<AssetRow[]>(lead.consultation?.assets ?? emptyAssetRows());
   const [debts, setDebts] = useState<DebtRow[]>(lead.consultation?.debts ?? emptyDebtRows());
   const [plan, setPlan] = useState<RepaymentPlanInput>(lead.consultation?.plan ?? emptyPlanInput());
   const [consultMemo, setConsultMemo] = useState(lead.consultation?.memo ?? "");
+  const [loanRecords, setLoanRecords] = useState<LoanRecord[]>(lead.consultation?.loanRecords ?? []);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFileMeta[]>(lead.consultation?.attachedFiles ?? []);
 
   useEffect(() => {
     if (!open) return;
-    setTab("인적사항");
+    setApplicationType(lead.applicationType);
     setPersonal(lead.consultation?.personal ?? {});
     setIncome(lead.consultation?.income ?? {});
     setAssets(lead.consultation?.assets ?? emptyAssetRows());
     setDebts(lead.consultation?.debts ?? emptyDebtRows());
     setPlan(lead.consultation?.plan ?? emptyPlanInput());
     setConsultMemo(lead.consultation?.memo ?? "");
+    setLoanRecords(lead.consultation?.loanRecords ?? []);
+    setAttachedFiles(lead.consultation?.attachedFiles ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead.id]);
 
@@ -220,9 +248,34 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
     [income, assets, debts, plan]
   );
 
+  const completeness = useMemo(
+    () =>
+      checkConsultationRequired(applicationType, {
+        personal,
+        income,
+        assets,
+        debts,
+        plan,
+        memo: consultMemo,
+        loanRecords,
+        attachedFiles,
+      }),
+    [applicationType, personal, income, assets, debts, plan, consultMemo, loanRecords, attachedFiles]
+  );
+
   function save() {
     updateLead(lead.id, {
-      consultation: { personal, income, assets, debts, plan, memo: consultMemo.trim() || undefined },
+      applicationType,
+      consultation: {
+        personal,
+        income,
+        assets,
+        debts,
+        plan,
+        memo: consultMemo.trim() || undefined,
+        loanRecords,
+        attachedFiles,
+      },
     });
     onClose();
   }
@@ -230,39 +283,70 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
   return (
     <Modal open={open} title={`${lead.name} · 상담일지 작성 (DB 단계)`} onClose={onClose} size="xl">
       <div className="mb-4 rounded-xl bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        고객 전환 전이라도 상담 중 확인한 내용을 미리 기록해두면, 나중에 고객관리로 전환할 때 그대로 이어집니다.
-      </div>
-      <div className="mb-4 flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
-        {CONSULTATION_TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
-              tab === t ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+        고객 전환 전이라도 상담 중 확인한 내용을 미리 기록해두면, 나중에 고객관리로 전환할 때 그대로 이어집니다. 하늘색으로 표시된 항목은 필수 입력란입니다.
       </div>
 
-      <ConsultationTabsEditor
-        activeTab={tab}
-        personal={personal}
-        setPersonal={setPersonal}
-        income={income}
-        setIncome={setIncome}
-        assets={assets}
-        setAssets={setAssets}
-        debts={debts}
-        setDebts={setDebts}
-        plan={plan}
-        setPlan={setPlan}
-        consultMemo={consultMemo}
-        setConsultMemo={setConsultMemo}
-        result={result}
-      />
+      <div
+        className={`mb-4 rounded-xl border-2 px-4 py-3 text-xs font-semibold ${
+          completeness.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-sky-300 bg-sky-50 text-sky-700"
+        }`}
+      >
+        {completeness.ok ? (
+          "필수 항목이 모두 입력되었습니다 — 고객 전환이 가능합니다."
+        ) : (
+          <div className="space-y-1">
+            <div>아래 하늘색으로 표시된 필수 항목을 모두 입력해야 '고객 전환'이 가능합니다. (미입력 {completeness.missing.length}건)</div>
+            <ul className="list-disc space-y-0.5 pl-4 font-normal">
+              {completeness.missing.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <Label text="상담 후 방향 (개인회생/개인파산/워크아웃)" required missing={!applicationType}>
+        <Select
+          value={applicationType ?? ""}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => setApplicationType((e.target.value || undefined) as ConsultDirection | undefined)}
+          className="w-full sm:max-w-xs"
+        >
+          <option value="">미지정</option>
+          {CONSULT_DIRECTIONS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </Select>
+      </Label>
+
+      <div className="mt-5 space-y-5">
+        {CONSULTATION_TABS.map((t) => (
+          <Card key={t} className="p-4">
+            <div className="mb-3 text-sm font-bold text-slate-900">{t}</div>
+            <ConsultationTabsEditor
+              activeTab={t}
+              personal={personal}
+              setPersonal={setPersonal}
+              income={income}
+              setIncome={setIncome}
+              assets={assets}
+              setAssets={setAssets}
+              debts={debts}
+              setDebts={setDebts}
+              plan={plan}
+              setPlan={setPlan}
+              consultMemo={consultMemo}
+              setConsultMemo={setConsultMemo}
+              loanRecords={loanRecords}
+              setLoanRecords={setLoanRecords}
+              attachedFiles={attachedFiles}
+              setAttachedFiles={setAttachedFiles}
+              result={result}
+            />
+          </Card>
+        ))}
+      </div>
 
       <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
         <Button variant="secondary" onClick={onClose}>
@@ -275,16 +359,31 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
 }
 
 export default function DbManagementPage() {
-  const { leads, updateLead, convertLeadToClient } = useStore();
+  const { leads, updateLead, convertLeadToClient, logCall, decrementCall, callLog, dailyCallTarget, setDailyCallTarget } = useStore();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DbLeadStatus | "전체">("전체");
   const [staffFilter, setStaffFilter] = useState<StaffName | "전체">("전체");
+  const [sourceFilter, setSourceFilter] = useState<LeadSource | "전체">("전체");
   const [timeFilter, setTimeFilter] = useState<ConsultTimeSlot | "전체">("전체");
   const [debtFilter, setDebtFilter] = useState<DebtRange | "전체">("전체");
   const [incomeFilter, setIncomeFilter] = useState<IncomeRange | "전체">("전체");
   const [page, setPage] = useState(1);
   const [justConverted, setJustConverted] = useState<string | null>(null);
+  const [blockedNotice, setBlockedNotice] = useState<string[] | null>(null);
   const [consultTarget, setConsultTarget] = useState<DbLead | null>(null);
+
+  // "실제 계약(=완결된 상담기록지)을 하지 않는 이상 고객관리로 넘기지 않도록" 요청 반영 —
+  // 필수 항목이 다 채워졌는지 여기서 먼저 확인한 뒤에만 실제 전환을 실행합니다.
+  function tryConvert(lead: DbLead) {
+    const completeness = checkConsultationRequired(lead.applicationType, lead.consultation);
+    if (!completeness.ok) {
+      setBlockedNotice(completeness.missing);
+      setConsultTarget(lead);
+      return;
+    }
+    convertLeadToClient(lead.id);
+    setJustConverted(lead.id);
+  }
 
   // 검색어·상태·담당자로 먼저 걸러낸 기준 집합 — 피벗 바의 그룹별 건수는 이 집합을
   // 기준으로 계산해, "지금 보고 있는 조건 안에서" 시간대/금액대별 분포가 보이도록 합니다.
@@ -292,11 +391,12 @@ export default function DbManagementPage() {
     return leads
       .filter((l) => statusFilter === "전체" || l.status === statusFilter)
       .filter((l) => staffFilter === "전체" || l.assignedStaff === staffFilter)
+      .filter((l) => sourceFilter === "전체" || l.source === sourceFilter)
       .filter((l) => {
         if (!query.trim()) return true;
         return l.name.includes(query) || l.phone.includes(query);
       });
-  }, [leads, statusFilter, staffFilter, query]);
+  }, [leads, statusFilter, staffFilter, sourceFilter, query]);
 
   const timeCounts = useMemo(() => {
     const map: Partial<Record<ConsultTimeSlot, number>> = {};
@@ -347,12 +447,66 @@ export default function DbManagementPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, todayIso]);
 
+  // ---- 콜 체계화 — 담당자별 오늘 콜 현황 ----
+  // "하루 최소 콜 횟수 등 기준을 만들고 업무 강제성을 생성해달라"는 요청 반영. 오늘 날짜의
+  // callLog(▲ 버튼을 눌러 실제 통화를 시도할 때마다 기록됨)를 담당자별로 집계해, 관리자가
+  // 설정한 일일 목표(dailyCallTarget) 대비 달성 여부를 한눈에 보여줍니다.
+  const todayCallCounts = useMemo(() => {
+    const map: Partial<Record<StaffName, number>> = {};
+    for (const e of callLog) {
+      if (e.at.slice(0, 10) !== todayIso) continue;
+      map[e.staff] = (map[e.staff] ?? 0) + 1;
+    }
+    return map;
+  }, [callLog, todayIso]);
+
   return (
     <>
       <PageHeader
         title="DB관리"
         description={`광고 등으로 접수된 상담 신청 ${leads.length}건 · 미확인 신규 ${newTodayCount}건 — 기초정보를 메모하고 상태를 정리한 뒤 '고객 전환'으로 고객관리에 등록하세요.`}
       />
+
+      <Card className="mb-4 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <PhoneCall size={16} className="text-blue-500" />
+            담당자별 오늘 콜 현황 (업무 강제성 — 일일 최소 콜 목표)
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500">
+            일일 목표
+            <input
+              type="number"
+              min={0}
+              value={dailyCallTarget}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setDailyCallTarget(Math.max(0, Number(e.target.value) || 0))}
+              className="h-8 w-16 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-blue-400"
+            />
+            건
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 lg:grid-cols-6">
+          {STAFF_LIST.map((s) => {
+            const count = todayCallCounts[s] ?? 0;
+            const met = count >= dailyCallTarget;
+            return (
+              <div
+                key={s}
+                className={`rounded-xl border px-3 py-2.5 text-center ${met ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}
+              >
+                <div className="text-xs font-semibold text-slate-500">{s}</div>
+                <div className={`mt-1 text-lg font-bold ${met ? "text-emerald-700" : "text-red-700"}`}>
+                  {count}
+                  <span className="text-xs font-semibold text-slate-400"> / {dailyCallTarget}</span>
+                </div>
+                <div className={`mt-0.5 text-[10px] font-semibold ${met ? "text-emerald-600" : "text-red-600"}`}>
+                  {met ? "목표 달성" : `${Math.max(0, dailyCallTarget - count)}건 부족`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
 
       <Card className="mb-4 overflow-hidden border-red-100">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -443,6 +597,21 @@ export default function DbManagementPage() {
               </option>
             ))}
           </select>
+          <select
+            value={sourceFilter}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+              setSourceFilter(e.target.value as LeadSource | "전체");
+              setPage(1);
+            }}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700"
+          >
+            <option value="전체">유입경로 전체</option>
+            {LEAD_SOURCE_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
         </div>
       </Card>
 
@@ -519,12 +688,28 @@ export default function DbManagementPage() {
                   </option>
                 ))}
               </select>
+              <select
+                value={lead.source ?? ""}
+                disabled={!!lead.convertedClientId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  updateLead(lead.id, { source: (e.target.value || undefined) as LeadSource | undefined })
+                }
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
+              >
+                <option value="">유입경로 미지정</option>
+                {LEAD_SOURCE_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
               <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
                 <span className="text-sm text-slate-500">콜횟수</span>
                 <CallCounter
                   value={lead.callCount ?? 0}
                   disabled={!!lead.convertedClientId}
-                  onChange={(v) => updateLead(lead.id, { callCount: v })}
+                  onIncrement={() => logCall(lead.id)}
+                  onDecrement={() => decrementCall(lead.id)}
                 />
               </div>
               <div>
@@ -561,8 +746,21 @@ export default function DbManagementPage() {
                 onBlur={(e: FocusEvent<HTMLInputElement>) => updateLead(lead.id, { memo: e.target.value })}
                 className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400"
               />
+              {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700">
+                  <ShieldAlert size={13} className="shrink-0" />
+                  상담일지 필수 항목 미입력 — 고객 전환 불가
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => setConsultTarget(lead)}>
+                <Button
+                  variant="secondary"
+                  className="px-2.5 py-1.5"
+                  onClick={() => {
+                    setBlockedNotice(null);
+                    setConsultTarget(lead);
+                  }}
+                >
                   <ClipboardList size={14} />
                   상담일지 작성
                 </Button>
@@ -571,13 +769,7 @@ export default function DbManagementPage() {
                     고객관리로 이동
                   </Link>
                 ) : (
-                  <Button
-                    className="px-2.5 py-1.5"
-                    onClick={() => {
-                      convertLeadToClient(lead.id);
-                      setJustConverted(lead.id);
-                    }}
-                  >
+                  <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
                     고객 전환
                   </Button>
                 )}
@@ -588,10 +780,10 @@ export default function DbManagementPage() {
 
         {/* 데스크톱: 테이블 */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="admin-responsive-table w-full min-w-[1420px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[1560px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "상담후방향", "콜횟수", "재통화 예정일", "담당자", "상태", "메모", ""].map((h) => (
+                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "유입경로", "상담후방향", "콜횟수", "재통화 예정일", "담당자", "상태", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -608,6 +800,23 @@ export default function DbManagementPage() {
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{lead.phone}</td>
                   <td className="min-w-[220px] max-w-[260px] px-4 py-3">
                     <LeadTags lead={lead} />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <select
+                      value={lead.source ?? ""}
+                      disabled={!!lead.convertedClientId}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                        updateLead(lead.id, { source: (e.target.value || undefined) as LeadSource | undefined })
+                      }
+                      className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+                    >
+                      <option value="">미지정</option>
+                      {LEAD_SOURCE_OPTIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
@@ -630,7 +839,8 @@ export default function DbManagementPage() {
                     <CallCounter
                       value={lead.callCount ?? 0}
                       disabled={!!lead.convertedClientId}
-                      onChange={(v) => updateLead(lead.id, { callCount: v })}
+                      onIncrement={() => logCall(lead.id)}
+                      onDecrement={() => decrementCall(lead.id)}
                     />
                   </td>
                   <td className="min-w-[200px] px-4 py-3">
@@ -674,7 +884,20 @@ export default function DbManagementPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex flex-col items-end gap-1.5">
-                      <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => setConsultTarget(lead)}>
+                      {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
+                        <span className="flex items-center gap-1 whitespace-normal rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                          <ShieldAlert size={11} className="shrink-0" />
+                          필수항목 미입력
+                        </span>
+                      )}
+                      <Button
+                        variant="secondary"
+                        className="px-2.5 py-1.5"
+                        onClick={() => {
+                          setBlockedNotice(null);
+                          setConsultTarget(lead);
+                        }}
+                      >
                         <ClipboardList size={14} />
                         상담일지
                       </Button>
@@ -683,13 +906,7 @@ export default function DbManagementPage() {
                           고객관리로 이동
                         </Link>
                       ) : (
-                        <Button
-                          className="px-2.5 py-1.5"
-                          onClick={() => {
-                            convertLeadToClient(lead.id);
-                            setJustConverted(lead.id);
-                          }}
-                        >
+                        <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
                           고객 전환
                         </Button>
                       )}
@@ -699,7 +916,7 @@ export default function DbManagementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={12} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 DB가 없습니다.
                   </td>
                 </tr>
@@ -716,6 +933,28 @@ export default function DbManagementPage() {
           <Link href="/clients" className="font-semibold underline">
             고객관리에서 확인하기
           </Link>
+        </Card>
+      )}
+
+      {blockedNotice && (
+        <Card className="mt-4 border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-1.5 font-semibold">
+                <ShieldAlert size={15} />
+                상담일지 필수 항목이 비어있어 고객 전환할 수 없습니다.
+              </div>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs font-normal">
+                {blockedNotice.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+              <div className="mt-1.5 text-xs font-normal">아래 상담일지 팝업에서 하늘색으로 표시된 항목을 입력한 뒤 저장하고 다시 시도하세요.</div>
+            </div>
+            <button type="button" onClick={() => setBlockedNotice(null)} className="shrink-0 text-sky-400 hover:text-sky-700">
+              ✕
+            </button>
+          </div>
         </Card>
       )}
 

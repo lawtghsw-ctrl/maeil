@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type {
   AssetRow,
+  AttachedFileMeta,
   CaseRecord,
   Client,
   ConsultationInfo,
   ConsultDirection,
   DebtRow,
   InstallmentStatus,
+  LoanRecord,
   PaymentMethod,
   RepaymentPlanInput,
   StaffName,
@@ -834,6 +836,8 @@ function CustomerEditModal({
   const [debts, setDebts] = useState<DebtRow[]>(client.consultation?.debts ?? emptyDebtRows());
   const [plan, setPlan] = useState<RepaymentPlanInput>(client.consultation?.plan ?? emptyPlanInput());
   const [consultMemo, setConsultMemo] = useState(client.consultation?.memo ?? "");
+  const [loanRecords, setLoanRecords] = useState<LoanRecord[]>(client.consultation?.loanRecords ?? []);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFileMeta[]>(client.consultation?.attachedFiles ?? []);
 
   useEffect(() => {
     if (!open) return;
@@ -851,6 +855,8 @@ function CustomerEditModal({
     setDebts(client.consultation?.debts ?? emptyDebtRows());
     setPlan(client.consultation?.plan ?? emptyPlanInput());
     setConsultMemo(client.consultation?.memo ?? "");
+    setLoanRecords(client.consultation?.loanRecords ?? []);
+    setAttachedFiles(client.consultation?.attachedFiles ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, client.id]);
 
@@ -863,7 +869,7 @@ function CustomerEditModal({
     if (!name.trim() || !phone.trim()) return;
     onSave(
       { name: name.trim(), phone: phone.trim(), assignedStaff, memo: memo.trim() || undefined, applicationType },
-      { personal, income, assets, debts, plan, memo: consultMemo.trim() || undefined },
+      { personal, income, assets, debts, plan, memo: consultMemo.trim() || undefined, loanRecords, attachedFiles },
       contractMemo.trim(),
       primaryCase?.id,
       paymentMethod
@@ -968,6 +974,10 @@ function CustomerEditModal({
         setPlan={setPlan}
         consultMemo={consultMemo}
         setConsultMemo={setConsultMemo}
+        loanRecords={loanRecords}
+        setLoanRecords={setLoanRecords}
+        attachedFiles={attachedFiles}
+        setAttachedFiles={setAttachedFiles}
         result={result}
       />
 

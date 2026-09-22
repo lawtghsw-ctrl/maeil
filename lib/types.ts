@@ -174,6 +174,21 @@ export const CONSULT_TIME_COLOR: Record<ConsultTimeSlot, string> = {
   "퇴근 후(6시~9시)": "#d97706", // amber-600
 };
 
+// 고객 DB 유입경로 — 광고 채널별 반응률·전환율을 구분해서 볼 수 있도록 세분화.
+// 목록은 언제든 필요에 맞게 값만 바꾸면 되도록 별도 상수로 뒀습니다.
+export const LEAD_SOURCE_OPTIONS = [
+  "메타(페이스북/인스타그램) 광고",
+  "네이버 검색광고",
+  "네이버 블로그/카페",
+  "유튜브 광고",
+  "당근마켓",
+  "지인소개",
+  "재방문(기존 상담고객)",
+  "제휴사 연계",
+  "기타",
+] as const;
+export type LeadSource = (typeof LEAD_SOURCE_OPTIONS)[number];
+
 export interface DbLead {
   id: string;
   name: string;
@@ -182,8 +197,10 @@ export interface DbLead {
   receivedAt: string; // ISO datetime — DB 접수 시각
   status: DbLeadStatus;
   assignedStaff: StaffName;
+  source?: LeadSource; // 유입경로
   memo?: string; // 상담원이 남기는 기초정보 메모
   callCount?: number; // 콜(통화 시도) 횟수 — DB관리 리스트에서 ▲▼ 버튼으로 직접 증감
+  lastCallAt?: string; // 마지막으로 콜(▲ 증가) 버튼을 누른 날짜(ISO date) — 담당자별 '오늘 콜 현황' 집계에 사용
   debtRange?: DebtRange; // 광고 인스턴트 양식 — 채무 총금액
   incomeRange?: IncomeRange; // 광고 인스턴트 양식 — 실 월소득
   consultTime?: ConsultTimeSlot; // 광고 인스턴트 양식 — 상담가능시간
@@ -356,6 +373,33 @@ export interface RepaymentPlanInput {
   smallLeaseNote?: string; // 소액임차인 최우선변제 참고 메모(자동조회 대신 수기 확인 기록)
 }
 
+// 기대출 리스트 — 채무현황 탭의 5개 고정 카테고리 합계표와는 별도로, 개별 대출 건을
+// 하나씩 추가/삭제하며 기록하는 상세 목록입니다. 본인신용정보 열람서비스에서 내려받은
+// 채무 내역을 보면서 하나씩 옮겨 적거나(파일 자동추출은 현재 미지원 — 서류를 보며
+// 수기로 추가), 상담 중 구두로 확인한 대출을 즉시 추가할 수 있습니다.
+export const LOAN_KIND1_OPTIONS = ["신용", "담보", "보증", "기타"] as const;
+export type LoanKind1 = (typeof LOAN_KIND1_OPTIONS)[number];
+
+export interface LoanRecord {
+  id: string;
+  kind1: LoanKind1; // 구분1 — 대출 성격
+  kind2?: string; // 구분2 — 구체적 상품명 (예: 신용대출(100))
+  lender?: string; // 금융사
+  executedAt?: string; // 실행일(ISO date)
+  balance: number; // 잔액(원)
+  note?: string;
+}
+
+// 상담기록지에 첨부한 파일(신용정보 열람서비스 다운로드 파일 등)의 메타정보만 기록합니다.
+// 이 데모에는 파일 업로드 백엔드가 없어 실제 파일 내용은 서버에 저장되지 않고, 첨부
+// 사실과 파일명만 상담기록에 남습니다 — 실제 자동 추출(OCR/파싱)은 아직 지원하지 않습니다.
+export interface AttachedFileMeta {
+  id: string;
+  name: string;
+  sizeKb: number;
+  attachedAt: string; // ISO datetime
+}
+
 export interface ConsultationInfo {
   personal?: ConsultationPersonal;
   income?: ConsultationIncome;
@@ -363,4 +407,6 @@ export interface ConsultationInfo {
   debts?: DebtRow[];
   plan?: RepaymentPlanInput;
   memo?: string; // 상담메모/상담내역
+  loanRecords?: LoanRecord[]; // 기대출 리스트(개별 대출 상세)
+  attachedFiles?: AttachedFileMeta[]; // 첨부파일 메타정보
 }

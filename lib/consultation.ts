@@ -8,7 +8,7 @@
 // 원본 수치(1,538,543원)로 미리 채워두고 그 외에는 상담원이 매년 고시된 기준중위소득표를
 // 보고 직접 입력하도록 하며, 소액임차인 최우선변제는 참고 메모 필드로만 제공합니다.
 
-import type { AssetRow, DebtRow, RepaymentPlanInput } from "./types";
+import type { AssetRow, ConsultationInfo, ConsultDirection, DebtRow, RepaymentPlanInput } from "./types";
 import { ASSET_CATEGORIES, DEBT_CATEGORIES, SECURED_DEBT_CATEGORIES, UNSECURED_DEBT_CATEGORY } from "./types";
 
 // 상담일지 원본에 명시된 1인가구 기준 최저생계비(2025년 기준중위소득 60% 수준 예시값).
@@ -109,6 +109,40 @@ export interface RepaymentPlanResult {
   writeOffRate: number; // 탕감률(자동, %)
   feasible: boolean; // 진행가능여부(자동판정)
   feasibilityNote: string;
+}
+
+// ---- 상담기록지 필수항목 체크 ----
+// "실제 계약(=완결된 상담기록지)을 하지 않는 이상 고객관리로 넘기지 않도록" 요청 반영.
+// 상담기록지 전체를 다 채우도록 강제하면 오히려 상담 초기 단계 기록이 막혀버리므로,
+// '고객 전환' 판단에 실제로 필요한 핵심 항목만 필수로 두었습니다. 화면에서는 이 항목이
+// 비어있으면 하늘색으로 강조 표시하고, 하나라도 비어있으면 '고객 전환' 버튼을 막습니다.
+// 필요에 따라 이 목록은 언제든 추가/조정할 수 있습니다.
+export interface ConsultationCompleteness {
+  ok: boolean;
+  missing: string[]; // 사람이 읽을 수 있는 누락 항목 설명
+}
+
+export function checkConsultationRequired(
+  applicationType: ConsultDirection | undefined,
+  consultation: ConsultationInfo | undefined
+): ConsultationCompleteness {
+  const missing: string[] = [];
+
+  if (!applicationType) missing.push("상담 후 방향(개인회생/개인파산/워크아웃) 미지정");
+
+  const personal = consultation?.personal;
+  if (!personal?.address?.trim()) missing.push("[인적사항] 거주지(초본주소) 미입력");
+  if (!personal?.occupationType) missing.push("[인적사항] 직업 미선택");
+
+  const income = consultation?.income;
+  if (!income?.monthlyAvgIncome || income.monthlyAvgIncome <= 0) missing.push("[소득현황] 월평균소득 미입력");
+
+  const debts = consultation?.debts ?? [];
+  const loanRecords = consultation?.loanRecords ?? [];
+  const hasDebtAmount = debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
+  if (!hasDebtAmount) missing.push("[채무현황] 총 채무금액 미입력(채무현황 표 또는 기대출 리스트 중 하나는 있어야 함)");
+
+  return { ok: missing.length === 0, missing };
 }
 
 export function computeRepaymentPlan(

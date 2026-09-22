@@ -6,20 +6,24 @@
 // 따라, 두 화면(DB관리의 상담일지 작성 팝업 / 고객관리의 고객정보 수정 팝업)에서
 // 동일한 입력 UI를 그대로 재사용합니다. 부모가 tab(현재 활성 탭)과 각 값·setter를
 // 그대로 넘겨주는 완전한 controlled 컴포넌트입니다.
-import { type ChangeEvent } from "react";
+import { useRef, type ChangeEvent, type DragEvent } from "react";
 import { useStore } from "@/lib/store";
 import type {
   AssetRow,
+  AttachedFileMeta,
   ConsultationIncome,
   ConsultationPersonal,
   DebtRow,
   Gender,
+  LoanRecord,
   OccupationType,
   RepaymentPlanInput,
 } from "@/lib/types";
+import { LOAN_KIND1_OPTIONS } from "@/lib/types";
 import { lookupMinLivingCost, type RepaymentPlanResult } from "@/lib/consultation";
 import { fmtWon } from "@/lib/format";
-import { Input, Label, NumberInput, Select } from "@/components/ui/Primitives";
+import { Button, Input, Label, NumberInput, Select } from "@/components/ui/Primitives";
+import { Paperclip, Plus, Trash2, Upload } from "lucide-react";
 
 export type ConsultationTabKey = "인적사항" | "소득현황" | "재산현황" | "채무현황" | "변제계획" | "상담메모";
 export const CONSULTATION_TABS: ConsultationTabKey[] = ["인적사항", "소득현황", "재산현황", "채무현황", "변제계획", "상담메모"];
@@ -47,6 +51,10 @@ export function ConsultationTabsEditor({
   setPlan,
   consultMemo,
   setConsultMemo,
+  loanRecords,
+  setLoanRecords,
+  attachedFiles,
+  setAttachedFiles,
   result,
 }: {
   activeTab: ConsultationTabKey | string;
@@ -62,9 +70,14 @@ export function ConsultationTabsEditor({
   setPlan: Updater<RepaymentPlanInput>;
   consultMemo: string;
   setConsultMemo: (v: string) => void;
+  loanRecords: LoanRecord[];
+  setLoanRecords: Updater<LoanRecord[]>;
+  attachedFiles: AttachedFileMeta[];
+  setAttachedFiles: Updater<AttachedFileMeta[]>;
   result: RepaymentPlanResult;
 }) {
   const { minLivingCostTable } = useStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function updateAsset(i: number, patch: Partial<AssetRow>) {
     setAssets((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));
@@ -72,6 +85,39 @@ export function ConsultationTabsEditor({
   function updateDebt(i: number, patch: Partial<DebtRow>) {
     setDebts((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));
   }
+
+  function addLoanRecord() {
+    setLoanRecords((prev) => [
+      ...prev,
+      { id: `LOAN-${Date.now()}-${prev.length}`, kind1: "신용", kind2: "", lender: "", executedAt: "", balance: 0, note: "" },
+    ]);
+  }
+  function updateLoanRecord(i: number, patch: Partial<LoanRecord>) {
+    setLoanRecords((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  }
+  function removeLoanRecord(i: number) {
+    setLoanRecords((prev) => prev.filter((_, n) => n !== i));
+  }
+
+  function attachFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const metas: AttachedFileMeta[] = Array.from(files).map((f, i) => ({
+      id: `FILE-${Date.now()}-${i}`,
+      name: f.name,
+      sizeKb: Math.max(1, Math.round(f.size / 1024)),
+      attachedAt: new Date().toISOString(),
+    }));
+    setAttachedFiles((prev) => [...prev, ...metas]);
+  }
+  function removeFile(id: string) {
+    setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
+  }
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    attachFiles(e.dataTransfer.files);
+  }
+
+  const hasDebtAmount = debts.some((d) => (d.amount || 0) > 0) || loanRecords.some((l) => (l.balance || 0) > 0);
 
   return (
     <>
@@ -93,13 +139,13 @@ export function ConsultationTabsEditor({
                 <option value="여">여</option>
               </Select>
             </Label>
-            <Label text="거주지(초본주소)">
+            <Label text="거주지(초본주소)" required missing={!personal.address?.trim()}>
               <Input value={personal.address ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, address: e.target.value }))} />
             </Label>
             <Label text="관할법원">
               <Input value={personal.jurisdictionCourt ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, jurisdictionCourt: e.target.value }))} />
             </Label>
-            <Label text="직업">
+            <Label text="직업" required missing={!personal.occupationType}>
               <Select
                 value={personal.occupationType ?? ""}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setPersonal((p) => ({ ...p, occupationType: (e.target.value || undefined) as OccupationType | undefined }))}
@@ -166,7 +212,7 @@ export function ConsultationTabsEditor({
             <Label text="재직기간·사업장정보">
               <Input value={income.tenureInfo ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setIncome((v) => ({ ...v, tenureInfo: e.target.value }))} />
             </Label>
-            <Label text="월평균소득(최근 3개월)">
+            <Label text="월평균소득(최근 3개월)" required missing={!income.monthlyAvgIncome || income.monthlyAvgIncome <= 0}>
               <NumberInput value={income.monthlyAvgIncome ?? 0} onChange={(v) => setIncome((x) => ({ ...x, monthlyAvgIncome: v }))} />
             </Label>
             <Label text="2중소득(부업)">
@@ -291,6 +337,161 @@ export function ConsultationTabsEditor({
               <div className="mt-1 font-bold text-slate-900">{fmtWon(result.unsecuredDebtTotal)}</div>
             </div>
           </div>
+
+          {!hasDebtAmount && (
+            <div className="flex items-center gap-2 rounded-lg border-2 border-sky-300 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700">
+              <span className="rounded bg-sky-500 px-1.5 py-0.5 text-[10px] font-bold text-white">필수</span>
+              총 채무금액이 아직 입력되지 않았습니다 — 위 채무현황 표 또는 아래 기대출 리스트 중 하나에는 금액을 입력해야 고객 전환이 가능합니다.
+            </div>
+          )}
+
+          {/* ---- 기대출 리스트 — 위 5개 고정 카테고리 합계표와 별도로, 개별 대출 건을 하나씩
+              추가/삭제하며 기록하는 상세 목록입니다. 본인신용정보 열람서비스에서 받은 채무
+              내역을 보며 옮겨 적거나, 상담 중 확인한 대출을 바로 추가할 수 있습니다. ---- */}
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-900">기대출 리스트 (개별 대출 상세)</div>
+              <Button variant="secondary" className="px-2.5 py-1.5" onClick={addLoanRecord}>
+                <Plus size={14} />
+                수기로 추가
+              </Button>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[760px] text-xs">
+                <thead className="bg-slate-50 text-left text-slate-500">
+                  <tr>
+                    {["구분1", "구분2(상품명)", "금융사", "실행일", "잔액", "비고", ""].map((h) => (
+                      <th key={h} className="px-3 py-2 font-medium">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loanRecords.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-6 text-center text-slate-400">
+                        아직 등록된 대출이 없습니다. "수기로 추가" 버튼으로 하나씩 입력하세요.
+                      </td>
+                    </tr>
+                  )}
+                  {loanRecords.map((row, i) => (
+                    <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">
+                        <Select value={row.kind1} onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLoanRecord(i, { kind1: e.target.value as LoanRecord["kind1"] })} className="w-24">
+                          {LOAN_KIND1_OPTIONS.map((k) => (
+                            <option key={k} value={k}>
+                              {k}
+                            </option>
+                          ))}
+                        </Select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input className="w-32" value={row.kind2 ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateLoanRecord(i, { kind2: e.target.value })} placeholder="예: 신용대출(100)" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input className="w-28" value={row.lender ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateLoanRecord(i, { lender: e.target.value })} placeholder="예: 제이티저축은행" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="date"
+                          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none"
+                          value={row.executedAt ?? ""}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) => updateLoanRecord(i, { executedAt: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <NumberInput className="w-28" value={row.balance} onChange={(v) => updateLoanRecord(i, { balance: v })} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input className="w-32" value={row.note ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateLoanRecord(i, { note: e.target.value })} />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removeLoanRecord(i)}
+                          className="grid size-7 place-items-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
+                          aria-label="대출 삭제"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {loanRecords.length > 0 && (
+                    <tr className="border-t border-slate-200 bg-slate-50">
+                      <td colSpan={4} className="px-3 py-2 text-right font-semibold text-slate-500">
+                        기대출 리스트 합계
+                      </td>
+                      <td className="px-3 py-2 font-bold text-slate-900">{fmtWon(loanRecords.reduce((a, r) => a + (r.balance || 0), 0))}</td>
+                      <td colSpan={2} />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ---- 파일첨부 ---- */}
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-900">첨부파일 (본인신용정보 열람서비스 다운로드 파일 등)</div>
+              <a
+                href="https://www.credit4u.or.kr"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                본인신용정보 열람서비스(크레딧포유) 바로가기 ↗
+              </a>
+            </div>
+            <div
+              onDragOver={(e: DragEvent<HTMLDivElement>) => e.preventDefault()}
+              onDrop={handleDrop}
+              className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center"
+            >
+              <Upload size={20} className="text-slate-400" />
+              <div className="text-xs text-slate-500">
+                파일을 여기로 끌어다 놓거나, 아래 버튼으로 선택하세요.
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  attachFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => fileInputRef.current?.click()}>
+                  <Paperclip size={14} />
+                  파일 선택
+                </Button>
+                <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => alert("자동 추출(OCR/파싱) 기능은 아직 지원하지 않습니다 — 파일을 보면서 위 '수기로 추가' 버튼으로 입력해 주세요.")}>
+                  내용 추출
+                </Button>
+              </div>
+              <div className="text-[10px] text-slate-400">※ 이 데모에는 업로드 서버가 없어 파일명만 기록되고, 자동 추출은 아직 연동 전입니다.</div>
+            </div>
+            {attachedFiles.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {attachedFiles.map((f) => (
+                  <li key={f.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                    <span className="flex min-w-0 items-center gap-1.5 truncate text-slate-700">
+                      <Paperclip size={12} className="shrink-0 text-slate-400" />
+                      {f.name} <span className="text-slate-400">({f.sizeKb}KB)</span>
+                    </span>
+                    <button type="button" onClick={() => removeFile(f.id)} className="shrink-0 text-slate-400 hover:text-red-600" aria-label="첨부 삭제">
+                      <Trash2 size={13} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
             ④ 채무현황 체크포인트 — 세금·건강보험 체납액(우선변제 50% 한도 별도 확인 필요), 담보채무의 실제 담보가치, 신용채무 총액과 채권자 수를 확인하세요.
           </div>
