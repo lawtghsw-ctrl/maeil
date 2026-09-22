@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlarmClock, CircleDollarSign, PhoneMissed, TrendingUp, UserPlus, Users, WalletCards } from "lucide-react";
+import { AlarmClock, CircleDollarSign, PhoneMissed, ShieldAlert, TrendingUp, UserPlus, Users, WalletCards } from "lucide-react";
 import {
   computeStats,
   isNextBlocked,
@@ -21,7 +21,7 @@ import {
   getStageDistribution,
   STAGE_CHART_COLORS,
 } from "@/lib/dashboard";
-import { DB_LEAD_STATUS_LABEL, STAGE_GENERIC_LABELS } from "@/lib/types";
+import { STAGE_GENERIC_LABELS } from "@/lib/types";
 import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -56,7 +56,6 @@ export default function DashboardPage() {
   const [rangeEnd, setRangeEnd] = useState(initialRange.end);
   const [paymentMonth, setPaymentMonth] = useState(currentMonth);
   const [hearingMonth, setHearingMonth] = useState(currentMonth);
-  const [contactMonth, setContactMonth] = useState(currentMonth);
 
   // ---- 상단 KPI (도원 Admin 대시보드와 동일하게 DateRangePicker로 선택한 기간 기준) ----
   const kpi = useMemo(() => {
@@ -122,27 +121,6 @@ export default function DashboardPage() {
   const leadKpis = useMemo(() => getLeadKpis(leads), [leads]);
   const considerationTodo = useMemo(() => getConsiderationTodoList(leads, 8), [leads]);
 
-  // ---- 업무일정 캘린더 — "재통화 일시 지정 → 캘린더 + 알림", "고려중 DB를 적극 관리할 수
-  // 있는 캘린더 표시가 필요함" 요청 반영. DB관리에서 지정한 재통화 예정일을 월간 캘린더로
-  // 볼 수 있게 하고, 예정일이 지난 건은 "지남" 배지로 표시합니다.
-  const contactItems: CalendarItem[] = useMemo(() => {
-    const t = today();
-    return leads
-      .filter((l) => {
-        const done = !!l.convertedClientId || l.status === "거절" || l.status === "부적합" || l.status === "종결_중단";
-        return !done && !!l.nextContactAt && l.nextContactAt.startsWith(contactMonth);
-      })
-      .map((l) => ({
-        id: l.id,
-        date: l.nextContactAt as string,
-        label: l.name,
-        sub: `${DB_LEAD_STATUS_LABEL[l.status]} · 담당 ${l.assignedStaff}`,
-        done: false,
-        status: (l.nextContactAt as string) < t ? "지남" : undefined,
-        amount: 0,
-      }));
-  }, [leads, contactMonth]);
-
   // ---- 기간별 통계(년/월/주/일) — 기존 로피 기간엔진 이식분을 그대로 유지, 톤만 재적용 ----
   const [mode, setMode] = useState<PeriodMode>("month");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
@@ -188,10 +166,10 @@ export default function DashboardPage() {
             [UserPlus, "당일 신규 DB", `${leadKpis.newToday}건`, "normal"],
             [PhoneMissed, "전일 부재중", `${leadKpis.noAnswerYesterday}명`, leadKpis.noAnswerYesterday > 0 ? "red" : "normal"],
             [
-              PhoneMissed,
-              "5회 이하 컨택 부재율",
-              `${leadKpis.noAnswerRateUnder5Calls.toFixed(0)}%`,
-              leadKpis.noAnswerRateUnder5Calls >= 40 ? "red" : "normal",
+              ShieldAlert,
+              "콜 관리 경고 활성 비율",
+              `${leadKpis.callWarningRate.toFixed(0)}%`,
+              leadKpis.callWarningRate >= 40 ? "red" : "normal",
             ],
             [
               TrendingUp,
@@ -235,8 +213,8 @@ export default function DashboardPage() {
                   </div>
                   <div className="mt-0.5 text-xs text-slate-500">
                     접수 {t.receivedAt.slice(0, 10)}
-                    {t.nextContactAt && ` · 재통화 예정 ${t.nextContactAt}`}
-                    {t.overdue && <span className="ml-1 font-semibold text-red-600">재통화 예정일 지남</span>}
+                    {t.noAnswerCountToday > 0 && ` · 오늘 부재중 ${t.noAnswerCountToday}회`}
+                    {t.warningActive && <span className="ml-1 font-semibold text-red-600">콜 관리 경고</span>}
                   </div>
                 </div>
                 <Link href="/db" className="shrink-0 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
@@ -295,16 +273,6 @@ export default function DashboardPage() {
           onMonthChange={setHearingMonth}
           items={hearingItems}
           tone="amber"
-        />
-      </div>
-
-      <div className="mt-4">
-        <MonthCalendar
-          title="업무일정 캘린더 (DB 재통화 예정)"
-          month={contactMonth}
-          onMonthChange={setContactMonth}
-          items={contactItems}
-          tone="violet"
         />
       </div>
 

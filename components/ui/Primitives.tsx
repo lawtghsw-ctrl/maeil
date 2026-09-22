@@ -165,7 +165,7 @@ export function Select({
   );
 }
 
-export type ModalSize = "md" | "lg" | "xl";
+export type ModalSize = "md" | "lg" | "xl" | "full";
 
 export function Modal({
   open,
@@ -185,6 +185,7 @@ export function Modal({
     md: "max-w-2xl",
     lg: "max-w-4xl",
     xl: "max-w-5xl",
+    full: "max-w-[1800px]",
   };
   return (
     <div

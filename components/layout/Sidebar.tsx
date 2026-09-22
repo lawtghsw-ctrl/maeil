@@ -12,6 +12,7 @@ import {
   FileSignature,
   History,
   Inbox,
+  Layers,
   LayoutDashboard,
   Menu,
   MessagesSquare,
@@ -24,29 +25,40 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// 도원 Admin(tg_m)과 동일하게 DB(리드) 관리를 고객관리보다 앞에 두고, '사건관리'는
-// '계약관리'로 명칭을 통일, 별도였던 일정관리 메뉴는 없애고 내부 게시판을 추가함.
-// 정산·기간별 변동내역·데이터집계는 도원 Admin의 동일 메뉴 구조를 그대로 이식.
-// 게시판은 정산과 기간별 변동내역 사이에 배치, 최저생계비 계산기는 참고용 도구라 맨 뒤에 둠.
+// 메뉴 순서 — 요청하신 순서 그대로 배치
+// (대시보드/DB관리/상세 DB관리/고객관리/계약관리/입금분납/게시판/정산/정산설정/
+//  최저생계비 계산기/기간별 변동내역/데이터집계). 상세 DB관리는 DB관리 바로 다음에
+// 배치해, 리드를 단계별로 다시 분류해 보는 화면이 DB관리와 이어지도록 했습니다.
 export const menu = [
   ["대시보드", "/", LayoutDashboard],
   ["DB관리", "/db", Inbox],
+  ["상세 DB관리", "/db/detail", Layers],
   ["고객관리", "/clients", Users],
   ["계약관리", "/cases", FileSignature],
   ["입금·분납", "/billing", WalletCards],
+  ["게시판", "/board", MessagesSquare],
   ["정산", "/settlements", Calculator],
   ["정산설정", "/settlement-settings", Percent],
-  ["게시판", "/board", MessagesSquare],
+  ["최저생계비 계산기", "/min-living-cost", Scale],
   ["기간별 변동내역", "/changes", History],
   ["데이터집계", "/analytics", Activity],
-  ["최저생계비 계산기", "/min-living-cost", Scale],
 ] as const;
 
 function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+  // DB관리("/db")와 상세 DB관리("/db/detail")처럼 href가 서로 접두어 관계인 메뉴가
+  // 생겨서, 단순 startsWith 매칭 대신 가장 길게(구체적으로) 일치하는 href 하나만
+  // 활성화되도록 계산합니다.
+  const bestHref = menu.reduce<string | null>((best, [, href]) => {
+    const matches = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+    if (!matches) return best;
+    if (best === null || href.length > best.length) return href;
+    return best;
+  }, null);
+
   return (
     <nav className="flex-1 overflow-y-auto p-3">
       {menu.map(([label, href, Icon]) => {
-        const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+        const active = href === bestHref;
         return (
           <Link
             key={href}

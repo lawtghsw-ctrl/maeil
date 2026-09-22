@@ -33,6 +33,14 @@ export function fmtDate(iso: string): string {
   ).padStart(2, "0")}`;
 }
 
+// 상담메모 게시판처럼 "누가 몇시 몇분 몇초에 작성했는지"까지 보여줘야 하는 로그에 사용
+export function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")} ${String(
+    d.getHours()
+  ).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+}
+
 export function fmtDateShort(iso: string): string {
   const d = new Date(iso + (iso.length === 10 ? "T00:00:00" : ""));
   return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, "0")}`;

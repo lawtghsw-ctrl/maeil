@@ -13,6 +13,7 @@ import type {
   DebtRow,
   InstallmentStatus,
   LoanRecord,
+  MemoLogEntry,
   PaymentMethod,
   RepaymentPlanInput,
   StaffName,
@@ -835,7 +836,7 @@ function CustomerEditModal({
   const [assets, setAssets] = useState<AssetRow[]>(client.consultation?.assets ?? emptyAssetRows());
   const [debts, setDebts] = useState<DebtRow[]>(client.consultation?.debts ?? emptyDebtRows());
   const [plan, setPlan] = useState<RepaymentPlanInput>(client.consultation?.plan ?? emptyPlanInput());
-  const [consultMemo, setConsultMemo] = useState(client.consultation?.memo ?? "");
+  const [memoLog, setMemoLog] = useState<MemoLogEntry[]>(client.consultation?.memoLog ?? []);
   const [loanRecords, setLoanRecords] = useState<LoanRecord[]>(client.consultation?.loanRecords ?? []);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileMeta[]>(client.consultation?.attachedFiles ?? []);
 
@@ -854,7 +855,7 @@ function CustomerEditModal({
     setAssets(client.consultation?.assets ?? emptyAssetRows());
     setDebts(client.consultation?.debts ?? emptyDebtRows());
     setPlan(client.consultation?.plan ?? emptyPlanInput());
-    setConsultMemo(client.consultation?.memo ?? "");
+    setMemoLog(client.consultation?.memoLog ?? []);
     setLoanRecords(client.consultation?.loanRecords ?? []);
     setAttachedFiles(client.consultation?.attachedFiles ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -869,7 +870,7 @@ function CustomerEditModal({
     if (!name.trim() || !phone.trim()) return;
     onSave(
       { name: name.trim(), phone: phone.trim(), assignedStaff, memo: memo.trim() || undefined, applicationType },
-      { personal, income, assets, debts, plan, memo: consultMemo.trim() || undefined, loanRecords, attachedFiles },
+      { personal, income, assets, debts, plan, memoLog, loanRecords, attachedFiles },
       contractMemo.trim(),
       primaryCase?.id,
       paymentMethod
@@ -972,8 +973,8 @@ function CustomerEditModal({
         setDebts={setDebts}
         plan={plan}
         setPlan={setPlan}
-        consultMemo={consultMemo}
-        setConsultMemo={setConsultMemo}
+        memoLog={memoLog}
+        setMemoLog={setMemoLog}
         loanRecords={loanRecords}
         setLoanRecords={setLoanRecords}
         attachedFiles={attachedFiles}
@@ -1005,7 +1006,7 @@ function CustomerEditModal({
               assets,
               debts,
               plan,
-              consultMemo,
+              memoLog,
               contractMemo,
             })
           }

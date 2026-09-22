@@ -189,6 +189,82 @@ export const LEAD_SOURCE_OPTIONS = [
 ] as const;
 export type LeadSource = (typeof LEAD_SOURCE_OPTIONS)[number];
 
+// ---- 상세 DB관리 — 단계별 세부 분류 ----
+// "착수"·"서류"·"법원"·"워크아웃" 4개 트랙으로 나뉘는 세부 진행단계. 상담일지에서
+// 담당자가 직접 지정하며, 상세 DB관리 화면에서 트랙별 통계 타일 + 단계별 고객 리스트로
+// 집계됩니다. (참고 이미지의 분류 체계를 그대로 옮김 — 실제 운영 중 명칭이 바뀌면 아래
+// 배열 값만 수정하면 됩니다.)
+export const DB_DETAIL_STAGE_TRACKS = ["착수", "서류", "법원", "워크아웃"] as const;
+export type DbDetailStageTrack = (typeof DB_DETAIL_STAGE_TRACKS)[number];
+
+export const DB_DETAIL_STAGE_OPTIONS = [
+  "착수금착수",
+  "서류착수",
+  "연체 워크아웃",
+  "착수 추후진행",
+  "착수 추후납부",
+  "취소예정",
+  "착수 1차안내",
+  "1차 서류미비",
+  "1차 서류완료",
+  "2차서류안내",
+  "2차서류미비",
+  "2차서류완료",
+  "접수보류",
+  "법원접수(대기)",
+  "법원접수",
+  "금지명령",
+  "금지기각",
+  "개시결정",
+  "인가결정",
+  "종결",
+  "워크아웃",
+  "새출발",
+  "워크아웃 신청",
+  "새출발 신청",
+  "워크아웃 완료",
+  "새출발 완료",
+  "파산",
+] as const;
+export type DbDetailStage = (typeof DB_DETAIL_STAGE_OPTIONS)[number];
+
+export const DB_DETAIL_STAGE_GROUPS: Record<DbDetailStageTrack, DbDetailStage[]> = {
+  착수: ["착수금착수", "서류착수", "연체 워크아웃", "착수 추후진행", "착수 추후납부", "취소예정"],
+  서류: ["착수 1차안내", "1차 서류미비", "1차 서류완료", "2차서류안내", "2차서류미비", "2차서류완료", "접수보류"],
+  법원: ["법원접수(대기)", "법원접수", "금지명령", "금지기각", "개시결정", "인가결정", "종결"],
+  워크아웃: ["워크아웃", "새출발", "워크아웃 신청", "새출발 신청", "워크아웃 완료", "새출발 완료", "파산"],
+};
+
+export const DB_DETAIL_STAGE_TRACK_OF: Record<DbDetailStage, DbDetailStageTrack> = DB_DETAIL_STAGE_TRACKS.reduce(
+  (acc, track) => {
+    for (const s of DB_DETAIL_STAGE_GROUPS[track]) acc[s] = track;
+    return acc;
+  },
+  {} as Record<DbDetailStage, DbDetailStageTrack>
+);
+
+// 트랙별 타일 색상 — 착수/서류는 보라 계열, 법원/워크아웃은 파랑 계열(참고 이미지 톤 참고)
+export const DB_DETAIL_STAGE_TRACK_COLOR: Record<DbDetailStageTrack, string> = {
+  착수: "#7c3aed", // violet-600
+  서류: "#8b5cf6", // violet-500
+  법원: "#2563eb", // blue-600
+  워크아웃: "#0ea5e9", // sky-500
+};
+
+// ---- 상담일지 메모 게시판 ----
+// 자유 텍스트 메모와 [재통화]/[부재중] 콜 태그를 함께 기록하는 누적 로그입니다.
+// 태그가 붙은 항목(재통화/부재중)은 "하루 3회 이상 통화 시도" 경고 판정에도 쓰입니다
+// (lib/consultation.ts의 checkCallWarning 참고).
+export type MemoLogTag = "일반" | "재통화" | "부재중";
+
+export interface MemoLogEntry {
+  id: string;
+  staff: StaffName;
+  at: string; // ISO datetime
+  text: string;
+  tag: MemoLogTag;
+}
+
 export interface DbLead {
   id: string;
   name: string;
@@ -198,13 +274,11 @@ export interface DbLead {
   status: DbLeadStatus;
   assignedStaff: StaffName;
   source?: LeadSource; // 유입경로
-  memo?: string; // 상담원이 남기는 기초정보 메모
-  callCount?: number; // 콜(통화 시도) 횟수 — DB관리 리스트에서 ▲▼ 버튼으로 직접 증감
-  lastCallAt?: string; // 마지막으로 콜(▲ 증가) 버튼을 누른 날짜(ISO date) — 담당자별 '오늘 콜 현황' 집계에 사용
+  memo?: string; // 상담원이 남기는 기초정보 메모(간단 요약용 — 상세 이력은 상담일지 메모 게시판 참고)
+  detailStage?: DbDetailStage; // 상세 DB관리 분류 — 상담일지에서 지정
   debtRange?: DebtRange; // 광고 인스턴트 양식 — 채무 총금액
   incomeRange?: IncomeRange; // 광고 인스턴트 양식 — 실 월소득
   consultTime?: ConsultTimeSlot; // 광고 인스턴트 양식 — 상담가능시간
-  nextContactAt?: string; // 재통화 예정일 (ISO date) — 미지정 시 화면에서 접수일+1일을 기본 제안
   consultation?: ConsultationInfo; // 상담일지 — DB 단계에서부터 작성 가능, 고객 전환 시 그대로 승계
   convertedClientId?: string; // 고객관리로 전환된 경우 생성된 Client id
   convertedCaseId?: string;
@@ -406,7 +480,8 @@ export interface ConsultationInfo {
   assets?: AssetRow[];
   debts?: DebtRow[];
   plan?: RepaymentPlanInput;
-  memo?: string; // 상담메모/상담내역
+  memo?: string; // (구) 단일 상담메모 — 화면에서는 더 이상 편집하지 않고 memoLog로 대체됨. 과거 데이터 호환용으로 필드만 유지.
+  memoLog?: MemoLogEntry[]; // 상담메모 게시판 — 작성자·시각·태그(재통화/부재중/일반)가 남는 누적 로그
   loanRecords?: LoanRecord[]; // 기대출 리스트(개별 대출 상세)
   attachedFiles?: AttachedFileMeta[]; // 첨부파일 메타정보
 }

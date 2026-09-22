@@ -5,13 +5,12 @@ import Link from "next/link";
 import { useStore } from "@/lib/store";
 import {
   CONSULT_DIRECTIONS,
-  CONSULT_TIME_COLOR,
   CONSULT_TIME_OPTIONS,
+  DB_DETAIL_STAGE_GROUPS,
+  DB_DETAIL_STAGE_TRACKS,
   DB_LEAD_STATUS_LABEL,
   DB_LEAD_STATUSES,
-  DEBT_RANGE_COLOR,
   DEBT_RANGE_OPTIONS,
-  INCOME_RANGE_COLOR,
   INCOME_RANGE_OPTIONS,
   LEAD_SOURCE_OPTIONS,
   STAFF_LIST,
@@ -19,6 +18,7 @@ import {
   type AttachedFileMeta,
   type ConsultDirection,
   type ConsultTimeSlot,
+  type DbDetailStage,
   type DbLead,
   type DbLeadStatus,
   type DebtRange,
@@ -26,94 +26,37 @@ import {
   type IncomeRange,
   type LeadSource,
   type LoanRecord,
+  type MemoLogEntry,
   type RepaymentPlanInput,
   type StaffName,
 } from "@/lib/types";
-import { checkConsultationRequired, computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput } from "@/lib/consultation";
-import { ConsultationTabsEditor, CONSULTATION_TABS } from "@/components/ui/ConsultationTabsEditor";
-import { Button, Card, Label, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
-import { fmtDate } from "@/lib/format";
-import { AlarmClock, ClipboardList, PhoneCall, ShieldAlert } from "lucide-react";
+import { checkCallWarning, checkConsultationRequired, computeRepaymentPlan, emptyAssetRows, emptyDebtRows, emptyPlanInput, kstDateStr } from "@/lib/consultation";
+import { ConsultationTabsEditor } from "@/components/ui/ConsultationTabsEditor";
+import { Button, Card, Label, Modal, PageHeader, Pagination, SearchBox, Select, pageRows, useClickOutside } from "@/components/ui/Primitives";
+import { fmtDate, fmtDateTime } from "@/lib/format";
+import { ClipboardList, Paperclip, ShieldAlert } from "lucide-react";
 
-// 콜(통화 시도) 횟수 — 0부터 시작하는 단순 카운터. ▲(증가) 버튼은 실제 통화 시도로 간주해
-// store의 콜 로그(callLog)에 기록되고("하루 최소 콜 횟수" 집계에 사용), ▼(감소) 버튼은
-// 잘못 누른 걸 되돌리는 보정 용도라 로그를 남기지 않습니다 — 그래서 두 버튼을 서로 다른
-// 콜백(onIncrement/onDecrement)으로 분리했습니다.
-function CallCounter({
-  value,
-  disabled,
-  onIncrement,
-  onDecrement,
-}: {
-  value: number;
-  disabled?: boolean;
-  onIncrement: () => void;
-  onDecrement: () => void;
-}) {
-  return (
-    <div className={`inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${disabled ? "opacity-60" : ""}`}>
-      <span className="min-w-[18px] text-center text-sm font-semibold text-slate-700">{value}</span>
-      <div className="flex flex-col leading-none">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onIncrement}
-          className="grid h-3.5 w-4 place-items-center text-[9px] text-slate-500 hover:text-blue-600 disabled:cursor-not-allowed"
-          aria-label="콜횟수 증가"
-        >
-          ▲
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onDecrement}
-          className="grid h-3.5 w-4 place-items-center text-[9px] text-slate-500 hover:text-blue-600 disabled:cursor-not-allowed"
-          aria-label="콜횟수 감소"
-        >
-          ▼
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// 광고 인스턴트 양식 응답(채무총금액/실월소득/상담가능시간) 색상 태그 — 예전 매일법률사무소
-// DB 구글시트 'DB가공' 탭의 색상 구분 방식을 참고해 카테고리별로 구분되는 색을 지정했습니다.
-function ColorTag({ label, color }: { label: string; color: string }) {
-  return (
-    <span
-      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
-      style={{ background: `${color}1f`, color }}
-    >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-      {label}
-    </span>
-  );
-}
-
-// 태그가 3개까지 붙다 보니 컬럼이 좁으면 두 줄로 줄바꿈되던 것을, "한 줄로 쭉 나열"
-// 요청에 따라 줄바꿈 없이 한 줄에 배치하고 넘치면 가로 스크롤되게 바꿨습니다
-// (스크롤바는 no-scrollbar로 숨김).
+// 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
+// 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
 function LeadTags({ lead }: { lead: DbLead }) {
   if (!lead.debtRange && !lead.incomeRange && !lead.consultTime) {
-    return <span className="whitespace-nowrap text-[11px] text-slate-300">인스턴트 양식 응답 없음</span>;
+    return <span className="text-[11px] text-slate-300">인스턴트 양식 응답 없음</span>;
   }
   return (
-    <div className="no-scrollbar flex flex-nowrap items-center gap-1 overflow-x-auto">
-      {lead.debtRange && <ColorTag label={lead.debtRange} color={DEBT_RANGE_COLOR[lead.debtRange]} />}
-      {lead.incomeRange && <ColorTag label={lead.incomeRange} color={INCOME_RANGE_COLOR[lead.incomeRange]} />}
-      {lead.consultTime && <ColorTag label={lead.consultTime} color={CONSULT_TIME_COLOR[lead.consultTime]} />}
+    <div className="space-y-0.5 text-[11px] text-slate-600">
+      {lead.debtRange && <div>채무 총금액 · {lead.debtRange}</div>}
+      {lead.incomeRange && <div>실 월소득 · {lead.incomeRange}</div>}
+      {lead.consultTime && <div>상담가능시간 · {lead.consultTime}</div>}
     </div>
   );
 }
 
 // 상담가능시간·채무총금액·실월소득 3개 카테고리를 클릭해서 해당 그룹만 걸러볼 수 있는
-// 피벗 필터 바 — "특히 상담가능시간대별로 총 DB 수량과 피벗해서 보여줄 수 있게" 요청에 따라
-// 만들었고, 나머지 두 카테고리도 같은 방식으로 함께 제공합니다.
+// 피벗 필터 바. "색상카드 빼고 텍스트카드로 선택" 요청에 따라 카테고리별 색상 없이
+// 선택 여부만 진하게/연하게로 구분되는 중립 톤 칩으로 바꿨습니다.
 function PivotBar<T extends string>({
   label,
   options,
-  colors,
   counts,
   total,
   active,
@@ -121,7 +64,6 @@ function PivotBar<T extends string>({
 }: {
   label: string;
   options: readonly T[];
-  colors: Record<T, string>;
   counts: Partial<Record<T, number>>;
   total: number;
   active: T | "전체";
@@ -144,12 +86,9 @@ function PivotBar<T extends string>({
           key={opt}
           type="button"
           onClick={() => onSelect(active === opt ? "전체" : opt)}
-          className="rounded-md px-2 py-1 text-[11px] font-semibold transition"
-          style={
-            active === opt
-              ? { background: colors[opt], color: "#fff" }
-              : { background: `${colors[opt]}1f`, color: colors[opt] }
-          }
+          className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+            active === opt ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+          }`}
         >
           {opt} {counts[opt] ?? 0}
         </button>
@@ -158,86 +97,106 @@ function PivotBar<T extends string>({
   );
 }
 
-function todayIsoStr(d: Date = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function addDaysIso(iso: string, n: number): string {
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + n);
-  return todayIsoStr(d);
-}
-
-// 재통화 예정일 상태 — 미지정이면 "접수일+1일"을 기본 제안값으로 보여주고, 지정된 날짜가
-// 오늘이거나 지났으면 눈에 띄게 경고합니다("고려중 리드를 놓치지 않도록" 요청 반영).
-function NextContactCell({ lead, onSet }: { lead: DbLead; onSet: (iso: string) => void }) {
-  const done = !!lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단";
-  const suggested = lead.nextContactAt ?? addDaysIso(lead.receivedAt.slice(0, 10), 1);
-  const today = todayIsoStr();
-  const isOverdue = !done && !!lead.nextContactAt && lead.nextContactAt < today;
-  const isToday = !done && !!lead.nextContactAt && lead.nextContactAt === today;
+// ---- 메모 게시판 미리보기 셀 ----
+// "리스트 맨 우측 메모부분 텍스트란을 누르면 여태 했던 메모들이 보이게" 요청 반영.
+// 상담일지에서 작성한 메모 게시판(memoLog)의 최신 항목을 미리 보여주고, 클릭하면
+// 지금까지 쌓인 메모 전체를 팝오버로 펼쳐 보여줍니다. 새 메모 작성은 상담일지 팝업에서.
+function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsultation: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useClickOutside<HTMLDivElement>(() => setOpen(false));
+  const log = lead.consultation?.memoLog ?? [];
+  const latest = log[0];
 
   return (
-    // 표 셀에는 기본적으로 white-space: nowrap이 적용되는데(세로 글자쌓임 버그 방지용),
-    // 이 셀 안의 안내 문구는 원래 한 줄에 다 들어가지 않는 길이라 nowrap을 그대로
-    // 물려받으면 옆 컬럼 위로 넘쳐 겹쳐 보이는 문제가 있었습니다. whitespace-normal로
-    // 이 부분만 줄바꿈을 허용해 컬럼 안에서 2줄로 자연스럽게 접히게 했습니다.
-    <div className="w-full max-w-[190px] space-y-1 whitespace-normal">
-      <input
-        type="date"
-        disabled={done}
-        value={lead.nextContactAt ?? ""}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => onSet(e.target.value)}
-        className={`h-9 w-full rounded-lg border px-2 text-xs outline-none disabled:opacity-60 ${
-          isOverdue ? "border-red-300 bg-red-50 text-red-700" : isToday ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white"
-        }`}
-      />
-      {!lead.nextContactAt && !done && (
-        <button
-          type="button"
-          onClick={() => onSet(suggested)}
-          className="block w-full text-left text-[10px] font-semibold leading-snug text-blue-600 hover:underline"
-        >
-          미지정 → {fmtDate(suggested)} 제안(클릭해서 지정)
-        </button>
+    <div ref={ref} className="relative w-full min-w-[180px] max-w-[220px]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left text-xs whitespace-normal hover:bg-slate-50"
+      >
+        {latest ? (
+          <>
+            <span className="line-clamp-2 text-slate-700">{latest.text || `[${latest.tag}]`}</span>
+            <span className="mt-0.5 block text-[10px] text-slate-400">메모 {log.length}건 · 최근 {fmtDateTime(latest.at)}</span>
+          </>
+        ) : (
+          <span className="text-slate-300">메모 없음</span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+          {log.length === 0 ? (
+            <div className="px-2 py-4 text-center text-xs text-slate-400">작성된 메모가 없습니다.</div>
+          ) : (
+            <ul className="max-h-64 space-y-1.5 overflow-y-auto">
+              {log.map((entry) => (
+                <li key={entry.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="font-semibold text-slate-900">{entry.staff}</span>
+                    <span className="text-[10px] text-slate-400">{fmtDateTime(entry.at)}</span>
+                    {entry.tag !== "일반" && (
+                      <span
+                        className={`rounded px-1 py-0.5 text-[9px] font-bold text-white ${
+                          entry.tag === "재통화" ? "bg-emerald-500" : "bg-red-500"
+                        }`}
+                      >
+                        {entry.tag}
+                      </span>
+                    )}
+                  </div>
+                  {entry.text && <div className="mt-0.5 whitespace-pre-wrap text-slate-600">{entry.text}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onOpenConsultation();
+            }}
+            className="mt-2 w-full rounded-lg bg-blue-50 px-2 py-1.5 text-center text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+          >
+            상담일지에서 메모 작성 →
+          </button>
+        </div>
       )}
-      {isOverdue && <div className="text-[10px] font-semibold leading-snug text-red-600">재통화 예정일이 지났어요</div>}
-      {isToday && <div className="text-[10px] font-semibold leading-snug text-amber-600">오늘 재통화 예정</div>}
     </div>
   );
 }
 
 // ---- 상담일지 작성 팝업 (DB 단계) ----
-// 고객관리로 전환하기 전, DB 상담 단계에서부터 상담일지(인적사항~상담메모)를 작성할 수
-// 있게 해달라는 요청 반영. 고객관리 CustomerEditModal과 동일한 ConsultationTabsEditor를
-// 재사용하며, 여기서 작성한 내용은 고객 전환 시 그대로 승계됩니다(store.tsx 참고).
+// 고객관리로 전환하기 전, DB 상담 단계에서부터 상담일지를 작성할 수 있게 해달라는 요청
+// 반영. 고객관리 CustomerEditModal과 동일한 ConsultationTabsEditor를 재사용하며, 여기서
+// 작성한 내용은 고객 전환 시 그대로 승계됩니다(store.tsx 참고).
 //
-// "기존처럼 카테고리를 각각 눌러 들어가는 탭 방식 대신, 사진1처럼 하나의 큰 팝업에서
-// 전체 항목을 한눈에 보이게 해달라"는 요청 반영 — 탭 전환 없이 6개 섹션을 모두 세로로
-// 쌓아 한 화면(스크롤)에서 바로 확인·입력할 수 있게 바꿨습니다. 필수 항목은 하늘색으로
-// 강조되고(Primitives.tsx의 Label required/missing), 상단에 전체 완료 여부 요약 배너를
-// 둬서 무엇이 비어있는지 한눈에 보이게 했습니다. 필수 항목이 하나라도 비어있으면
-// DbManagementPage의 '고객 전환' 버튼이 막힙니다(checkConsultationRequired 참고).
+// "팝업을 확 키우고 한눈에 모든 작성칸이 보이도록, 아래로 스크롤하는 형식이 아니라
+// 웹 창을 넘지 않는 선에서 크게" 요청 반영 — Modal을 최대한 넓은 size="full"로 키우고,
+// 6개 섹션을 세로 1단이 아니라 2단 그리드로 배치해 한 화면에서 훨씬 많은 내용이 동시에
+// 보이도록 했습니다(내용량이 많은 채무현황·상담메모 섹션만 2칸을 모두 차지).
 function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: DbLead; onClose: () => void }) {
   const { updateLead } = useStore();
   const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
+  const [detailStage, setDetailStage] = useState<DbDetailStage | undefined>(lead.detailStage);
   const [personal, setPersonal] = useState(lead.consultation?.personal ?? {});
   const [income, setIncome] = useState(lead.consultation?.income ?? {});
   const [assets, setAssets] = useState<AssetRow[]>(lead.consultation?.assets ?? emptyAssetRows());
   const [debts, setDebts] = useState<DebtRow[]>(lead.consultation?.debts ?? emptyDebtRows());
   const [plan, setPlan] = useState<RepaymentPlanInput>(lead.consultation?.plan ?? emptyPlanInput());
-  const [consultMemo, setConsultMemo] = useState(lead.consultation?.memo ?? "");
+  const [memoLog, setMemoLog] = useState<MemoLogEntry[]>(lead.consultation?.memoLog ?? []);
   const [loanRecords, setLoanRecords] = useState<LoanRecord[]>(lead.consultation?.loanRecords ?? []);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileMeta[]>(lead.consultation?.attachedFiles ?? []);
 
   useEffect(() => {
     if (!open) return;
     setApplicationType(lead.applicationType);
+    setDetailStage(lead.detailStage);
     setPersonal(lead.consultation?.personal ?? {});
     setIncome(lead.consultation?.income ?? {});
     setAssets(lead.consultation?.assets ?? emptyAssetRows());
     setDebts(lead.consultation?.debts ?? emptyDebtRows());
     setPlan(lead.consultation?.plan ?? emptyPlanInput());
-    setConsultMemo(lead.consultation?.memo ?? "");
+    setMemoLog(lead.consultation?.memoLog ?? []);
     setLoanRecords(lead.consultation?.loanRecords ?? []);
     setAttachedFiles(lead.consultation?.attachedFiles ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,23 +215,23 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
         assets,
         debts,
         plan,
-        memo: consultMemo,
         loanRecords,
         attachedFiles,
       }),
-    [applicationType, personal, income, assets, debts, plan, consultMemo, loanRecords, attachedFiles]
+    [applicationType, personal, income, assets, debts, plan, loanRecords, attachedFiles]
   );
 
   function save() {
     updateLead(lead.id, {
       applicationType,
+      detailStage,
       consultation: {
         personal,
         income,
         assets,
         debts,
         plan,
-        memo: consultMemo.trim() || undefined,
+        memoLog,
         loanRecords,
         attachedFiles,
       },
@@ -280,12 +239,28 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
     onClose();
   }
 
-  return (
-    <Modal open={open} title={`${lead.name} · 상담일지 작성 (DB 단계)`} onClose={onClose} size="xl">
-      <div className="mb-4 rounded-xl bg-blue-50 px-4 py-3 text-xs text-blue-700">
-        고객 전환 전이라도 상담 중 확인한 내용을 미리 기록해두면, 나중에 고객관리로 전환할 때 그대로 이어집니다. 하늘색으로 표시된 항목은 필수 입력란입니다.
-      </div>
+  const editorProps = {
+    personal,
+    setPersonal,
+    income,
+    setIncome,
+    assets,
+    setAssets,
+    debts,
+    setDebts,
+    plan,
+    setPlan,
+    memoLog,
+    setMemoLog,
+    loanRecords,
+    setLoanRecords,
+    attachedFiles,
+    setAttachedFiles,
+    result,
+  };
 
+  return (
+    <Modal open={open} title={`${lead.name} · 상담일지`} onClose={onClose} size="full">
       <div
         className={`mb-4 rounded-xl border-2 px-4 py-3 text-xs font-semibold ${
           completeness.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-sky-300 bg-sky-50 text-sky-700"
@@ -305,47 +280,66 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
         )}
       </div>
 
-      <Label text="상담 후 방향 (개인회생/개인파산/워크아웃)" required missing={!applicationType}>
-        <Select
-          value={applicationType ?? ""}
-          onChange={(e: ChangeEvent<HTMLSelectElement>) => setApplicationType((e.target.value || undefined) as ConsultDirection | undefined)}
-          className="w-full sm:max-w-xs"
-        >
-          <option value="">미지정</option>
-          {CONSULT_DIRECTIONS.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </Select>
-      </Label>
+      <div className="grid gap-3 sm:max-w-xl sm:grid-cols-2">
+        <Label text="상담 후 방향 (개인회생/개인파산/워크아웃)" required missing={!applicationType}>
+          <Select
+            value={applicationType ?? ""}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => setApplicationType((e.target.value || undefined) as ConsultDirection | undefined)}
+            className="w-full"
+          >
+            <option value="">미지정</option>
+            {CONSULT_DIRECTIONS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
+        </Label>
+        <Label text="상세 단계 (상세 DB관리 분류)">
+          <Select
+            value={detailStage ?? ""}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => setDetailStage((e.target.value || undefined) as DbDetailStage | undefined)}
+            className="w-full"
+          >
+            <option value="">미지정</option>
+            {DB_DETAIL_STAGE_TRACKS.map((track) => (
+              <optgroup key={track} label={track}>
+                {DB_DETAIL_STAGE_GROUPS[track].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </Select>
+        </Label>
+      </div>
 
-      <div className="mt-5 space-y-5">
-        {CONSULTATION_TABS.map((t) => (
-          <Card key={t} className="p-4">
-            <div className="mb-3 text-sm font-bold text-slate-900">{t}</div>
-            <ConsultationTabsEditor
-              activeTab={t}
-              personal={personal}
-              setPersonal={setPersonal}
-              income={income}
-              setIncome={setIncome}
-              assets={assets}
-              setAssets={setAssets}
-              debts={debts}
-              setDebts={setDebts}
-              plan={plan}
-              setPlan={setPlan}
-              consultMemo={consultMemo}
-              setConsultMemo={setConsultMemo}
-              loanRecords={loanRecords}
-              setLoanRecords={setLoanRecords}
-              attachedFiles={attachedFiles}
-              setAttachedFiles={setAttachedFiles}
-              result={result}
-            />
-          </Card>
-        ))}
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card className="p-4">
+          <div className="mb-3 text-sm font-bold text-slate-900">인적사항</div>
+          <ConsultationTabsEditor activeTab="인적사항" {...editorProps} />
+        </Card>
+        <Card className="p-4">
+          <div className="mb-3 text-sm font-bold text-slate-900">소득현황</div>
+          <ConsultationTabsEditor activeTab="소득현황" {...editorProps} />
+        </Card>
+        <Card className="p-4">
+          <div className="mb-3 text-sm font-bold text-slate-900">재산현황</div>
+          <ConsultationTabsEditor activeTab="재산현황" {...editorProps} />
+        </Card>
+        <Card className="p-4">
+          <div className="mb-3 text-sm font-bold text-slate-900">변제계획</div>
+          <ConsultationTabsEditor activeTab="변제계획" {...editorProps} />
+        </Card>
+        <Card className="p-4 xl:col-span-2">
+          <div className="mb-3 text-sm font-bold text-slate-900">채무현황</div>
+          <ConsultationTabsEditor activeTab="채무현황" {...editorProps} />
+        </Card>
+        <Card className="p-4 xl:col-span-2">
+          <div className="mb-3 text-sm font-bold text-slate-900">상담메모</div>
+          <ConsultationTabsEditor activeTab="상담메모" {...editorProps} />
+        </Card>
       </div>
 
       <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
@@ -359,7 +353,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
 }
 
 export default function DbManagementPage() {
-  const { leads, updateLead, convertLeadToClient, logCall, decrementCall, callLog, dailyCallTarget, setDailyCallTarget } = useStore();
+  const { leads, updateLead, convertLeadToClient } = useStore();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DbLeadStatus | "전체">("전체");
   const [staffFilter, setStaffFilter] = useState<StaffName | "전체">("전체");
@@ -424,41 +418,22 @@ export default function DbManagementPage() {
 
   const newTodayCount = leads.filter((l) => l.status === "신규접수").length;
 
-  // ---- 관리가 필요한 DB — 재통화 예정일이 지났거나 아직 지정되지 않은 리드를 상단에
-  // 바로 모아 보여줘, 영업진이 놓치는 컨택이 없도록 합니다(도원 사채어드민의
-  // '분납/상환일정 미등록' 박스와 동일한 취지). 클릭하면 검색창에 이름이 채워져
-  // 아래 목록이 바로 그 리드로 필터링됩니다.
-  const todayIso = todayIsoStr();
-  const attentionLeads = useMemo(() => {
+  // ---- 오늘 콜 관리 경고 — "전환되지 않은 디비는 하루 3번 이상 통화하도록, 3번 이내
+  // 한번이라도 받으면 사라지는 경고표시"를 만들어달라는 요청 반영. 콜카운터(▲▼)와
+  // 재통화 예정일은 삭제하고, 대신 상담일지 메모 게시판의 [재통화]/[부재중] 태그를
+  // 오늘 날짜 기준으로 집계해 판정합니다(lib/consultation.ts의 checkCallWarning).
+  const todayIso = kstDateStr();
+  const warningLeads = useMemo(() => {
     return leads
       .filter((l) => {
         const done = !!l.convertedClientId || l.status === "거절" || l.status === "부적합" || l.status === "종결_중단";
         if (done) return false;
-        return !l.nextContactAt || l.nextContactAt < todayIso;
+        return checkCallWarning(l.consultation?.memoLog, todayIso).active;
       })
-      .sort((a, b) => {
-        const aOverdue = !!a.nextContactAt && a.nextContactAt < todayIso;
-        const bOverdue = !!b.nextContactAt && b.nextContactAt < todayIso;
-        if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
-        const an = a.nextContactAt ?? "9999-99-99";
-        const bn = b.nextContactAt ?? "9999-99-99";
-        return an < bn ? -1 : an > bn ? 1 : 0;
-      });
+      .map((l) => ({ lead: l, warning: checkCallWarning(l.consultation?.memoLog, todayIso) }))
+      .sort((a, b) => b.warning.noAnswerCountToday - a.warning.noAnswerCountToday);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, todayIso]);
-
-  // ---- 콜 체계화 — 담당자별 오늘 콜 현황 ----
-  // "하루 최소 콜 횟수 등 기준을 만들고 업무 강제성을 생성해달라"는 요청 반영. 오늘 날짜의
-  // callLog(▲ 버튼을 눌러 실제 통화를 시도할 때마다 기록됨)를 담당자별로 집계해, 관리자가
-  // 설정한 일일 목표(dailyCallTarget) 대비 달성 여부를 한눈에 보여줍니다.
-  const todayCallCounts = useMemo(() => {
-    const map: Partial<Record<StaffName, number>> = {};
-    for (const e of callLog) {
-      if (e.at.slice(0, 10) !== todayIso) continue;
-      map[e.staff] = (map[e.staff] ?? 0) + 1;
-    }
-    return map;
-  }, [callLog, todayIso]);
 
   return (
     <>
@@ -467,88 +442,36 @@ export default function DbManagementPage() {
         description={`광고 등으로 접수된 상담 신청 ${leads.length}건 · 미확인 신규 ${newTodayCount}건 — 기초정보를 메모하고 상태를 정리한 뒤 '고객 전환'으로 고객관리에 등록하세요.`}
       />
 
-      <Card className="mb-4 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <PhoneCall size={16} className="text-blue-500" />
-            담당자별 오늘 콜 현황 (업무 강제성 — 일일 최소 콜 목표)
-          </div>
-          <label className="flex items-center gap-1.5 text-xs text-slate-500">
-            일일 목표
-            <input
-              type="number"
-              min={0}
-              value={dailyCallTarget}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setDailyCallTarget(Math.max(0, Number(e.target.value) || 0))}
-              className="h-8 w-16 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-blue-400"
-            />
-            건
-          </label>
-        </div>
-        <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 lg:grid-cols-6">
-          {STAFF_LIST.map((s) => {
-            const count = todayCallCounts[s] ?? 0;
-            const met = count >= dailyCallTarget;
-            return (
-              <div
-                key={s}
-                className={`rounded-xl border px-3 py-2.5 text-center ${met ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}
-              >
-                <div className="text-xs font-semibold text-slate-500">{s}</div>
-                <div className={`mt-1 text-lg font-bold ${met ? "text-emerald-700" : "text-red-700"}`}>
-                  {count}
-                  <span className="text-xs font-semibold text-slate-400"> / {dailyCallTarget}</span>
-                </div>
-                <div className={`mt-0.5 text-[10px] font-semibold ${met ? "text-emerald-600" : "text-red-600"}`}>
-                  {met ? "목표 달성" : `${Math.max(0, dailyCallTarget - count)}건 부족`}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-
       <Card className="mb-4 overflow-hidden border-red-100">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <AlarmClock size={16} className="text-red-500" />
-            관리가 필요한 DB (재통화 예정일 경과·미지정)
+            <ShieldAlert size={16} className="text-red-500" />
+            오늘 콜 관리 경고 (부재중 3회 미만 &amp; 재통화 성공 없음)
           </div>
-          <span className="text-xs text-slate-400">{attentionLeads.length}건</span>
+          <span className="text-xs text-slate-400">{warningLeads.length}건</span>
         </div>
-        {attentionLeads.length === 0 ? (
-          <div className="px-4 py-6 text-center text-xs text-slate-400">현재 재통화 관리가 필요한 DB가 없습니다.</div>
+        {warningLeads.length === 0 ? (
+          <div className="px-4 py-6 text-center text-xs text-slate-400">오늘 콜 관리 경고가 필요한 DB가 없습니다.</div>
         ) : (
-          // 예전에는 가로 스크롤 카드 12건까지만 잘라 보여줘 전체 건수(뱃지에 표시된 수)와
-          // 실제 눈에 보이는 카드 수가 달라 보였습니다. 게시판처럼 세로로 전부 나열하고,
-          // 목록이 길면 박스 안에서 세로 스크롤(스크롤바 표시)되도록 바꿔 전체 건수가
-          // 빠짐없이 보이게 했습니다.
           <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
-            {attentionLeads.map((l) => {
-              const overdue = !!l.nextContactAt && l.nextContactAt < todayIso;
-              return (
-                <button
-                  key={l.id}
-                  type="button"
-                  onClick={() => {
-                    setQuery(l.name);
-                    setPage(1);
-                  }}
-                  className={`flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-2.5 text-left text-xs transition hover:bg-slate-50 ${
-                    overdue ? "bg-red-50/50" : "bg-amber-50/40"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <span className="font-semibold text-slate-900">{l.name}</span>
-                    <span className="ml-2 text-slate-400">{l.phone}</span>
-                    <span className="ml-2 text-slate-400">담당 {l.assignedStaff}</span>
-                  </div>
-                  <span className={`shrink-0 font-semibold ${overdue ? "text-red-600" : "text-amber-600"}`}>
-                    {overdue ? `재통화 ${l.nextContactAt} 지남` : "재통화 예정일 미지정"}
-                  </span>
-                </button>
-              );
-            })}
+            {warningLeads.map(({ lead: l, warning: w }) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => {
+                  setQuery(l.name);
+                  setPage(1);
+                }}
+                className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-0.5 bg-red-50/50 px-4 py-2.5 text-left text-xs transition hover:bg-red-50"
+              >
+                <div className="min-w-0">
+                  <span className="font-semibold text-slate-900">{l.name}</span>
+                  <span className="ml-2 text-slate-400">{l.phone}</span>
+                  <span className="ml-2 text-slate-400">담당 {l.assignedStaff}</span>
+                </div>
+                <span className="shrink-0 font-semibold text-red-600">오늘 부재중 {w.noAnswerCountToday}/3회</span>
+              </button>
+            ))}
           </div>
         )}
       </Card>
@@ -622,7 +545,6 @@ export default function DbManagementPage() {
         <PivotBar
           label="상담가능시간"
           options={CONSULT_TIME_OPTIONS}
-          colors={CONSULT_TIME_COLOR}
           counts={timeCounts}
           total={baseRows.length}
           active={timeFilter}
@@ -634,7 +556,6 @@ export default function DbManagementPage() {
         <PivotBar
           label="채무 총금액"
           options={DEBT_RANGE_OPTIONS}
-          colors={DEBT_RANGE_COLOR}
           counts={debtCounts}
           total={baseRows.length}
           active={debtFilter}
@@ -646,7 +567,6 @@ export default function DbManagementPage() {
         <PivotBar
           label="실 월소득"
           options={INCOME_RANGE_OPTIONS}
-          colors={INCOME_RANGE_COLOR}
           counts={incomeCounts}
           total={baseRows.length}
           active={incomeFilter}
@@ -703,19 +623,6 @@ export default function DbManagementPage() {
                   </option>
                 ))}
               </select>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
-                <span className="text-sm text-slate-500">콜횟수</span>
-                <CallCounter
-                  value={lead.callCount ?? 0}
-                  disabled={!!lead.convertedClientId}
-                  onIncrement={() => logCall(lead.id)}
-                  onDecrement={() => decrementCall(lead.id)}
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-xs font-semibold text-slate-500">재통화 예정일</div>
-                <NextContactCell lead={lead} onSet={(v) => updateLead(lead.id, { nextContactAt: v || undefined })} />
-              </div>
               <select
                 value={lead.assignedStaff}
                 disabled={!!lead.convertedClientId}
@@ -746,6 +653,10 @@ export default function DbManagementPage() {
                 onBlur={(e: FocusEvent<HTMLInputElement>) => updateLead(lead.id, { memo: e.target.value })}
                 className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400"
               />
+              <div>
+                <div className="mb-1 text-xs font-semibold text-slate-500">상담일지 메모</div>
+                <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} />
+              </div>
               {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
                 <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700">
                   <ShieldAlert size={13} className="shrink-0" />
@@ -780,10 +691,10 @@ export default function DbManagementPage() {
 
         {/* 데스크톱: 테이블 */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="admin-responsive-table w-full min-w-[1560px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[1320px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "유입경로", "상담후방향", "콜횟수", "재통화 예정일", "담당자", "상태", "메모", ""].map((h) => (
+                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "유입경로", "상담후방향", "담당자", "상태", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -798,7 +709,7 @@ export default function DbManagementPage() {
                     <div className="font-semibold text-slate-900">{lead.name}</div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{lead.phone}</td>
-                  <td className="min-w-[220px] max-w-[260px] px-4 py-3">
+                  <td className="min-w-[200px] max-w-[240px] px-4 py-3">
                     <LeadTags lead={lead} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
@@ -836,17 +747,6 @@ export default function DbManagementPage() {
                     </select>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <CallCounter
-                      value={lead.callCount ?? 0}
-                      disabled={!!lead.convertedClientId}
-                      onIncrement={() => logCall(lead.id)}
-                      onDecrement={() => decrementCall(lead.id)}
-                    />
-                  </td>
-                  <td className="min-w-[200px] px-4 py-3">
-                    <NextContactCell lead={lead} onSet={(v) => updateLead(lead.id, { nextContactAt: v || undefined })} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
                     <select
                       value={lead.assignedStaff}
                       disabled={!!lead.convertedClientId}
@@ -875,12 +775,15 @@ export default function DbManagementPage() {
                     </select>
                   </td>
                   <td className="min-w-[220px] px-4 py-3">
-                    <input
-                      defaultValue={lead.memo ?? ""}
-                      placeholder="기초정보 메모 (부채원인, 특이사항 등)"
-                      onBlur={(e: FocusEvent<HTMLInputElement>) => updateLead(lead.id, { memo: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400"
-                    />
+                    <div className="space-y-1.5">
+                      <input
+                        defaultValue={lead.memo ?? ""}
+                        placeholder="기초정보 메모"
+                        onBlur={(e: FocusEvent<HTMLInputElement>) => updateLead(lead.id, { memo: e.target.value })}
+                        className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400"
+                      />
+                      <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} />
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex flex-col items-end gap-1.5">
@@ -916,7 +819,7 @@ export default function DbManagementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 DB가 없습니다.
                   </td>
                 </tr>

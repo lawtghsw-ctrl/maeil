@@ -8,6 +8,7 @@
 import {
   CASE_STAGES,
   CONSULT_TIME_OPTIONS,
+  DB_DETAIL_STAGE_GROUPS,
   DB_LEAD_STATUSES,
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_OPTIONS,
@@ -22,10 +23,13 @@ import {
   type ConsultationInfo,
   type ConsultDirection,
   type DayAggregate,
+  type DbDetailStage,
   type DbLead,
   type DbLeadStatus,
   type Installment,
   type InstallmentStatus,
+  type MemoLogEntry,
+  type MemoLogTag,
   type PaymentMethod,
   type ScheduleItem,
 } from "./types";
@@ -276,7 +280,22 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
     d.category === "신용채무(카드/캐피탈/저축은행 등)" ? { ...d, creditor: "OO카드 외 3곳", amount: 42000000 } : d
   ),
   plan: { ...emptyPlanInput(), householdSize: 1, minLivingCost: MIN_LIVING_COST_1P, otherDeduction: 0, repaymentMonths: 36 },
-  memo: "최초 상담 — 개인회생 진행 희망, 서류 준비 안내 완료.",
+  memoLog: [
+    {
+      id: "MEMO-SEED-SAMPLE-2",
+      staff: "직원1",
+      at: isoOf(daysAgo(2)) + "T09:40:00.000Z",
+      text: "서류 준비 안내 완료 — 급여명세서 3개월분 요청함.",
+      tag: "재통화",
+    },
+    {
+      id: "MEMO-SEED-SAMPLE-1",
+      staff: "직원1",
+      at: isoOf(daysAgo(9)) + "T02:15:00.000Z",
+      text: "최초 상담 — 개인회생 진행 희망.",
+      tag: "일반",
+    },
+  ],
 };
 if (clients[0]) clients[0].consultation = SAMPLE_CONSULTATION;
 
@@ -404,26 +423,74 @@ const LEAD_MEMO_SAMPLES = [
 
 const LEAD_COUNT = 34;
 
-// 콜(통화 시도) 횟수 — 진행 단계가 깊을수록/부재중일수록 콜 시도가 누적됐다고 가정한
-// 데모용 근사치입니다. DB관리 리스트에서 ▲▼ 버튼으로 담당자가 직접 조정할 수 있습니다.
-function randomCallCount(status: DbLeadStatus): number {
-  if (status === "신규접수") return randInt(0, 1);
-  if (status === "부재중") return randInt(2, 6);
-  if (status === "수임전환" || status === "계약진행중" || status === "서류검토중") return randInt(3, 8);
-  return randInt(1, 4);
+// ---- 상담메모 게시판(memoLog) 데모 시딩 ----
+// 콜카운터(▲▼)·재통화예정일은 삭제되고, 대신 상담일지 메모 게시판의 [재통화]/[부재중]
+// 태그를 오늘(KST) 날짜 기준으로 집계해 "콜 관리 경고"를 판정하는 방식으로 바뀌었습니다.
+// 데모 데이터도 이에 맞춰, 아직 전환/종결되지 않은 리드 중 일부는 오늘 시각의 기록을
+// 남겨 경고가 이미 해제된 것처럼, 일부는 오늘 기록이 없어 경고가 뜨는 것처럼 섞어
+// 화면에서 두 케이스를 모두 확인할 수 있도록 했습니다.
+const MEMO_TAG_TEXT_SAMPLES: Record<MemoLogTag, string[]> = {
+  일반: [
+    "1차 상담 안내 문자 발송 완료.",
+    "채무 총액 재확인 필요 — 신용정보 열람서비스 안내함.",
+    "서류 준비 관련 안내 완료.",
+  ],
+  재통화: [
+    "통화 연결 완료 — 상담 진행, 방향 설명함.",
+    "재통화 연결 성공 — 서류 리스트 안내 완료.",
+    "통화 연결됨 — 다음 통화 일정 협의.",
+  ],
+  부재중: [
+    "부재중 — 통화 연결 안 됨, 문자 남김.",
+    "신호는 가나 응답 없음 — 잠시 후 재시도 예정.",
+    "부재중 — 저녁 시간대 재통화 예정.",
+  ],
+};
+
+function randomMemoTag(): MemoLogTag {
+  const r = rand();
+  if (r < 0.3) return "재통화";
+  if (r < 0.75) return "부재중";
+  return "일반";
 }
 
-// 재통화 예정일 — 현재 관리가 특히 필요한 상태(고려중/재통화필요/상담예정)는 오늘 근처
-// (지난 날짜 포함, 놓친 케이스를 보여주기 위해)로, 그 외는 대체로 비워둬 화면에서
-// "미지정 → +1일 제안" 흐름을 확인할 수 있게 했습니다.
-function randomNextContactAt(status: DbLeadStatus, receivedAtIso: string): string | undefined {
-  const needsFollowUp = status === "고려중" || status === "재통화필요" || status === "상담예정";
-  if (needsFollowUp) {
-    if (chance(0.7)) return isoOf(daysFromNow(randInt(-3, 5)));
-    return undefined; // 일부는 미지정 상태로 남겨 "+1일 제안" UI를 보여줌
+// receivedDaysAgo: 접수 후 경과일 — 이 범위 안에서 과거 메모 시각을 뽑습니다.
+function randomMemoLogFor(leadIdx: number, status: DbLeadStatus, receivedDaysAgo: number): MemoLogEntry[] {
+  const isActive = status !== "거절" && status !== "부적합" && status !== "종결_중단" && status !== "수임전환";
+  const count = isActive ? randInt(0, 4) : randInt(0, 2);
+  const entries: MemoLogEntry[] = [];
+  for (let j = 0; j < count; j++) {
+    const tag = randomMemoTag();
+    // 활성 리드의 최근 기록 중 절반 가까이는 "오늘"(대략 KST 기준) 시각으로 남겨서,
+    // 콜 관리 경고가 해제된 케이스/활성인 케이스가 리스트에 고루 섞이도록 합니다.
+    const isToday = isActive && j === 0 && chance(0.45);
+    const at = isToday
+      ? new Date(Date.now() - randInt(0, 8) * 3600_000 - randInt(0, 59) * 60_000).toISOString()
+      : new Date(daysAgo(randInt(0, Math.max(0, receivedDaysAgo))).getTime() + randInt(9, 19) * 3600_000).toISOString();
+    entries.push({
+      id: `MEMO-SEED-${String(leadIdx + 1).padStart(4, "0")}-${j}`,
+      staff: pick(STAFF),
+      at,
+      text: pick(MEMO_TAG_TEXT_SAMPLES[tag]),
+      tag,
+    });
   }
-  if (chance(0.15)) return isoOf(daysFromNow(randInt(-2, 3)));
-  return undefined;
+  return entries.sort((a, b) => (a.at < b.at ? 1 : -1)); // 최신순
+}
+
+// ---- 상세 DB관리 단계(detailStage) 데모 시딩 ----
+// 실제 운영에서는 상담일지에서 상담원이 직접 지정하지만, 데모 데이터는 상담
+// 진행도(status)·상담후방향(applicationType)에 맞춰 그럴듯한 트랙/단계를 배정해
+// "상세 DB관리" 화면의 타일·목록이 처음부터 채워져 보이도록 했습니다.
+function randomDetailStage(applicationType: ConsultDirection | undefined, status: DbLeadStatus): DbDetailStage | undefined {
+  if (status === "신규접수" || status === "상담예정") return undefined; // 아직 분류 전
+  if (applicationType === "워크아웃") return pick(DB_DETAIL_STAGE_GROUPS.워크아웃);
+  if (status === "수임전환" || status === "계약진행중") return pick(DB_DETAIL_STAGE_GROUPS.법원);
+  if (status === "서류검토중") return pick(DB_DETAIL_STAGE_GROUPS.서류);
+  if (status === "고려중" || status === "상담완료" || status === "재통화필요") {
+    return chance(0.55) ? pick(DB_DETAIL_STAGE_GROUPS.착수) : undefined;
+  }
+  return chance(0.25) ? pick(DB_DETAIL_STAGE_GROUPS.착수) : undefined;
 }
 
 // 광고 인스턴트 양식(채무총금액/실월소득/상담가능시간) — 앞으로 고정 운영할 양식이라
@@ -444,33 +511,47 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
     convertedCaseId = cases.find((c) => c.clientId === client.id)?.id;
   }
 
+  const applicationType = chance(0.8) ? randomConsultDirection() : undefined;
+  const memoLog = randomMemoLogFor(i, status, receivedDaysAgo);
+
   const consultation: ConsultationInfo | undefined = LEAD_CONSULTATION_DEMO_IDX.has(i)
     ? {
         personal: { occupationType: pick(["직장인", "프리랜서", "사업자"] as const), spouse: chance(0.5) },
         income: { incomeType: "근로소득", monthlyAvgIncome: randInt(180, 320) * 10000 },
-        memo: "DB 단계에서 1차 상담 진행 — 서류 준비 안내 완료, 방향 확정은 다음 통화에서.",
+        memoLog:
+          memoLog.length > 0
+            ? memoLog
+            : [
+                {
+                  id: `MEMO-SEED-${String(i + 1).padStart(4, "0")}-INTRO`,
+                  staff: pick(STAFF),
+                  at: isoOf(daysAgo(randInt(0, receivedDaysAgo))) + "T05:30:00.000Z",
+                  text: "DB 단계에서 1차 상담 진행 — 서류 준비 안내 완료, 방향 확정은 다음 통화에서.",
+                  tag: "일반",
+                },
+              ],
       }
+    : memoLog.length > 0
+    ? { memoLog }
     : undefined;
 
   return {
     id: `LEAD-${String(i + 1).padStart(4, "0")}`,
     name: randomName(),
     phone: randomPhone(),
-    applicationType: chance(0.8) ? randomConsultDirection() : undefined,
+    applicationType,
     receivedAt,
     status,
     assignedStaff: pick(STAFF),
     memo: chance(0.5) ? pick(LEAD_MEMO_SAMPLES) : undefined,
+    detailStage: randomDetailStage(applicationType, status),
     // 유입경로 — 메타 광고 인스턴트 양식이 있는 리드는 실제로도 대부분 메타 광고 유입이라,
     // hasInstantForm인 경우 "메타(페이스북/인스타그램) 광고"로 편향되게 뽑고, 그 외에는
     // 나머지 채널 중에서 고르게 뽑아 유입경로별 분포가 현실적으로 보이도록 했습니다.
     source: hasInstantForm ? (chance(0.75) ? "메타(페이스북/인스타그램) 광고" : pick(LEAD_SOURCE_OPTIONS)) : pick(LEAD_SOURCE_OPTIONS),
-    callCount: randomCallCount(status),
-    lastCallAt: chance(0.6) ? isoOf(daysAgo(randInt(0, receivedDaysAgo))) : undefined,
     debtRange: hasInstantForm ? pick(DEBT_RANGE_OPTIONS) : undefined,
     incomeRange: hasInstantForm ? pick(INCOME_RANGE_OPTIONS) : undefined,
     consultTime: hasInstantForm ? pick(CONSULT_TIME_OPTIONS) : undefined,
-    nextContactAt: randomNextContactAt(status, receivedAt),
     consultation,
     convertedClientId,
     convertedCaseId,

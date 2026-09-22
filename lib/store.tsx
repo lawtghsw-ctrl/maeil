@@ -86,21 +86,6 @@ export interface ChangeLogEntry {
 // 데모 버전 로그인 주체 — 실제 인증 연동 전까지 '직원1' 고정
 export const CURRENT_STAFF = "직원1";
 
-// ---- 콜(통화 시도) 로그 + 일일 목표 ----
-// "하루 최소 콜 횟수 기준을 만들고 업무 강제성을 생성해달라"는 요청 반영. DB관리의
-// 콜카운터 ▲ 버튼을 누를 때마다(=실제 통화 시도) 이벤트를 하나씩 남겨, 담당자별로
-// "오늘 몇 건 콜을 시도했는지"를 정확히 집계할 수 있게 했습니다(▼ 버튼으로 잘못 누른
-// 걸 되돌리는 경우는 로그에 남기지 않습니다). 일일 목표는 관리자가 숫자 하나로 설정하는
-// 전사 공통 기준입니다 — 담당자별로 다르게 설정하고 싶으시면 Record<StaffName, number>
-// 형태로 바꾸면 됩니다.
-export interface CallLogEntry {
-  id: string;
-  leadId: string;
-  staff: StaffName;
-  at: string; // ISO datetime
-}
-export const DEFAULT_DAILY_CALL_TARGET = 30;
-
 interface AppStoreValue {
   clients: Client[];
   cases: CaseRecord[];
@@ -112,14 +97,9 @@ interface AppStoreValue {
   changeLog: ChangeLogEntry[];
   settlementRates: SettlementRateMap;
   minLivingCostTable: MinLivingCostTable;
-  callLog: CallLogEntry[];
-  dailyCallTarget: number;
-  setDailyCallTarget: (n: number) => void;
   updateClient: (id: string, patch: Partial<Client>) => void;
   deleteClient: (id: string) => void;
   updateLead: (id: string, patch: Partial<DbLead>) => void;
-  logCall: (leadId: string) => void; // 콜 시도(▲) — callCount 증가 + 오늘자 콜 로그 기록
-  decrementCall: (leadId: string) => void; // 콜 횟수 보정(▼) — 로그는 남기지 않음
   convertLeadToClient: (leadId: string) => string | undefined; // 생성된(또는 기존) clientId 반환
   toggleDocument: (caseId: string, itemId: string) => void;
   updateCase: (id: string, patch: Partial<CaseRecord>) => void;
@@ -153,13 +133,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
   const [settlementRates, setSettlementRates] = useState<SettlementRateMap>(() => defaultSettlementRates());
   const [minLivingCostTable, setMinLivingCostTable] = useState<MinLivingCostTable>(() => defaultMinLivingCostTable());
-  const [callLog, setCallLog] = useState<CallLogEntry[]>([]);
-  const [dailyCallTarget, setDailyCallTargetState] = useState<number>(DEFAULT_DAILY_CALL_TARGET);
   const clientSeqRef = useRef(seedClients.length);
   const postSeqRef = useRef(seedPosts.length);
   const insSeqRef = useRef(0);
   const changeSeqRef = useRef(0);
-  const callSeqRef = useRef(0);
 
   const logChange = useCallback(
     (category: ChangeCategory, action: ChangeAction, targetName: string, detail: string) => {
@@ -216,27 +193,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     },
     [logChange]
   );
-
-  const logCall = useCallback(
-    (leadId: string) => {
-      const lead = leads.find((l) => l.id === leadId);
-      if (!lead) return;
-      const today = todayIsoStr();
-      setLeads((prev) =>
-        prev.map((l) => (l.id === leadId ? { ...l, callCount: (l.callCount ?? 0) + 1, lastCallAt: today } : l))
-      );
-      callSeqRef.current += 1;
-      setCallLog((prev) => [
-        ...prev,
-        { id: `CALL-${String(callSeqRef.current).padStart(6, "0")}`, leadId, staff: lead.assignedStaff, at: new Date().toISOString() },
-      ]);
-    },
-    [leads]
-  );
-
-  const decrementCall = useCallback((leadId: string) => {
-    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, callCount: Math.max(0, (l.callCount ?? 0) - 1) } : l)));
-  }, []);
 
   // leads를 직접 참조해야 해서(이미 전환됐는지 확인) 의존성 배열에 leads를 포함함.
   const convertLeadToClient = useCallback(
@@ -378,14 +334,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [logChange]
   );
 
-  const setDailyCallTarget = useCallback(
-    (n: number) => {
-      setDailyCallTargetState(n);
-      logChange("설정", "수정", "일일 콜 목표", `담당자별 일일 최소 콜 목표를 ${n}건으로 설정`);
-    },
-    [logChange]
-  );
-
   const value = useMemo<AppStoreValue>(
     () => ({
       clients,
@@ -398,14 +346,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       changeLog,
       settlementRates,
       minLivingCostTable,
-      callLog,
-      dailyCallTarget,
-      setDailyCallTarget,
       updateClient,
       deleteClient,
       updateLead,
-      logCall,
-      decrementCall,
       convertLeadToClient,
       toggleDocument,
       updateCase,
@@ -428,14 +371,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       changeLog,
       settlementRates,
       minLivingCostTable,
-      callLog,
-      dailyCallTarget,
-      setDailyCallTarget,
       updateClient,
       deleteClient,
       updateLead,
-      logCall,
-      decrementCall,
       convertLeadToClient,
       toggleDocument,
       updateCase,

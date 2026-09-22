@@ -13,6 +13,7 @@ import {
 } from "./mock-data";
 import type { CaseStage, CaseType, DbLead } from "./types";
 import { CASE_STAGES } from "./types";
+import { checkCallWarning } from "./consultation";
 
 export interface OverdueRow {
   installmentId: string;
@@ -198,7 +199,7 @@ export const activeCaseCount = cases.filter((c) => c.status === "진행중").len
 export interface LeadKpis {
   newToday: number; // 당일 신규 DB(의뢰인) 수
   noAnswerYesterday: number; // 전일 접수 건 중 현재 '부재중' 상태인 건수(근사치)
-  noAnswerRateUnder5Calls: number; // 콜 5회 이하 리드 중 '부재중' 비율(%)
+  callWarningRate: number; // 미전환 리드 중 '오늘 통화 관리 경고'가 활성 상태인 비율(%)
   monthNewLeads: number; // 이번달 신규 DB 수
   monthConverted: number; // 이번달 신규 DB 중 수임전환된 수
   conversionRate: number; // 이번달 신규 DB 대비 선임률(%)
@@ -213,19 +214,24 @@ export function getLeadKpis(leads: DbLead[]): LeadKpis {
   const newToday = leads.filter((l) => l.receivedAt.slice(0, 10) === todayIso).length;
 
   // 어제 접수된 리드 중 아직 '부재중' 상태로 남아있는 건수 — 실제 통화 시도 이력(콜 로그)이
-  // 별도로 없어 접수일 기준으로 근사한 값입니다. 콜 로그 기능이 추가되면 더 정확해집니다.
+  // 별도로 없어 접수일 기준으로 근사한 값입니다.
   const noAnswerYesterday = leads.filter((l) => l.receivedAt.slice(0, 10) === yesterdayIso && l.status === "부재중").length;
 
-  const under5 = leads.filter((l) => (l.callCount ?? 0) <= 5);
-  const under5NoAnswer = under5.filter((l) => l.status === "부재중").length;
-  const noAnswerRateUnder5Calls = under5.length > 0 ? (under5NoAnswer / under5.length) * 100 : 0;
+  // 전환·거절·종결되지 않은(=아직 관리가 필요한) 리드 중, 오늘 통화 관리 경고가 아직
+  // 해제되지 않은(하루 3회 미달 & 재통화 성공 없음) 비율 — 예전 "콜 5회 이하 부재율"을
+  // 콜카운터 삭제에 맞춰 상담일지 메모 게시판(재통화/부재중 태그) 기준으로 재설계.
+  const activeLeads = leads.filter(
+    (l) => !l.convertedClientId && l.status !== "거절" && l.status !== "부적합" && l.status !== "종결_중단"
+  );
+  const warnedCount = activeLeads.filter((l) => checkCallWarning(l.consultation?.memoLog).active).length;
+  const callWarningRate = activeLeads.length > 0 ? (warnedCount / activeLeads.length) * 100 : 0;
 
   const monthLeads = leads.filter((l) => l.receivedAt.slice(0, 7) === monthPrefix);
   const monthNewLeads = monthLeads.length;
   const monthConverted = monthLeads.filter((l) => !!l.convertedClientId).length;
   const conversionRate = monthNewLeads > 0 ? (monthConverted / monthNewLeads) * 100 : 0;
 
-  return { newToday, noAnswerYesterday, noAnswerRateUnder5Calls, monthNewLeads, monthConverted, conversionRate };
+  return { newToday, noAnswerYesterday, callWarningRate, monthNewLeads, monthConverted, conversionRate };
 }
 
 export interface ConsiderationTodoRow {
@@ -234,31 +240,31 @@ export interface ConsiderationTodoRow {
   phone: string;
   assignedStaff: string;
   receivedAt: string;
-  nextContactAt?: string;
-  overdue: boolean;
+  noAnswerCountToday: number; // 오늘 [부재중] 태그 횟수
+  warningActive: boolean; // 오늘 통화 관리 경고 활성 여부
 }
 
-// '고려중' 상태 리드를 재설득 컨택 우선순위(재통화 예정일이 지난 순 → 임박한 순)로 정렬.
+// '고려중' 상태 리드를 재설득 컨택 우선순위(경고 활성 → 오늘 부재중 횟수 많은 순)로 정렬.
 // 상태값 세분화(진행제안/금액안내완료 등)는 사용자가 상태 목록을 정리한 뒤 반영 예정이라
 // 우선 '고려중' 단일 상태를 기준으로 합니다.
 export function getConsiderationTodoList(leads: DbLead[], limit = 8): ConsiderationTodoRow[] {
-  const todayIso = isoStr(startOfDay(new Date()));
   return leads
     .filter((l) => l.status === "고려중" && !l.convertedClientId)
-    .map((l) => ({
-      id: l.id,
-      name: l.name,
-      phone: l.phone,
-      assignedStaff: l.assignedStaff,
-      receivedAt: l.receivedAt,
-      nextContactAt: l.nextContactAt,
-      overdue: !!l.nextContactAt && l.nextContactAt < todayIso,
-    }))
+    .map((l) => {
+      const w = checkCallWarning(l.consultation?.memoLog);
+      return {
+        id: l.id,
+        name: l.name,
+        phone: l.phone,
+        assignedStaff: l.assignedStaff,
+        receivedAt: l.receivedAt,
+        noAnswerCountToday: w.noAnswerCountToday,
+        warningActive: w.active,
+      };
+    })
     .sort((a, b) => {
-      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
-      const an = a.nextContactAt ?? "9999-99-99";
-      const bn = b.nextContactAt ?? "9999-99-99";
-      return an < bn ? -1 : an > bn ? 1 : 0;
+      if (a.warningActive !== b.warningActive) return a.warningActive ? -1 : 1;
+      return b.noAnswerCountToday - a.noAnswerCountToday;
     })
     .slice(0, limit);
 }

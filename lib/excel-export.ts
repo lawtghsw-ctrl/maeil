@@ -5,8 +5,9 @@
 // 재현합니다. 브라우저에서 버튼 클릭 시 바로 .xlsx 파일이 생성/다운로드됩니다.
 // (SheetJS `xlsx` 패키지 사용 — 최초 1회 `npm install`로 내려받아야 합니다.)
 import * as XLSX from "xlsx";
-import type { AssetRow, ConsultationIncome, ConsultationPersonal, DebtRow, RepaymentPlanInput } from "./types";
+import type { AssetRow, ConsultationIncome, ConsultationPersonal, DebtRow, MemoLogEntry, RepaymentPlanInput } from "./types";
 import { computeRepaymentPlan } from "./consultation";
+import { fmtDateTime } from "./format";
 
 export interface ConsultationExportInput {
   clientName: string;
@@ -19,7 +20,7 @@ export interface ConsultationExportInput {
   assets: AssetRow[];
   debts: DebtRow[];
   plan: RepaymentPlanInput;
-  consultMemo?: string;
+  memoLog?: MemoLogEntry[];
   contractMemo?: string;
 }
 
@@ -120,7 +121,16 @@ export function exportConsultationExcel(input: ConsultationExportInput) {
   blank();
 
   section("6. 상담메모 / 상담내역");
-  row("상담메모", input.consultMemo ?? "");
+  if (input.memoLog && input.memoLog.length > 0) {
+    rows.push(["작성자", "작성일시", "태그", "내용"]);
+    // 게시판 표시 순서(최신순)와 반대로 시간순으로 정렬해 엑셀에서는 기록을 읽어나가기 쉽게 함
+    const ordered = [...input.memoLog].sort((a, b) => a.at.localeCompare(b.at));
+    for (const m of ordered) {
+      rows.push([m.staff, fmtDateTime(m.at), m.tag, m.text]);
+    }
+  } else {
+    row("상담메모", "");
+  }
   row("계약 관련 메모", input.contractMemo ?? "");
 
   const ws = XLSX.utils.aoa_to_sheet(rows);

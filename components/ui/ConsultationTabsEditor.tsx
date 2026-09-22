@@ -6,8 +6,8 @@
 // 따라, 두 화면(DB관리의 상담일지 작성 팝업 / 고객관리의 고객정보 수정 팝업)에서
 // 동일한 입력 UI를 그대로 재사용합니다. 부모가 tab(현재 활성 탭)과 각 값·setter를
 // 그대로 넘겨주는 완전한 controlled 컴포넌트입니다.
-import { useRef, type ChangeEvent, type DragEvent } from "react";
-import { useStore } from "@/lib/store";
+import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useStore, CURRENT_STAFF } from "@/lib/store";
 import type {
   AssetRow,
   AttachedFileMeta,
@@ -16,12 +16,14 @@ import type {
   DebtRow,
   Gender,
   LoanRecord,
+  MemoLogEntry,
+  MemoLogTag,
   OccupationType,
   RepaymentPlanInput,
 } from "@/lib/types";
 import { LOAN_KIND1_OPTIONS } from "@/lib/types";
 import { lookupMinLivingCost, type RepaymentPlanResult } from "@/lib/consultation";
-import { fmtWon } from "@/lib/format";
+import { fmtDateTime, fmtWon } from "@/lib/format";
 import { Button, Input, Label, NumberInput, Select } from "@/components/ui/Primitives";
 import { Paperclip, Plus, Trash2, Upload } from "lucide-react";
 
@@ -49,8 +51,8 @@ export function ConsultationTabsEditor({
   setDebts,
   plan,
   setPlan,
-  consultMemo,
-  setConsultMemo,
+  memoLog,
+  setMemoLog,
   loanRecords,
   setLoanRecords,
   attachedFiles,
@@ -68,8 +70,8 @@ export function ConsultationTabsEditor({
   setDebts: Updater<DebtRow[]>;
   plan: RepaymentPlanInput;
   setPlan: Updater<RepaymentPlanInput>;
-  consultMemo: string;
-  setConsultMemo: (v: string) => void;
+  memoLog: MemoLogEntry[];
+  setMemoLog: Updater<MemoLogEntry[]>;
   loanRecords: LoanRecord[];
   setLoanRecords: Updater<LoanRecord[]>;
   attachedFiles: AttachedFileMeta[];
@@ -78,6 +80,25 @@ export function ConsultationTabsEditor({
 }) {
   const { minLivingCostTable } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [memoDraft, setMemoDraft] = useState("");
+  const [memoTag, setMemoTag] = useState<MemoLogTag>("일반");
+
+  // 상담메모 게시판 — 텍스트(선택) + [재통화]/[부재중] 태그(선택) 중 하나라도 있어야
+  // 추가할 수 있습니다. 새로 추가한 항목이 맨 위로 오도록(게시판처럼 쌓이도록) 배열 맨
+  // 앞에 넣습니다.
+  function addMemoEntry() {
+    if (!memoDraft.trim() && memoTag === "일반") return;
+    const entry: MemoLogEntry = {
+      id: `MEMO-${Date.now()}`,
+      staff: CURRENT_STAFF,
+      at: new Date().toISOString(),
+      text: memoDraft.trim(),
+      tag: memoTag,
+    };
+    setMemoLog((prev) => [entry, ...prev]);
+    setMemoDraft("");
+    setMemoTag("일반");
+  }
 
   function updateAsset(i: number, patch: Partial<AssetRow>) {
     setAssets((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));
@@ -576,14 +597,73 @@ export function ConsultationTabsEditor({
 
       {activeTab === "상담메모" && (
         <div className="space-y-4">
-          <Label text="상담메모 / 상담내역">
+          <div className="space-y-3 rounded-xl border border-slate-200 p-4">
             <textarea
-              className={`${textareaClass} min-h-64`}
-              value={consultMemo}
-              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setConsultMemo(e.target.value)}
+              className={textareaClass}
+              value={memoDraft}
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMemoDraft(e.target.value)}
               placeholder="상담 진행 내용, 고객 요청사항, 후속 조치 등을 자유롭게 기록하세요."
             />
-          </Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">콜 태그</span>
+              <button
+                type="button"
+                onClick={() => setMemoTag((t) => (t === "재통화" ? "일반" : "재통화"))}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  memoTag === "재통화" ? "border-emerald-300 bg-emerald-500 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                재통화
+              </button>
+              <button
+                type="button"
+                onClick={() => setMemoTag((t) => (t === "부재중" ? "일반" : "부재중"))}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  memoTag === "부재중" ? "border-red-300 bg-red-500 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                부재중
+              </button>
+              <Button className="ml-auto px-3 py-1.5" onClick={addMemoEntry} disabled={!memoDraft.trim() && memoTag === "일반"}>
+                <Plus size={14} />
+                추가
+              </Button>
+            </div>
+            <div className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] text-slate-500">
+              [재통화]는 오늘 통화가 연결된 경우, [부재중]은 연결되지 않은 경우에 선택 후 추가해주세요. 하루 [부재중] 3회 또는 [재통화]
+              1회가 기록되면 DB관리의 "콜 관리 경고"가 해제되고, 자정이 지나면 다시 초기화됩니다.
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <div className="border-b border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500">
+              메모 이력 ({memoLog.length}건, 최신순)
+            </div>
+            {memoLog.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-slate-400">아직 작성된 메모가 없습니다. 위에서 작성 후 [추가]를 눌러주세요.</div>
+            ) : (
+              <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
+                {memoLog.map((entry) => (
+                  <li key={entry.id} className="px-4 py-2.5 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold text-slate-900">{entry.staff}</span>
+                      <span className="text-slate-400">{fmtDateTime(entry.at)}</span>
+                      {entry.tag !== "일반" && (
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-bold text-white ${
+                            entry.tag === "재통화" ? "bg-emerald-500" : "bg-red-500"
+                          }`}
+                        >
+                          {entry.tag}
+                        </span>
+                      )}
+                    </div>
+                    {entry.text && <div className="mt-1 whitespace-pre-wrap text-slate-600">{entry.text}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
     </>

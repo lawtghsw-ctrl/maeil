@@ -8,8 +8,17 @@
 // 원본 수치(1,538,543원)로 미리 채워두고 그 외에는 상담원이 매년 고시된 기준중위소득표를
 // 보고 직접 입력하도록 하며, 소액임차인 최우선변제는 참고 메모 필드로만 제공합니다.
 
-import type { AssetRow, ConsultationInfo, ConsultDirection, DebtRow, RepaymentPlanInput } from "./types";
+import type { AssetRow, ConsultationInfo, ConsultDirection, DebtRow, MemoLogEntry, RepaymentPlanInput } from "./types";
 import { ASSET_CATEGORIES, DEBT_CATEGORIES, SECURED_DEBT_CATEGORIES, UNSECURED_DEBT_CATEGORY } from "./types";
+
+// 한국시간(KST=UTC+9) 기준 날짜 문자열 — "콜 관리 경고는 한국시간 00시 00분에 초기화"
+// 요청에 따라, 브라우저(서버)의 로컬 시간대와 무관하게 항상 KST 기준 자정에 맞춰
+// "오늘" 날짜가 바뀌도록 UTC로 정규화한 뒤 +9시간을 더해 계산합니다.
+export function kstDateStr(d: Date = new Date()): string {
+  const utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
+  const kst = new Date(utcMs + 9 * 60 * 60000);
+  return `${kst.getFullYear()}-${String(kst.getMonth() + 1).padStart(2, "0")}-${String(kst.getDate()).padStart(2, "0")}`;
+}
 
 // 상담일지 원본에 명시된 1인가구 기준 최저생계비(2025년 기준중위소득 60% 수준 예시값).
 // 2인 이상 가구는 매년 고시되는 기준중위소득표를 상담원이 직접 확인해 입력해야 하므로
@@ -143,6 +152,31 @@ export function checkConsultationRequired(
   if (!hasDebtAmount) missing.push("[채무현황] 총 채무금액 미입력(채무현황 표 또는 기대출 리스트 중 하나는 있어야 함)");
 
   return { ok: missing.length === 0, missing };
+}
+
+// ---- 콜 경고 판정 ----
+// "전환되지 않은 디비는 하루에 꼭 3번 이상 통화하도록, 3번 이내 한번이라도 받으면
+// 사라지는 경고표시"를 만들어달라는 요청 반영. 콜횟수 카운터(▲▼) 대신, 상담일지
+// 메모 게시판에서 [재통화]/[부재중] 태그를 붙여 기록한 항목을 오늘 날짜 기준으로 집계해
+// 판정합니다 — 오늘 [재통화] 태그가 하나라도 있으면(=통화 연결 성공) 즉시 해제되고,
+// 없더라도 오늘 [부재중] 태그가 3건 이상 쌓이면 "오늘 몫은 했다"고 보고 역시 해제됩니다.
+// 자정이 지나 날짜가 바뀌면 "오늘" 기준 집계가 자동으로 리셋되어 매일 새로 경고가
+// 뜹니다(이 데모는 브라우저 로컬 시간 기준 — 실서비스 전환 시 서버에서 KST로 고정하세요).
+const DAILY_NO_ANSWER_THRESHOLD = 3;
+
+export interface CallWarningResult {
+  active: boolean; // 경고 활성 여부(=오늘 통화 관리가 안 된 상태)
+  noAnswerCountToday: number; // 오늘 [부재중] 태그 횟수
+  reachedToday: boolean; // 오늘 [재통화] 태그(통화 연결 성공) 존재 여부
+}
+
+export function checkCallWarning(memoLog: MemoLogEntry[] | undefined, todayIso?: string): CallWarningResult {
+  const today = todayIso ?? kstDateStr();
+  const todays = (memoLog ?? []).filter((e) => kstDateStr(new Date(e.at)) === today);
+  const noAnswerCountToday = todays.filter((e) => e.tag === "부재중").length;
+  const reachedToday = todays.some((e) => e.tag === "재통화");
+  const active = !reachedToday && noAnswerCountToday < DAILY_NO_ANSWER_THRESHOLD;
+  return { active, noAnswerCountToday, reachedToday };
 }
 
 export function computeRepaymentPlan(
