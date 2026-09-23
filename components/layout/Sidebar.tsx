@@ -12,7 +12,6 @@ import {
   FileSignature,
   History,
   Inbox,
-  Layers,
   LayoutDashboard,
   Menu,
   MessagesSquare,
@@ -25,14 +24,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// 메뉴 순서 — 요청하신 순서 그대로 배치
-// (대시보드/DB관리/상세 DB관리/고객관리/계약관리/입금분납/게시판/정산/정산설정/
-//  최저생계비 계산기/기간별 변동내역/데이터집계). 상세 DB관리는 DB관리 바로 다음에
-// 배치해, 리드를 단계별로 다시 분류해 보는 화면이 DB관리와 이어지도록 했습니다.
+// v17: 상세 DB관리의 단계 타일을 DB관리 상단으로 통합했으므로 별도 메뉴를 제거했습니다.
+// 기존 /db/detail 주소는 /db로 리다이렉트해 북마크 호환만 유지합니다.
 export const menu = [
   ["대시보드", "/", LayoutDashboard],
   ["DB관리", "/db", Inbox],
-  ["상세 DB관리", "/db/detail", Layers],
   ["고객관리", "/clients", Users],
   ["계약관리", "/cases", FileSignature],
   ["입금·분납", "/billing", WalletCards],
@@ -45,9 +41,7 @@ export const menu = [
 ] as const;
 
 function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
-  // DB관리("/db")와 상세 DB관리("/db/detail")처럼 href가 서로 접두어 관계인 메뉴가
-  // 생겨서, 단순 startsWith 매칭 대신 가장 길게(구체적으로) 일치하는 href 하나만
-  // 활성화되도록 계산합니다.
+  // 하위 상세 페이지에서도 가장 구체적으로 일치하는 메뉴 하나만 활성화되도록 계산합니다.
   const bestHref = menu.reduce<string | null>((best, [, href]) => {
     const matches = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
     if (!matches) return best;

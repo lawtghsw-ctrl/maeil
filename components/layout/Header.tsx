@@ -3,10 +3,10 @@
 // 도원 Admin(tg_m) components/header.tsx와 동일한 구조(검색 + 알림벨 + 새로고침)로 이식 —
 // 검색 대상은 고객(의뢰인), 알림은 연체·실패 분납 + 오늘까지의 기일·제출기한, 신규 DB
 // 뱃지는 DB관리의 미확인(신규접수) 리드 건수로 매핑.
-import { Bell, Inbox, RefreshCcw, Search, X } from "lucide-react";
+import { Bell, CalendarClock, Inbox, RefreshCcw, Search, X } from "lucide-react";
 import { useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useStore } from "@/lib/store";
+import { CURRENT_STAFF, useStore } from "@/lib/store";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 function kstDate(): string {
@@ -56,8 +56,30 @@ export function Header() {
         }),
     [scheduleItems, cases, clients, todayIso]
   );
-  const alertCount = overdueAlerts.length + scheduleAlerts.length;
-  const newLeadCount = leads.filter((l) => l.status === "신규접수").length;
+
+  // DB관리의 진행단계가 "예약"이고 예약일시가 지정된 건 중 현재 로그인 담당자 몫만
+  // 헤더 알림에 띄웁니다. 실제 인증 전 데모는 CURRENT_STAFF("직원1") 기준이며,
+  // 예약 24시간 전부터 지난 24시간까지 계속 보여 단계 변경을 놓치지 않게 했습니다.
+  const reservationAlerts = useMemo(() => {
+    const now = Date.now();
+    const min = now - 24 * 60 * 60 * 1000;
+    const max = now + 24 * 60 * 60 * 1000;
+    return leads
+      .filter((lead) => lead.assignedStaff === CURRENT_STAFF && lead.detailStage === "예약" && !!lead.reservationAt)
+      .map((lead) => ({ lead, at: new Date(lead.reservationAt as string).getTime() }))
+      .filter(({ at }) => Number.isFinite(at) && at >= min && at <= max)
+      .sort((a, b) => a.at - b.at)
+      .map(({ lead, at }) => ({
+        id: `reservation-${lead.id}`,
+        name: lead.name,
+        phone: lead.phone,
+        reservationAt: lead.reservationAt as string,
+        overdue: at < now,
+      }));
+  }, [leads]);
+
+  const alertCount = overdueAlerts.length + scheduleAlerts.length + reservationAlerts.length;
+  const newLeadCount = leads.filter((l) => (l.detailStage ?? (l.status === "신규접수" || l.status === "상담예정" ? "신규디비" : "")) === "신규디비").length;
 
   function choose(id: string) {
     setQ("");
@@ -153,7 +175,7 @@ export function Header() {
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <div>
                   <div className="text-sm font-bold">업무 알림</div>
-                  <div className="text-[11px] text-slate-400">오늘까지 확인할 일정 {alertCount}건</div>
+                  <div className="text-[11px] text-slate-400">확인할 업무 알림 {alertCount}건</div>
                 </div>
                 <button
                   onClick={() => setNoticeOpen(false)}
@@ -167,6 +189,32 @@ export function Header() {
                   <div className="px-4 py-8 text-center text-sm text-slate-400">확인할 알림이 없습니다.</div>
                 ) : (
                   <>
+                    {reservationAlerts.slice(0, 8).map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => {
+                          setNoticeOpen(false);
+                          router.push("/db");
+                        }}
+                        className="flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left hover:bg-amber-50"
+                      >
+                        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700">
+                          <CalendarClock size={14} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2">
+                            <b className="truncate text-sm">상담예약 · {a.name}</b>
+                            <span className={`shrink-0 text-[10px] font-bold ${a.overdue ? "text-red-600" : "text-amber-700"}`}>
+                              {a.overdue ? "시간 경과" : "예정"}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            {new Date(a.reservationAt).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · {a.phone}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
                     {overdueAlerts.slice(0, 8).map((a) => (
                       <div key={a.id} className="border-b border-slate-100 px-4 py-3">
                         <div className="flex justify-between">

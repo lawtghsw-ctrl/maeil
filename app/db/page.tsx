@@ -6,8 +6,10 @@ import { useStore } from "@/lib/store";
 import {
   CONSULT_DIRECTIONS,
   CONSULT_TIME_OPTIONS,
-  DB_LEAD_STATUS_LABEL,
-  DB_LEAD_STATUSES,
+  DB_DETAIL_STAGE_GROUPS,
+  DB_DETAIL_STAGE_TRACK_COLOR,
+  DB_DETAIL_STAGE_TRACKS,
+  DB_LEAD_DEFAULT_STAGE_BY_STATUS,
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_OPTIONS,
   STAFF_LIST,
@@ -87,6 +89,91 @@ function PivotBar<T extends string>({
   );
 }
 
+// ---- DB관리 통합 진행단계 보드 ----
+function effectiveStage(lead: DbLead): DbDetailStage {
+  return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
+}
+
+// 기존 status는 전환/콜경고 등 내부 호환에 계속 쓰므로, 사용자가 통합 진행단계를 바꾸면
+// 가장 가까운 기존 status도 함께 갱신합니다. 화면의 실질 관리값은 detailStage입니다.
+function legacyStatusForStage(stage: DbDetailStage, current: DbLeadStatus): DbLeadStatus {
+  if (stage === "신규디비") return "신규접수";
+  if (stage === "예약") return "상담예정";
+  if (stage === "상담") return "상담완료";
+  if (stage === "부재") return "부재중";
+  if (stage === "설득필요") return "재통화필요";
+  if (stage === "장기부재") return "종결_중단";
+  if (stage === "불가") return "부적합";
+  if (DB_DETAIL_STAGE_GROUPS.서류.includes(stage)) return "서류검토중";
+  if (DB_DETAIL_STAGE_GROUPS.착수.includes(stage) || DB_DETAIL_STAGE_GROUPS.법원.includes(stage) || DB_DETAIL_STAGE_GROUPS.워크아웃.includes(stage)) {
+    return current === "수임전환" ? current : "계약진행중";
+  }
+  return current;
+}
+
+function StageBoard({
+  counts,
+  total,
+  active,
+  onSelect,
+}: {
+  counts: Partial<Record<DbDetailStage, number>>;
+  total: number;
+  active: DbDetailStage | "전체";
+  onSelect: (stage: DbDetailStage | "전체") => void;
+}) {
+  return (
+    <Card className="mb-3 overflow-x-auto p-2">
+      <div className="mb-1.5 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onSelect("전체")}
+          className={`h-8 rounded-md border px-3 text-xs font-bold transition ${
+            active === "전체" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          전체 {total}건
+        </button>
+        <span className="text-[11px] text-slate-400">진행단계를 클릭하면 아래 DB 리스트가 바로 필터됩니다.</span>
+      </div>
+      <div className="grid min-w-[1080px] grid-cols-5 gap-1.5">
+        {DB_DETAIL_STAGE_TRACKS.map((track) => (
+          <div key={track} className="overflow-hidden rounded-md border border-slate-200 bg-white">
+            <div
+              className="px-2 py-1.5 text-center text-[11px] font-black text-white"
+              style={{ backgroundColor: DB_DETAIL_STAGE_TRACK_COLOR[track] }}
+            >
+              {track}
+            </div>
+            <div className="space-y-0.5 p-1">
+              {DB_DETAIL_STAGE_GROUPS[track].map((stage) => {
+                const count = counts[stage] ?? 0;
+                const pct = total > 0 ? (count / total) * 100 : 0;
+                const selected = active === stage;
+                return (
+                  <button
+                    key={stage}
+                    type="button"
+                    onClick={() => onSelect(selected ? "전체" : stage)}
+                    className={`flex h-7 w-full items-center justify-between rounded px-2 text-[10px] font-semibold transition ${
+                      selected ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <span className="truncate">{stage}</span>
+                    <span className={`ml-2 shrink-0 ${selected ? "text-white/80" : "text-slate-400"}`}>
+                      {count}건{count > 0 ? ` (${pct.toFixed(pct < 1 ? 1 : 0)}%)` : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // ---- 메모 게시판 미리보기 셀 ----
 // "리스트 맨 우측 메모부분 텍스트란을 누르면 여태 했던 메모들이 보이게" 요청 반영.
 // 상담일지에서 작성한 메모 게시판(memoLog)의 최신 항목을 미리 보여주고, 클릭하면
@@ -156,22 +243,15 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
 }
 
 // ---- 상담일지 작성 팝업 (DB 단계) ----
-// v12: 여러 탭을 오가며 입력하던 기존 방식(ConsultationTabsEditor)을 걷어내고, 정보는
-// 많지만 한 화면에서 훑어볼 수 있는 대형 단일 팝업(components/ui/consultation/
-// ConsultationModal)으로 교체했습니다. 이 컴포넌트는 그 공용 팝업을 얇게 감싸서
-// DB관리 화면에만 있는 "상담 후 방향(applicationType)"·"상세 단계(detailStage)" 선택을
-// 로컬 상태로 들고 있다가 저장 시 상담일지 내용과 함께 updateLead 한 번에 반영합니다
-// (고객 전환 시 lead.consultation이 그대로 Client.consultation으로 승계되는 기존 동작은
-// store.tsx의 convertLeadToClient에서 전혀 바뀌지 않았습니다).
+// v17: 진행단계는 DB관리 상단 통합 보드/리스트에서 직접 관리하므로 상담일지 팝업의
+// 중복 "상세 단계" 드롭다운은 더 이상 띄우지 않습니다. 상담일지는 상담 내용 자체에 집중.
 function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: DbLead; onClose: () => void }) {
   const { updateLead } = useStore();
   const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
-  const [detailStage, setDetailStage] = useState<DbDetailStage | undefined>(lead.detailStage);
 
   useEffect(() => {
     if (!open) return;
     setApplicationType(lead.applicationType);
-    setDetailStage(lead.detailStage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead.id]);
 
@@ -186,12 +266,9 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       caseNumberLabel="- (법원 접수 전)"
       applicationType={applicationType}
       onApplicationTypeChange={setApplicationType}
-      showDetailStage
-      detailStage={detailStage}
-      onDetailStageChange={setDetailStage}
       initialConsultation={lead.consultation}
       onSave={(consultation) => {
-        updateLead(lead.id, { applicationType, detailStage, consultation });
+        updateLead(lead.id, { applicationType, consultation });
       }}
     />
   );
@@ -217,7 +294,7 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
 export default function DbManagementPage() {
   const { leads, updateLead, convertLeadToClient } = useStore();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<DbLeadStatus | "전체">("전체");
+  const [stageFilter, setStageFilter] = useState<DbDetailStage | "전체">("전체");
   const [staffFilter, setStaffFilter] = useState<StaffName | "전체">("전체");
   const [timeFilter, setTimeFilter] = useState<ConsultTimeSlot | "전체">("전체");
   const [debtFilter, setDebtFilter] = useState<DebtRange | "전체">("전체");
@@ -240,17 +317,30 @@ export default function DbManagementPage() {
     setJustConverted(lead.id);
   }
 
-  // 검색어·상태·담당자로 먼저 걸러낸 기준 집합 — 피벗 바의 그룹별 건수는 이 집합을
-  // 기준으로 계산해, "지금 보고 있는 조건 안에서" 시간대/금액대별 분포가 보이도록 합니다.
-  const baseRows = useMemo(() => {
+  // 검색어·담당자까지 적용한 전체 집합에서 진행단계 건수를 먼저 계산하고, 상단 보드에서
+  // 선택한 단계만 baseRows로 내려보냅니다. 따라서 다른 광고 피벗과 조합해서 사용할 수 있습니다.
+  const stageUniverse = useMemo(() => {
     return leads
-      .filter((l) => statusFilter === "전체" || l.status === statusFilter)
       .filter((l) => staffFilter === "전체" || l.assignedStaff === staffFilter)
       .filter((l) => {
         if (!query.trim()) return true;
         return l.name.includes(query) || l.phone.includes(query);
       });
-  }, [leads, statusFilter, staffFilter, query]);
+  }, [leads, staffFilter, query]);
+
+  const stageCounts = useMemo(() => {
+    const map: Partial<Record<DbDetailStage, number>> = {};
+    for (const lead of stageUniverse) {
+      const stage = effectiveStage(lead);
+      map[stage] = (map[stage] ?? 0) + 1;
+    }
+    return map;
+  }, [stageUniverse]);
+
+  const baseRows = useMemo(
+    () => stageUniverse.filter((lead) => stageFilter === "전체" || effectiveStage(lead) === stageFilter),
+    [stageUniverse, stageFilter]
+  );
 
   const timeCounts = useMemo(() => {
     const map: Partial<Record<ConsultTimeSlot, number>> = {};
@@ -276,7 +366,7 @@ export default function DbManagementPage() {
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
   }, [baseRows, timeFilter, debtFilter, incomeFilter]);
 
-  const newTodayCount = leads.filter((l) => l.status === "신규접수").length;
+  const newTodayCount = leads.filter((l) => effectiveStage(l) === "신규디비").length;
 
   // ---- 오늘 콜 관리 경고 ----
   // v12: "콜 관리 경고는 상단에 따로 띄우는게 아니라 고객리스트 자체에 뜨게끔 해달라"는
@@ -308,21 +398,6 @@ export default function DbManagementPage() {
         />
         <div className="flex flex-wrap gap-2">
           <select
-            value={statusFilter}
-            onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-              setStatusFilter(e.target.value as DbLeadStatus | "전체");
-              setPage(1);
-            }}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700"
-          >
-            <option value="전체">상태 전체</option>
-            {DB_LEAD_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {DB_LEAD_STATUS_LABEL[s]}
-              </option>
-            ))}
-          </select>
-          <select
             value={staffFilter}
             onChange={(e: ChangeEvent<HTMLSelectElement>) => {
               setStaffFilter(e.target.value as StaffName | "전체");
@@ -339,6 +414,16 @@ export default function DbManagementPage() {
           </select>
         </div>
       </Card>
+
+      <StageBoard
+        counts={stageCounts}
+        total={stageUniverse.length}
+        active={stageFilter}
+        onSelect={(stage) => {
+          setStageFilter(stage);
+          setPage(1);
+        }}
+      />
 
       <Card className="mb-4 space-y-2.5 p-3">
         <div className="mb-1 text-xs font-semibold text-slate-400">
@@ -426,17 +511,32 @@ export default function DbManagementPage() {
                 ))}
               </select>
               <select
-                value={lead.status}
+                value={effectiveStage(lead)}
                 disabled={!!lead.convertedClientId}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { status: e.target.value as DbLeadStatus })}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  const detailStage = e.target.value as DbDetailStage;
+                  updateLead(lead.id, { detailStage, status: legacyStatusForStage(detailStage, lead.status) });
+                }}
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
               >
-                {DB_LEAD_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {DB_LEAD_STATUS_LABEL[s]}
-                  </option>
+                {DB_DETAIL_STAGE_TRACKS.map((track) => (
+                  <optgroup key={track} label={track}>
+                    {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                  </optgroup>
                 ))}
               </select>
+              {effectiveStage(lead) === "예약" && (
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
+                  <input
+                    type="datetime-local"
+                    value={lead.reservationAt ?? ""}
+                    disabled={!!lead.convertedClientId}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => updateLead(lead.id, { reservationAt: e.target.value || undefined })}
+                    className="h-10 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm text-amber-900 outline-none focus:border-amber-400"
+                  />
+                </label>
+              )}
               <div>
                 <div className="mb-1 text-xs font-semibold text-slate-500">상담일지 메모</div>
                 <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} />
@@ -475,10 +575,10 @@ export default function DbManagementPage() {
 
         {/* 데스크톱: 테이블 */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="admin-responsive-table w-full min-w-[1320px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[1540px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "상담후방향", "담당자", "상태", "메모", ""].map((h) => (
+                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "상담후방향", "담당자", "진행단계", "예약일시", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -532,17 +632,32 @@ export default function DbManagementPage() {
                   </td>
                   <td className="px-4 py-3">
                     <select
-                      value={lead.status}
+                      value={effectiveStage(lead)}
                       disabled={!!lead.convertedClientId}
-                      onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { status: e.target.value as DbLeadStatus })}
-                      className="min-w-[110px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                        const detailStage = e.target.value as DbDetailStage;
+                        updateLead(lead.id, { detailStage, status: legacyStatusForStage(detailStage, lead.status) });
+                      }}
+                      className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
                     >
-                      {DB_LEAD_STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {DB_LEAD_STATUS_LABEL[s]}
-                        </option>
+                      {DB_DETAIL_STAGE_TRACKS.map((track) => (
+                        <optgroup key={track} label={track}>
+                          {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                        </optgroup>
                       ))}
                     </select>
+                  </td>
+                  <td className="min-w-[180px] px-4 py-3">
+                    <input
+                      type="datetime-local"
+                      value={lead.reservationAt ?? ""}
+                      disabled={!!lead.convertedClientId || effectiveStage(lead) !== "예약"}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => updateLead(lead.id, { reservationAt: e.target.value || undefined })}
+                      title={effectiveStage(lead) === "예약" ? "예약일시 지정" : "진행단계를 예약으로 선택하면 입력할 수 있습니다"}
+                      className={`w-[168px] rounded-lg border px-2 py-1.5 text-[11px] outline-none disabled:cursor-not-allowed ${
+                        effectiveStage(lead) === "예약" ? "border-amber-200 bg-amber-50 text-amber-900 focus:border-amber-400" : "border-slate-100 bg-slate-50 text-slate-300"
+                      }`}
+                    />
                   </td>
                   <td className="min-w-[220px] px-4 py-3">
                     <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} />
@@ -583,7 +698,7 @@ export default function DbManagementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 DB가 없습니다.
                   </td>
                 </tr>

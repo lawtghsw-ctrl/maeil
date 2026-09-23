@@ -29,7 +29,7 @@ interface PreviewRow {
   include: boolean;
 }
 
-const ALLOWED_EXT = ["xlsx", "xls", "csv", "pdf"];
+const ALLOWED_EXT = ["html", "htm", "xlsx", "xls", "csv", "pdf"];
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
 
 export function DebtListSection({
@@ -54,7 +54,7 @@ export function DebtListSection({
     setPreview(null);
     const ext = file.name.toLowerCase().split(".").pop() ?? "";
     if (!ALLOWED_EXT.includes(ext)) {
-      setErrorMsg("지원하지 않는 파일 형식입니다 (.xlsx, .xls, .csv, .pdf만 첨부할 수 있습니다).");
+      setErrorMsg("지원하지 않는 파일 형식입니다 (.html/.htm, .xlsx, .xls, .csv, .pdf만 첨부할 수 있습니다).");
       setSelectedFile(null);
       return;
     }
@@ -163,7 +163,7 @@ export function DebtListSection({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".xlsx,.xls,.csv,.pdf"
+          accept=".html,.htm,.xlsx,.xls,.csv,.pdf"
           className="hidden"
           onChange={(e: ChangeEvent<HTMLInputElement>) => {
             const f = e.target.files?.[0];
@@ -176,7 +176,7 @@ export function DebtListSection({
           파일 선택
         </Button>
         <span className="min-w-0 flex-1 truncate text-xs text-slate-500">
-          {selectedFile ? selectedFile.name : "여기로 끌어다 놓거나 파일 선택 후 [추출]을 눌러주세요 (.xlsx/.xls/.csv/.pdf)"}
+          {selectedFile ? selectedFile.name : "여기로 끌어다 놓거나 파일 선택 후 [추출]을 눌러주세요 (credit4u HTML 권장)"}
         </span>
         <Button className="px-2.5 py-1.5" onClick={extract} disabled={!selectedFile || busy}>
           <ScanSearch size={13} />
@@ -186,8 +186,8 @@ export function DebtListSection({
           <Plus size={13} />
           추가
         </Button>
-        <a href="https://www.credit4u.or.kr" target="_blank" rel="noreferrer" className="w-full text-[10px] font-semibold text-blue-600 underline">
-          본인신용정보 열람서비스(크레딧포유) 바로가기 ↗
+        <a href="https://www.credit4u.or.kr:2443/debtcheck" target="_blank" rel="noreferrer" className="w-full text-[10px] font-semibold text-blue-600 underline">
+          본인신용정보 열람서비스 바로가기 ↗
         </a>
       </div>
 
@@ -225,7 +225,7 @@ export function DebtListSection({
                     <td className="px-2 py-1.5">{row.item.lender ?? "-"}</td>
                     <td className="px-2 py-1.5">{row.item.kind2 ?? row.item.kind1}</td>
                     <td className="px-2 py-1.5">{row.item.executedAt ?? "-"}</td>
-                    <td className="px-2 py-1.5">{fmtWon(row.item.balance)}</td>
+                    <td className="px-2 py-1.5">{Math.round(row.item.balance / 1000).toLocaleString("ko-KR")}</td>
                     <td className="px-2 py-1.5">
                       {row.dupOf ? (
                         <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">기존과 유사(중복 의심)</span>
@@ -258,7 +258,7 @@ export function DebtListSection({
         <table className="w-full min-w-[620px] text-[11px]">
           <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
             <tr>
-              {["구분1", "구분2", "금융사", "실행일", "잔액", "관리"].map((h) => (
+              {["구분1", "구분2", "금융사", "실행일", "잔액(천원)", "관리"].map((h) => (
                 <th key={h} className="px-2 py-1.5 font-medium">
                   {h}
                 </th>
@@ -302,11 +302,11 @@ export function DebtListSection({
                   <input
                     inputMode="numeric"
                     className="h-7 sm:h-7 w-24 rounded-lg border border-slate-200 bg-white px-1.5 text-[11px] outline-none"
-                    value={row.balance ? row.balance.toLocaleString("ko-KR") : ""}
+                    value={row.balance ? Math.round(row.balance / 1000).toLocaleString("ko-KR") : ""}
                     placeholder="0"
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       const raw = e.target.value.replace(/[^0-9-]/g, "");
-                      updateRow(i, { balance: raw === "" ? 0 : Math.max(0, Number(raw)) });
+                      updateRow(i, { balance: raw === "" ? 0 : Math.max(0, Number(raw)) * 1000 });
                     }}
                   />
                 </td>

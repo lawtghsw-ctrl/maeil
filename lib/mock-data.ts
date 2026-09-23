@@ -582,19 +582,22 @@ function randomMemoLogFor(leadIdx: number, status: DbLeadStatus, receivedDaysAgo
   return entries.sort((a, b) => (a.at < b.at ? 1 : -1)); // 최신순
 }
 
-// ---- 상세 DB관리 단계(detailStage) 데모 시딩 ----
-// 실제 운영에서는 상담일지에서 상담원이 직접 지정하지만, 데모 데이터는 상담
-// 진행도(status)·상담후방향(applicationType)에 맞춰 그럴듯한 트랙/단계를 배정해
-// "상세 DB관리" 화면의 타일·목록이 처음부터 채워져 보이도록 했습니다.
-function randomDetailStage(applicationType: ConsultDirection | undefined, status: DbLeadStatus): DbDetailStage | undefined {
-  if (status === "신규접수" || status === "상담예정") return undefined; // 아직 분류 전
+// ---- DB관리 통합 진행단계(detailStage) 데모 시딩 ----
+// v17부터 별도 상세 DB관리 메뉴가 없어지고 DB관리 상단 보드에서 모든 단계를 관리합니다.
+// 따라서 데모 리드도 모두 하나의 진행단계를 갖도록 하며, 사용자 요청으로 통합된
+// 신규디비/부재/설득필요를 우선 반영합니다.
+function randomDetailStage(applicationType: ConsultDirection | undefined, status: DbLeadStatus): DbDetailStage {
+  if (status === "신규접수") return "신규디비";
+  if (status === "상담예정") return chance(0.45) ? "예약" : "신규디비";
+  if (status === "부재중") return "부재";
+  if (status === "재통화필요" || status === "고려중") return "설득필요";
+  if (status === "상담완료") return chance(0.5) ? "상담" : pick(DB_DETAIL_STAGE_GROUPS.착수);
+  if (status === "거절" || status === "부적합") return "불가";
+  if (status === "종결_중단") return "장기부재";
   if (applicationType === "워크아웃") return pick(DB_DETAIL_STAGE_GROUPS.워크아웃);
   if (status === "수임전환" || status === "계약진행중") return pick(DB_DETAIL_STAGE_GROUPS.법원);
   if (status === "서류검토중") return pick(DB_DETAIL_STAGE_GROUPS.서류);
-  if (status === "고려중" || status === "상담완료" || status === "재통화필요") {
-    return chance(0.55) ? pick(DB_DETAIL_STAGE_GROUPS.착수) : undefined;
-  }
-  return chance(0.25) ? pick(DB_DETAIL_STAGE_GROUPS.착수) : undefined;
+  return pick(DB_DETAIL_STAGE_GROUPS.착수);
 }
 
 // 광고 인스턴트 양식(채무총금액/실월소득/상담가능시간) — 앞으로 고정 운영할 양식이라

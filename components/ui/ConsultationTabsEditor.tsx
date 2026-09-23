@@ -458,7 +458,7 @@ export function ConsultationTabsEditor({
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="text-sm font-semibold text-slate-900">첨부파일 (본인신용정보 열람서비스 다운로드 파일 등)</div>
               <a
-                href="https://www.credit4u.or.kr"
+                href="https://www.credit4u.or.kr:2443/debtcheck"
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"

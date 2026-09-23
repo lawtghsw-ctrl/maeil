@@ -8,6 +8,7 @@ import { detectFileKind } from "./detectProvider";
 import type { ParsedDebtItem } from "./normalizeDebt";
 import { parseCsvText } from "./providers/genericCsv";
 import { parseExcelFile } from "./providers/genericExcel";
+import { parseCredit4uHtml } from "./providers/credit4uHtml";
 
 export type { ParsedDebtItem } from "./normalizeDebt";
 
@@ -43,7 +44,15 @@ export async function parseDebtFile(file: File): Promise<DebtParseResult> {
       if (items.length === 0) return { ok: false, items: [], message: UNRECOGNIZED_MESSAGE };
       return { ok: true, items };
     }
-    return { ok: false, items: [], message: "지원하지 않는 파일 형식입니다 (.xlsx, .xls, .csv, .pdf만 지원합니다)." };
+    if (kind === "html") {
+      const text = await file.text();
+      const items = parseCredit4uHtml(text, file.name);
+      if (items.length === 0) {
+        return { ok: false, items: [], message: "HTML에서 credit4u 채무현황 표를 찾지 못했습니다. 본인신용정보 열람서비스의 채무현황 화면을 HTML로 저장한 파일인지 확인해주세요." };
+      }
+      return { ok: true, items };
+    }
+    return { ok: false, items: [], message: "지원하지 않는 파일 형식입니다 (.html/.htm, .xlsx, .xls, .csv, .pdf만 지원합니다)." };
   } catch {
     return { ok: false, items: [], message: UNRECOGNIZED_MESSAGE };
   }

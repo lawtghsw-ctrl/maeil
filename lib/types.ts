@@ -189,28 +189,38 @@ export const LEAD_SOURCE_OPTIONS = [
 ] as const;
 export type LeadSource = (typeof LEAD_SOURCE_OPTIONS)[number];
 
-// ---- 상세 DB관리 — 단계별 세부 분류 ----
-// "착수"·"서류"·"법원"·"워크아웃" 4개 트랙으로 나뉘는 세부 진행단계. 상담일지에서
-// 담당자가 직접 지정하며, 상세 DB관리 화면에서 트랙별 통계 타일 + 단계별 고객 리스트로
-// 집계됩니다. (참고 이미지의 분류 체계를 그대로 옮김 — 실제 운영 중 명칭이 바뀌면 아래
-// 배열 값만 수정하면 됩니다.)
-export const DB_DETAIL_STAGE_TRACKS = ["착수", "서류", "법원", "워크아웃"] as const;
+// ---- DB관리 통합 진행단계 ----
+// v17: 별도 "상세 DB관리" 메뉴를 없애고, 사진처럼 DB관리 상단에서 상담 초기 단계부터
+// 법원/워크아웃/파산 단계까지 한 번에 클릭·필터할 수 있도록 통합했습니다.
+// 기존 detailStage 필드명은 과거 데이터 호환 때문에 그대로 유지하지만, 화면에서는
+// "진행단계"로 표시합니다. 요청에서 제거한 단계(미상담/접수후취소/1차서류안내/
+// 중복수임/보유/플랜/연체 워크아웃/착수 추후납부/서류착수/차단대기)는 옵션에서 제외합니다.
+export const DB_DETAIL_STAGE_TRACKS = ["상담", "착수", "서류", "법원", "워크아웃"] as const;
 export type DbDetailStageTrack = (typeof DB_DETAIL_STAGE_TRACKS)[number];
 
 export const DB_DETAIL_STAGE_OPTIONS = [
+  // 상담 초기 단계 — 기존 신청완료+상담대기 → 신규디비, 부재대기+부재관리 → 부재,
+  // 재설득요망+최종설득실패 → 설득필요 로 통합.
+  "신규디비",
+  "부재",
+  "설득필요",
+  "예약",
+  "상담",
+  "장기부재",
+  "불가",
+  // 착수
   "착수금착수",
-  "서류착수",
-  "연체 워크아웃",
-  "착수 추후진행",
-  "착수 추후납부",
-  "취소예정",
   "착수 1차안내",
+  "착수 추후진행",
+  "취소예정",
+  // 서류
   "1차 서류미비",
   "1차 서류완료",
   "2차서류안내",
   "2차서류미비",
   "2차서류완료",
   "접수보류",
+  // 법원
   "법원접수(대기)",
   "법원접수",
   "금지명령",
@@ -218,6 +228,7 @@ export const DB_DETAIL_STAGE_OPTIONS = [
   "개시결정",
   "인가결정",
   "종결",
+  // 워크아웃/새출발/파산
   "워크아웃",
   "새출발",
   "워크아웃 신청",
@@ -229,8 +240,9 @@ export const DB_DETAIL_STAGE_OPTIONS = [
 export type DbDetailStage = (typeof DB_DETAIL_STAGE_OPTIONS)[number];
 
 export const DB_DETAIL_STAGE_GROUPS: Record<DbDetailStageTrack, DbDetailStage[]> = {
-  착수: ["착수금착수", "서류착수", "연체 워크아웃", "착수 추후진행", "착수 추후납부", "취소예정"],
-  서류: ["착수 1차안내", "1차 서류미비", "1차 서류완료", "2차서류안내", "2차서류미비", "2차서류완료", "접수보류"],
+  상담: ["신규디비", "부재", "설득필요", "예약", "상담", "장기부재", "불가"],
+  착수: ["착수금착수", "착수 1차안내", "착수 추후진행", "취소예정"],
+  서류: ["1차 서류미비", "1차 서류완료", "2차서류안내", "2차서류미비", "2차서류완료", "접수보류"],
   법원: ["법원접수(대기)", "법원접수", "금지명령", "금지기각", "개시결정", "인가결정", "종결"],
   워크아웃: ["워크아웃", "새출발", "워크아웃 신청", "새출발 신청", "워크아웃 완료", "새출발 완료", "파산"],
 };
@@ -243,12 +255,30 @@ export const DB_DETAIL_STAGE_TRACK_OF: Record<DbDetailStage, DbDetailStageTrack>
   {} as Record<DbDetailStage, DbDetailStageTrack>
 );
 
-// 트랙별 타일 색상 — 착수/서류는 보라 계열, 법원/워크아웃은 파랑 계열(참고 이미지 톤 참고)
+// 사진1의 회색 → 보라 → 파랑 진행감을 유지한 그룹 색상.
 export const DB_DETAIL_STAGE_TRACK_COLOR: Record<DbDetailStageTrack, string> = {
+  상담: "#64748b", // slate-500
   착수: "#7c3aed", // violet-600
-  서류: "#8b5cf6", // violet-500
+  서류: "#6d28d9", // violet-700
   법원: "#2563eb", // blue-600
   워크아웃: "#0ea5e9", // sky-500
+};
+
+// 예전 DbLead.status만 있는 데이터도 통합 보드에 빠지지 않게 보여주기 위한 기본 매핑.
+// 신규 데이터는 detailStage(화면명: 진행단계)를 직접 저장하므로 이 값은 호환용 fallback입니다.
+export const DB_LEAD_DEFAULT_STAGE_BY_STATUS: Record<DbLeadStatus, DbDetailStage> = {
+  신규접수: "신규디비",
+  상담예정: "신규디비",
+  상담완료: "상담",
+  재통화필요: "설득필요",
+  고려중: "설득필요",
+  서류검토중: "1차 서류미비",
+  계약진행중: "착수금착수",
+  수임전환: "법원접수(대기)",
+  부재중: "부재",
+  거절: "불가",
+  부적합: "불가",
+  종결_중단: "장기부재",
 };
 
 // ---- 상담일지 메모 게시판 ----
@@ -275,7 +305,8 @@ export interface DbLead {
   assignedStaff: StaffName;
   source?: LeadSource; // 유입경로
   memo?: string; // 상담원이 남기는 기초정보 메모(간단 요약용 — 상세 이력은 상담일지 메모 게시판 참고)
-  detailStage?: DbDetailStage; // 상세 DB관리 분류 — 상담일지에서 지정
+  detailStage?: DbDetailStage; // DB관리 통합 진행단계(기존 필드명은 호환을 위해 유지)
+  reservationAt?: string; // 예약 단계 상담 예정시각 — datetime-local(YYYY-MM-DDTHH:mm)
   debtRange?: DebtRange; // 광고 인스턴트 양식 — 채무 총금액
   incomeRange?: IncomeRange; // 광고 인스턴트 양식 — 실 월소득
   consultTime?: ConsultTimeSlot; // 광고 인스턴트 양식 — 상담가능시간
