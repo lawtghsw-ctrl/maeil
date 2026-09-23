@@ -6,12 +6,15 @@ import type { ConsultationCounselPlan, ConsultationRecentLoanInsurance, PctRange
 import { PCT_RANGE_OPTIONS } from "@/lib/types";
 import { lookupMinLivingCost, MIN_LIVING_COST_HOUSEHOLD_SIZES, type RepaymentPlanResult } from "@/lib/consultation";
 import { Select } from "@/components/ui/Primitives";
+import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEditor";
 import {
   FieldRow,
   ManwonInput,
   SectionCard,
   compactSelectClass,
   compactTextareaClass,
+  OXToggle,
+  SectionBar,
 } from "./shared";
 import { fmtWon } from "@/lib/format";
 
@@ -25,6 +28,10 @@ export function PlanSection({
   patchRecentLoanInsurance,
   requiredKeys,
   missingKeys,
+  reservationChoice,
+  reservationAt,
+  onReservationChoiceChange,
+  onReservationAtChange,
 }: {
   counselPlan: ConsultationCounselPlan;
   patchCounselPlan: (p: Partial<ConsultationCounselPlan>) => void;
@@ -35,6 +42,10 @@ export function PlanSection({
   patchRecentLoanInsurance: (p: Partial<ConsultationRecentLoanInsurance>) => void;
   requiredKeys: Set<string>;
   missingKeys: Set<string>;
+  reservationChoice?: boolean;
+  reservationAt?: string;
+  onReservationChoiceChange?: (value: boolean | undefined) => void;
+  onReservationAtChange?: (value: string | undefined) => void;
 }) {
   const { minLivingCostTable } = useStore();
   const required = (key: string) => requiredKeys.has(key);
@@ -149,6 +160,23 @@ export function PlanSection({
           </div>
         </div>
       </div>
+
+      {onReservationChoiceChange && onReservationAtChange && (
+        <div className="border-t border-slate-200">
+          <SectionBar label="예약 일정 등록" />
+          <FieldRow label="예약" contentClassName="flex-wrap sm:flex-nowrap">
+            <OXToggle value={reservationChoice} onChange={onReservationChoiceChange} />
+            {reservationChoice === true && (
+              <div className="min-w-0 flex-1">
+                <ReservationDateTimeEditor value={reservationAt} onChange={onReservationAtChange} />
+              </div>
+            )}
+            {reservationChoice !== true && (
+              <span className="text-[10px] text-slate-400">O 선택 시 예약 날짜와 시간을 지정할 수 있습니다.</span>
+            )}
+          </FieldRow>
+        </div>
+      )}
     </SectionCard>
   );
 }

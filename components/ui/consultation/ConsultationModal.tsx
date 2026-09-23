@@ -58,6 +58,7 @@ import { PlanSection } from "./PlanSection";
 import { DebtListSection } from "./DebtListSection";
 import { ConsultationMemoSection } from "./ConsultationMemoSection";
 import { Download, ShieldCheck, ShieldAlert } from "lucide-react";
+import { fmtWon } from "@/lib/format";
 
 type Updater<T> = (updater: T | ((prev: T) => T)) => void;
 
@@ -81,6 +82,13 @@ export function ConsultationModal({
   initialConsultation,
   onSave,
   onExportExcel,
+  contractAmount = 0,
+  paidAmount = 0,
+  outstandingAmount = 0,
+  reservationChoice,
+  reservationAt,
+  onReservationChoiceChange,
+  onReservationAtChange,
 }: {
   open: boolean;
   // 대상(리드/고객)이 바뀔 때마다 내부 draft 상태를 다시 초기화하기 위한 키. 보통
@@ -104,6 +112,15 @@ export function ConsultationModal({
   // draft 스냅샷을 그대로 넘겨줘야 해서(저장하지 않고도 다운로드 가능), 콜백 형태로
   // 뺐습니다. 전달하지 않으면 버튼 자체가 보이지 않습니다(DB관리 화면은 사용 안 함).
   onExportExcel?: (draft: ConsultationInfo) => void;
+  // 계약관리와 연결된 금액 요약. DB 단계에서 아직 계약이 없으면 0원으로 표시합니다.
+  contractAmount?: number;
+  paidAmount?: number;
+  outstandingAmount?: number;
+  // DB 리드 상담일지에서만 노출되는 예약 일정 편집. 고객/계약 쪽에서 재사용할 때는 생략 가능.
+  reservationChoice?: boolean;
+  reservationAt?: string;
+  onReservationChoiceChange?: (value: boolean | undefined) => void;
+  onReservationAtChange?: (value: string | undefined) => void;
 }) {
   const [personal, setPersonal] = useState<ConsultationPersonal>(initialConsultation?.personal ?? {});
   const [income, setIncome] = useState<ConsultationIncome>(initialConsultation?.income ?? {});
@@ -253,6 +270,21 @@ export function ConsultationModal({
           </span>
         </div>
 
+        <div className="grid grid-cols-3 overflow-hidden rounded border border-slate-200 bg-white">
+          <div className="flex min-h-10 items-center justify-between gap-2 border-r border-slate-200 px-3">
+            <span className="text-[11px] font-extrabold text-slate-600">계약금</span>
+            <strong className="text-[13px] font-black text-blue-700">{fmtWon(contractAmount)}</strong>
+          </div>
+          <div className="flex min-h-10 items-center justify-between gap-2 border-r border-slate-200 px-3">
+            <span className="text-[11px] font-extrabold text-slate-600">납부금</span>
+            <strong className="text-[13px] font-black text-emerald-700">{fmtWon(paidAmount)}</strong>
+          </div>
+          <div className="flex min-h-10 items-center justify-between gap-2 px-3">
+            <span className="text-[11px] font-extrabold text-slate-600">미수금</span>
+            <strong className="text-[13px] font-black text-red-600">{fmtWon(Math.max(0, outstandingAmount))}</strong>
+          </div>
+        </div>
+
         {/* v14 레이아웃: 상단 3열은 같은 grid row를 공유해 전체 높이가 일치합니다.
             좌=기본정보/기타, 중=소득/자산, 우=의사/플랜. 하단에는 좌측 상담메모와
             중+우 2열을 합친 기대출리스트를 붙여 배치해 빈 여백을 최소화했습니다. */}
@@ -302,6 +334,10 @@ export function ConsultationModal({
               patchRecentLoanInsurance={patchRecentLoanInsurance}
               requiredKeys={requiredKeys}
               missingKeys={missingKeys}
+              reservationChoice={reservationChoice}
+              reservationAt={reservationAt}
+              onReservationChoiceChange={onReservationChoiceChange}
+              onReservationAtChange={onReservationAtChange}
             />
           </div>
 

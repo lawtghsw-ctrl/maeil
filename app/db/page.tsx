@@ -25,6 +25,7 @@ import {
 import { checkCallWarning, checkConsultationRequired, kstDateStr } from "@/lib/consultation";
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import { Button, Card, PageHeader, Pagination, SearchBox, pageRows, useClickOutside } from "@/components/ui/Primitives";
+import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEditor";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
 import { ClipboardList, ShieldAlert } from "lucide-react";
 
@@ -284,14 +285,32 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
 // v17: 진행단계는 DB관리 상단 통합 보드/리스트에서 직접 관리하므로 상담일지 팝업의
 // 중복 "상세 단계" 드롭다운은 더 이상 띄우지 않습니다. 상담일지는 상담 내용 자체에 집중.
 function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: DbLead; onClose: () => void }) {
-  const { updateLead } = useStore();
+  const { updateLead, cases } = useStore();
   const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
+  const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(
+    effectiveStage(lead) === "예약" || !!lead.reservationAt ? true : false
+  );
+  const [reservationAt, setReservationAt] = useState<string | undefined>(lead.reservationAt);
 
   useEffect(() => {
     if (!open) return;
     setApplicationType(lead.applicationType);
+    setReservationChoice(effectiveStage(lead) === "예약" || !!lead.reservationAt ? true : false);
+    setReservationAt(lead.reservationAt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead.id]);
+
+  // 전환된 리드에 연결된 계약이 한 건 이상일 수 있으므로 관련 CaseRecord 금액을 합산합니다.
+  // 연결 계약이 아직 없으면 모두 0원으로 표시되어 상담 단계에서도 같은 UI를 유지합니다.
+  const relatedCases = cases.filter(
+    (c) =>
+      c.fromLeadId === lead.id ||
+      c.id === lead.convertedCaseId ||
+      (!!lead.convertedClientId && c.clientId === lead.convertedClientId)
+  );
+  const contractAmount = relatedCases.reduce((sum, c) => sum + (c.contractAmount || 0), 0);
+  const paidAmount = relatedCases.reduce((sum, c) => sum + (c.paidAmount || 0), 0);
+  const outstandingAmount = Math.max(0, contractAmount - paidAmount);
 
   return (
     <ConsultationModal
@@ -305,78 +324,32 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       applicationType={applicationType}
       onApplicationTypeChange={setApplicationType}
       initialConsultation={lead.consultation}
+      contractAmount={contractAmount}
+      paidAmount={paidAmount}
+      outstandingAmount={outstandingAmount}
+      reservationChoice={reservationChoice}
+      reservationAt={reservationAt}
+      onReservationChoiceChange={(value) => {
+        setReservationChoice(value);
+        if (value !== true) setReservationAt(undefined);
+      }}
+      onReservationAtChange={setReservationAt}
       onSave={(consultation) => {
-        updateLead(lead.id, { applicationType, consultation });
+        const wasReservationStage = effectiveStage(lead) === "예약";
+        const reservationPatch = reservationChoice === true
+          ? { detailStage: "예약" as const, status: "상담예정" as const, reservationAt }
+          : wasReservationStage
+            ? { detailStage: "신규디비" as const, status: "신규접수" as const, reservationAt: undefined }
+            : { reservationAt: undefined };
+
+        updateLead(lead.id, { applicationType, consultation, ...reservationPatch });
       }}
     />
   );
 }
 
 
-// ---- 예약일시 간편 입력 ----
-// 브라우저의 datetime-local 팝업은 날짜/시/분을 한 번에 조작해야 해서 빠른 콜 예약에
-// 불편했습니다. 날짜 달력 + 시간(오전/오후 표기) + 10분 단위 분 선택으로 분리해 같은
-// reservationAt(YYYY-MM-DDTHH:mm) 필드에 저장합니다.
-const RESERVATION_MINUTES = ["00", "10", "20", "30", "40", "50"] as const;
-const RESERVATION_HOURS = Array.from({ length: 24 }, (_, hour) => {
-  const period = hour < 12 ? "오전" : "오후";
-  const displayHour = hour % 12 || 12;
-  return { value: String(hour).padStart(2, "0"), label: `${period} ${displayHour}시` };
-});
-
-function ReservationDateTimeEditor({
-  value,
-  disabled,
-  onChange,
-  compact = false,
-}: {
-  value?: string;
-  disabled?: boolean;
-  onChange: (value: string | undefined) => void;
-  compact?: boolean;
-}) {
-  const date = value?.slice(0, 10) ?? "";
-  const time = value?.slice(11, 16) ?? "";
-  const [hour = "", minute = ""] = time.split(":");
-
-  const commit = (nextDate: string, nextHour: string, nextMinute: string) => {
-    if (!nextDate) {
-      onChange(undefined);
-      return;
-    }
-    onChange(`${nextDate}T${nextHour || "10"}:${nextMinute || "00"}`);
-  };
-
-  return (
-    <div className={`flex items-center gap-1 ${compact ? "min-w-[300px]" : "w-full"}`}>
-      <input
-        type="date"
-        value={date}
-        disabled={disabled}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => commit(e.target.value, hour || "10", minute || "00")}
-        className={`${compact ? "w-[126px]" : "min-w-0 flex-1"} h-9 rounded-lg border border-amber-200 bg-amber-50 px-2 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
-      />
-      <select
-        value={hour || "10"}
-        disabled={disabled}
-        onChange={(e: ChangeEvent<HTMLSelectElement>) => commit(date || kstDateStr(), e.target.value, minute || "00")}
-        className={`${compact ? "w-[92px]" : "w-[104px]"} h-9 rounded-lg border border-amber-200 bg-amber-50 px-1.5 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
-      >
-        {RESERVATION_HOURS.map((option) => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-      </select>
-      <select
-        value={minute || "00"}
-        disabled={disabled}
-        onChange={(e: ChangeEvent<HTMLSelectElement>) => commit(date || kstDateStr(), hour || "10", e.target.value)}
-        className={`${compact ? "w-[68px]" : "w-[76px]"} h-9 rounded-lg border border-amber-200 bg-amber-50 px-1.5 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
-      >
-        {RESERVATION_MINUTES.map((m) => <option key={m} value={m}>{m}분</option>)}
-      </select>
-    </div>
-  );
-}
+// 예약일시 입력은 DB관리와 상담일지가 동일 UX를 쓰도록 공용 컴포넌트로 분리했습니다.
 
 // ---- 콜 관리 경고 인라인 뱃지 ----
 // v12: 별도 상단 배너 대신 고객(DB) 리스트 각 행에 직접 뜨도록 요청 반영. 이미 전환됐거나
