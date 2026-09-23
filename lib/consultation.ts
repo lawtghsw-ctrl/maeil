@@ -2,11 +2,9 @@
 // 고객이 전달한 엑셀 서식의 계산식을 그대로 옮긴 것으로, 어디까지나 상담 단계의
 // 추정치입니다(서식 원문 문구: "※ 추정치이며 최종 산정은 담당변호사 확인 필요").
 //
-// 법정 최저생계비 표(가구원수별)와 소액임차인 최우선변제 기준액(지역별)은 매년 고시가
-// 바뀌고 실제 회생/파산 인가 여부에 직결되는 민감한 법적 수치이므로, 이 파일에서는
-// 임의의 표를 만들어 자동판정하지 않습니다. 최저생계비는 1인가구 기준값만 상담일지
-// 원본 수치(1,538,543원)로 미리 채워두고 그 외에는 상담원이 매년 고시된 기준중위소득표를
-// 보고 직접 입력하도록 하며, 소액임차인 최우선변제는 참고 메모 필드로만 제공합니다.
+// v19: 운영자가 확정해 전달한 가구원수별 최저생계비 6개 기준값을 기본 테이블에 넣고,
+// 상담일지에서 가구원수를 선택하면 해당 금액을 즉시 자동 반영합니다. 이 값은 상담 단계
+// 예상 변제금/탕감률 계산에 쓰이며, 실제 사건의 최종 산정은 담당자 확인을 전제로 합니다.
 
 import type { AssetRow, ConsultationInfo, ConsultDirection, DebtRow, MemoLogEntry, RepaymentPlanInput } from "./types";
 import { ASSET_CATEGORIES, DEBT_CATEGORIES, SECURED_DEBT_CATEGORIES, UNSECURED_DEBT_CATEGORY } from "./types";
@@ -20,38 +18,39 @@ export function kstDateStr(d: Date = new Date()): string {
   return `${kst.getFullYear()}-${String(kst.getMonth() + 1).padStart(2, "0")}-${String(kst.getDate()).padStart(2, "0")}`;
 }
 
-// 상담일지 원본에 명시된 1인가구 기준 최저생계비(2025년 기준중위소득 60% 수준 예시값).
-// 2인 이상 가구는 매년 고시되는 기준중위소득표를 상담원이 직접 확인해 입력해야 하므로
-// 기본값을 제공하지 않습니다.
-export const MIN_LIVING_COST_1P = 1538543;
+// ---- v19 가구원수별 최저생계비 기본값 ----
+// 사용자가 확정해 전달한 운영 기준값. 1.5인/2.5인 가구까지 상담일지에서 직접 선택합니다.
+export const MIN_LIVING_COST_DEFAULTS: Record<number, number> = {
+  1: 1_538_543,
+  1.5: 2_029_059,
+  2: 2_519_575,
+  2.5: 2_867_498,
+  3: 3_215_422,
+  4: 3_896_843,
+};
 
-// ---- 최저생계비 계산기 (메뉴: "최저생계비 계산기") ----
-// 가구원수별 최저생계비는 매년 고시가 바뀌는 법적으로 민감한 수치라, LawPower가 임의의
-// 표를 만들어 자동판정하지 않습니다. 대신 '최저생계비 계산기' 화면에서 로펌 관리자가
-// 매년 고시된 최신 기준중위소득표를 직접 입력해 관리하고, 그 값이 고객 상담일지의
-// 변제계획 탭에 자동 반영되도록 합니다(1인가구만 상담일지 원문 수치로 미리 채워둠).
+export const MIN_LIVING_COST_1P = MIN_LIVING_COST_DEFAULTS[1];
+
 export interface MinLivingCostTable {
-  sizes: Record<number, number>; // 가구원수(1~6) -> 최저생계비
-  extraPerPerson: number; // 7인 이상부터 1인 추가마다 더할 금액(관리자 설정, 기본 0)
+  sizes: Record<number, number>;
+  // 과거 데이터/스토어 호환을 위해 유지. v19 상담일지에서는 아래 6개 고정 선택지만 사용합니다.
+  extraPerPerson: number;
 }
 
-export const MIN_LIVING_COST_HOUSEHOLD_SIZES = [1, 2, 3, 4, 5, 6] as const;
+export const MIN_LIVING_COST_HOUSEHOLD_SIZES = [1, 1.5, 2, 2.5, 3, 4] as const;
 
 export function defaultMinLivingCostTable(): MinLivingCostTable {
   return {
-    sizes: { 1: MIN_LIVING_COST_1P, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+    sizes: { ...MIN_LIVING_COST_DEFAULTS },
     extraPerPerson: 0,
   };
 }
 
-// 가구원수에 해당하는 최저생계비를 조회. 6인 초과는 6인 기준값 + (초과 인원 × 1인당 추가금액).
-// 관리자가 아직 해당 가구원수를 설정하지 않아 0으로 남아있으면 0을 그대로 반환합니다
-// (화면에서 "관리자 설정 필요"로 안내).
+// 상담일지에서는 위 6개 선택값만 사용합니다. 저장된 값이 없을 경우에도 운영 기본값으로
+// fallback하여 최저생계비가 0원으로 떨어지지 않게 합니다.
 export function lookupMinLivingCost(householdSize: number, table: MinLivingCostTable): number {
-  const size = Math.max(1, Math.round(householdSize || 1));
-  if (size <= 6) return table.sizes[size] ?? 0;
-  const base = table.sizes[6] ?? 0;
-  return base + (size - 6) * (table.extraPerPerson || 0);
+  const normalized = Number(householdSize);
+  return table.sizes[normalized] ?? MIN_LIVING_COST_DEFAULTS[normalized] ?? 0;
 }
 
 // ---- v13 추가 — "나이"/"재직기간" 자동계산 헬퍼 ----
@@ -444,21 +443,41 @@ export function checkCallWarning(memoLog: MemoLogEntry[] | undefined, todayIso?:
   return { active, noAnswerCountToday, reachedToday };
 }
 
+export interface RepaymentDebtOverride {
+  totalDebt?: number;
+  securedDebt?: number;
+  unsecuredDebt?: number;
+}
+
 export function computeRepaymentPlan(
   monthlyAvgIncome: number,
   secondaryIncome: number,
   pensionIncome: number,
   assets: AssetRow[],
   debts: DebtRow[],
-  plan: RepaymentPlanInput
+  plan: RepaymentPlanInput,
+  debtOverride?: RepaymentDebtOverride
 ): RepaymentPlanResult {
   const monthlyIncomeTotal = (monthlyAvgIncome || 0) + (secondaryIncome || 0) + (pensionIncome || 0);
   const totalIncome = monthlyIncomeTotal * 12;
 
   const assetTotal = sumAssets(assets);
-  const debtTotal = sumDebts(debts);
-  const securedDebtTotal = sumSecuredDebts(debts);
-  const unsecuredDebtTotal = sumUnsecuredDebt(debts);
+  const rowDebtTotal = sumDebts(debts);
+  const rowSecuredDebtTotal = sumSecuredDebts(debts);
+  const rowUnsecuredDebtTotal = sumUnsecuredDebt(debts);
+
+  // v19: 상담일지의 "총 채무금액/총 담보금액/총 신용금액" 및 기대출 리스트가 실제
+  // 실무 입력 경로이므로, 값이 있으면 고정 채무행보다 우선해 예상 탕감률을 계산합니다.
+  // override가 없으면 기존 채무현황 계산식을 그대로 사용해 하위 호환을 유지합니다.
+  const debtTotal = debtOverride?.totalDebt && debtOverride.totalDebt > 0 ? debtOverride.totalDebt : rowDebtTotal;
+  const securedDebtTotal = debtOverride?.securedDebt !== undefined
+    ? Math.max(0, debtOverride.securedDebt)
+    : rowSecuredDebtTotal;
+  const unsecuredDebtTotal = debtOverride?.unsecuredDebt !== undefined
+    ? Math.max(0, debtOverride.unsecuredDebt)
+    : debtOverride?.totalDebt !== undefined
+      ? Math.max(0, debtTotal - securedDebtTotal)
+      : rowUnsecuredDebtTotal;
 
   const months = Math.max(1, plan.repaymentMonths || 1);
   const monthlyDisposableIncome = Math.max(

@@ -148,10 +148,29 @@ export function ConsultationModal({
   const patchRecentLoanInsurance = useMemo(() => makePatcher(setRecentLoanInsurance), []);
   const patchPlan = useMemo(() => makePatcher(setPlan), []);
 
-  const result = useMemo(
-    () => computeRepaymentPlan(income.monthlyAvgIncome ?? 0, income.secondaryIncome ?? 0, income.pensionIncome ?? 0, assets, debts, plan),
-    [income, assets, debts, plan]
-  );
+  const result = useMemo(() => {
+    const loanTotal = loanRecords.reduce((sum, row) => sum + (row.balance || 0), 0);
+    const loanSecured = loanRecords
+      .filter((row) => row.kind1 === "담보")
+      .reduce((sum, row) => sum + (row.balance || 0), 0);
+    const loanUnsecured = loanRecords
+      .filter((row) => row.kind1 !== "담보")
+      .reduce((sum, row) => sum + (row.balance || 0), 0);
+
+    const totalDebt = debtSummaryExtra.totalDebtAmount ?? (loanTotal || undefined);
+    const securedDebt = debtSummaryExtra.totalSecuredAmount ?? (loanSecured || undefined);
+    const unsecuredDebt = debtSummaryExtra.totalCreditAmount ?? (loanUnsecured || undefined);
+
+    return computeRepaymentPlan(
+      income.monthlyAvgIncome ?? 0,
+      income.secondaryIncome ?? 0,
+      income.pensionIncome ?? 0,
+      assets,
+      debts,
+      plan,
+      { totalDebt, securedDebt, unsecuredDebt }
+    );
+  }, [income, assets, debts, plan, loanRecords, debtSummaryExtra]);
 
   // "지금 이 화면에서 편집 중인 값 전체"를 하나의 ConsultationInfo 스냅샷으로 모아
   // 필수값 검사·작성률 계산·저장에 공통으로 씁니다. (구) 단일 memo 필드는 이 화면에서
@@ -304,8 +323,8 @@ export function ConsultationModal({
           )}
         </div>
         <div className="flex gap-1">
-          <Button variant="secondary" className="h-7 sm:h-7 px-3 text-[10px]" onClick={onClose}>취소</Button>
-          <Button className="h-7 sm:h-7 px-3 text-[10px]" onClick={save}>저장</Button>
+          <Button variant="secondary" className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={onClose}>취소</Button>
+          <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save}>저장</Button>
         </div>
       </div>
     </Modal>

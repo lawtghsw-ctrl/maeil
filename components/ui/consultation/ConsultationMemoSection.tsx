@@ -44,7 +44,7 @@ export function ConsultationMemoSection({ memoLog, setMemoLog }: { memoLog: Memo
           onClick={() => setMemoTag((t) => (t === "재통화" ? "일반" : "재통화"))}
           className={`h-7 rounded border px-2 text-[10px] font-bold ${memoTag === "재통화" ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-200 bg-white text-slate-600"}`}
         >
-          재통화
+          통화완료
         </button>
         <button
           type="button"
@@ -68,7 +68,7 @@ export function ConsultationMemoSection({ memoLog, setMemoLog }: { memoLog: Memo
                 <div className="flex items-center gap-1 whitespace-nowrap">
                   <b className="text-slate-800">{entry.staff}</b>
                   <span className="text-slate-400">{fmtDateTime(entry.at)}</span>
-                  {entry.tag !== "일반" && <span className="rounded bg-slate-100 px-1 font-bold text-slate-600">{entry.tag}</span>}
+                  {entry.tag !== "일반" && <span className="rounded bg-slate-100 px-1 font-bold text-slate-600">{entry.tag === "재통화" ? "통화완료" : entry.tag}</span>}
                 </div>
                 {entry.text && <div className="mt-0.5 whitespace-pre-wrap leading-4 text-slate-600">{entry.text}</div>}
               </li>

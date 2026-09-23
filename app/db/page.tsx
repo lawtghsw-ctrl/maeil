@@ -134,7 +134,6 @@ function StageBoard({
         >
           전체 {total}건
         </button>
-        <span className="text-[11px] text-slate-400">진행단계를 클릭하면 아래 DB 리스트가 바로 필터됩니다.</span>
       </div>
       <div className="grid min-w-[1080px] grid-cols-5 gap-1.5">
         {DB_DETAIL_STAGE_TRACKS.map((track) => (

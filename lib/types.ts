@@ -506,7 +506,7 @@ export interface DebtRow {
 
 export interface RepaymentPlanInput {
   householdSize: number; // 가구원수
-  minLivingCost: number; // 최저생계비 — 수동 입력(1인가구 기준값만 참고 제공)
+  minLivingCost: number; // 최저생계비 — 가구원수 선택 시 운영 기준표에서 자동 반영
   otherDeduction: number; // 기타공제금
   repaymentMonths: number; // 변제개월수
   smallLeaseNote?: string; // 소액임차인 최우선변제 참고 메모(자동조회 대신 수기 확인 기록)
