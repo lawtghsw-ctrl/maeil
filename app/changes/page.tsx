@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { useStore, type ChangeAction, type ChangeCategory, type ChangeLogEntry } from "@/lib/store";
 import { Badge, Card, PageHeader, Pagination, pageRows, type BadgeTone } from "@/components/ui/Primitives";
 
-const CATEGORIES: ChangeCategory[] = ["DB관리", "고객관리", "계약관리", "입금·분납", "게시판", "설정"];
+const CATEGORIES: ChangeCategory[] = ["DB관리", "계약관리", "설정"];
 const ACTION_TONE: Record<ChangeAction, BadgeTone> = {
   등록: "green",
   수정: "blue",
@@ -72,7 +72,7 @@ export default function ChangesPage() {
     <>
       <PageHeader
         title="기간별 변동내역"
-        description={`고객관리·DB관리·계약관리·입금분납·게시판·설정에서 발생한 등록·수정·삭제 이력 ${changeLog.length}건 (데모 버전 — 새로고침 시 초기화됩니다)`}
+        description={`DB관리·계약관리·설정에서 발생한 등록·수정·삭제 이력 ${changeLog.length}건 (데모 버전 — 새로고침 시 초기화됩니다)`}
       />
 
       <Card className="mb-4 flex flex-wrap gap-2 p-3">

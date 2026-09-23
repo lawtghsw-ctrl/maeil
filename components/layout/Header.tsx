@@ -143,7 +143,8 @@ export function Header() {
   function choose(id: string) {
     setQ("");
     setSearchOpen(false);
-    router.push(`/clients?client=${encodeURIComponent(id)}`);
+    const relatedCase = cases.find((record) => record.clientId === id);
+    router.push(relatedCase ? `/cases/${relatedCase.id}` : "/cases");
   }
 
   return (

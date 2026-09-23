@@ -128,7 +128,7 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      <Card className="mt-4 bg-slate-50 px-4 py-3 text-xs text-slate-500">현재 전체 미수금 {fmtWon(receivableTotal)} — 상세 내역은 입금·분납 관리에서 확인하세요.</Card>
+      <Card className="mt-4 bg-slate-50 px-4 py-3 text-xs text-slate-500">현재 전체 미수금 {fmtWon(receivableTotal)} — 상세 내역은 계약관리 상세의 분납관리에서 확인하세요.</Card>
     </>
   );
 }

@@ -3,7 +3,7 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
-import { CASE_STAGES, STAGE_LABELS, type CaseStage, type CaseStatus, type CaseType } from "@/lib/types";
+import { type CaseStatus, type CaseType } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Card, PageHeader, Pagination, SearchBox, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -16,7 +16,6 @@ export default function CasesPage() {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
-  const [stageFilter, setStageFilter] = useState<CaseStage | "전체">("전체");
   const [page, setPage] = useState(1);
 
   const rows = useMemo(() => {
@@ -25,7 +24,6 @@ export default function CasesPage() {
       .filter(({ c, client }) => {
         if (typeFilter !== "전체" && c.caseType !== typeFilter) return false;
         if (statusFilter !== "전체" && c.status !== statusFilter) return false;
-        if (stageFilter !== "전체" && c.stage !== stageFilter) return false;
         if (query.trim()) {
           const q = query.trim();
           const hit = client?.name.includes(q) || c.caseNumber.includes(q) || client?.phone.includes(q);
@@ -34,11 +32,11 @@ export default function CasesPage() {
         return true;
       })
       .sort((a, b) => (a.c.contractDate < b.c.contractDate ? 1 : -1));
-  }, [cases, clients, query, typeFilter, statusFilter, stageFilter]);
+  }, [cases, clients, query, typeFilter, statusFilter]);
 
   return (
     <>
-      <PageHeader title="계약관리" description={`회생/파산 사건 ${cases.length}건 중 ${rows.length}건 표시`} />
+      <PageHeader title="계약관리" description={`고객·계약 통합관리 · 전체 ${cases.length}건 중 ${rows.length}건 표시`} />
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -80,23 +78,6 @@ export default function CasesPage() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setStageFilter("전체")}
-            className={`rounded-md px-2.5 py-1 text-xs font-semibold ${stageFilter === "전체" ? "bg-slate-800 text-white" : "bg-blue-50 text-blue-700"}`}
-          >
-            전체 단계
-          </button>
-          {CASE_STAGES.map((st) => (
-            <button
-              key={st}
-              onClick={() => setStageFilter(st)}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold ${stageFilter === st ? "bg-slate-800 text-white" : "bg-blue-50 text-blue-700"}`}
-            >
-              {st === "개시_선고" ? "개시/선고" : st === "변제계획_면책심문" ? "인가/면책심문" : st}
-            </button>
-          ))}
-        </div>
       </Card>
 
       <Card className="overflow-hidden">
@@ -117,10 +98,7 @@ export default function CasesPage() {
                   </div>
                   <StatusBadge status={c.status} />
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-600">{STAGE_LABELS[c.caseType][c.stage]}</span>
-                  <span className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</span>
-                </div>
+                <div className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-500">계약금액 {fmtWon(c.contractAmount)}</span>
                   {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
@@ -135,7 +113,7 @@ export default function CasesPage() {
           <table className="admin-responsive-table w-full min-w-[960px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["의뢰인", "사건번호", "유형", "단계", "담당자", "계약일", "계약금액", "결제금액", "미수금", "상태", ""].map((h) => (
+                {["의뢰인", "사건번호", "유형", "담당자", "계약일", "계약금액", "결제금액", "미수금", "상태", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -150,7 +128,6 @@ export default function CasesPage() {
                     <td className="px-4 py-3 font-semibold text-slate-900">{client?.name ?? "-"}</td>
                     <td className="px-4 py-3 text-slate-500">{c.caseNumber}</td>
                     <td className="px-4 py-3 text-slate-700">{c.caseType}</td>
-                    <td className="px-4 py-3 text-slate-700">{STAGE_LABELS[c.caseType][c.stage]}</td>
                     <td className="px-4 py-3 text-slate-500">{c.assignedStaff}</td>
                     <td className="px-4 py-3 text-slate-500">{fmtDate(c.contractDate)}</td>
                     <td className="px-4 py-3 text-slate-900">{fmtWon(c.contractAmount)}</td>
@@ -171,7 +148,7 @@ export default function CasesPage() {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 사건이 없습니다.
                   </td>
                 </tr>

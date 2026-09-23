@@ -2,324 +2,255 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlarmClock, CircleDollarSign, PhoneMissed, ShieldAlert, TrendingUp, UserPlus, Users, WalletCards } from "lucide-react";
 import {
-  computeStats,
-  isNextBlocked,
-  nextAnchor,
-  periodHeadline,
-  prevAnchor,
-  type PeriodMode,
-} from "@/lib/period-engine";
-import { dayMap } from "@/lib/mock-data";
-import { useStore } from "@/lib/store";
-import {
-  CASE_TYPE_COLORS,
-  getConsiderationTodoList,
-  getLeadKpis,
-  getOverdueList,
-  getStageDistribution,
-  STAGE_CHART_COLORS,
-} from "@/lib/dashboard";
-import { STAGE_GENERIC_LABELS } from "@/lib/types";
-import { fmtEokMan, fmtWon } from "@/lib/format";
+  CalendarClock,
+  CheckCircle2,
+  ClipboardCheck,
+  FileSignature,
+  PhoneCall,
+  PhoneMissed,
+  UserPlus,
+} from "lucide-react";
+import { useStore, CURRENT_STAFF } from "@/lib/store";
+import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, type DbLead } from "@/lib/types";
+import { checkCallWarning, kstDateStr } from "@/lib/consultation";
+import { fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
-import { DateRangePicker } from "@/components/ui/DateRangePicker";
-import { PeriodControl } from "@/components/ui/PeriodControl";
-import { KpiCard } from "@/components/ui/KpiCard";
-import { DonutChart } from "@/components/charts/DonutChart";
-import { StackedRatioBar } from "@/components/charts/StackedRatioBar";
-import { MonthCalendar, type CalendarItem } from "@/components/charts/MonthCalendar";
 
-function today(): string {
-  const t = new Date();
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+type ContractPeriod = "일" | "주" | "월" | "기간설정";
+
+function addDays(dateStr: string, delta: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + delta));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
-function monthRange() {
-  const t = today();
-  const [y, m] = t.split("-").map(Number);
+
+function weekBounds(today: string): { start: string; end: string } {
+  const [y, m, d] = today.split("-").map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const fromMonday = weekday === 0 ? 6 : weekday - 1;
+  const start = addDays(today, -fromMonday);
+  return { start, end: addDays(start, 6) };
+}
+
+function monthBounds(today: string): { start: string; end: string } {
+  const [y, m] = today.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return {
     start: `${y}-${String(m).padStart(2, "0")}-01`,
-    end: `${y}-${String(m).padStart(2, "0")}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`,
+    end: `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`,
   };
 }
-function inRange(date: string, start: string, end: string): boolean {
-  const d = date.slice(0, 10);
-  return (!start || d >= start) && (!end || d <= end);
+
+function leadStage(lead: DbLead) {
+  return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
 }
 
+function greetingCompletedToday(lead: DbLead, today: string): boolean {
+  const received = new Date(lead.receivedAt);
+  if (!Number.isFinite(received.getTime()) || kstDateStr(received) !== today) return false;
+  const entries = lead.consultation?.memoLog ?? [];
+  return entries.some((entry) => {
+    const at = new Date(entry.at);
+    if (!Number.isFinite(at.getTime()) || kstDateStr(at) !== today) return false;
+    const text = entry.text.replace(/\s+/g, " ");
+    return /(문자|인사)/.test(text) && /(완료|발송|안내)/.test(text);
+  });
+}
+
+function TodoCard({
+  title,
+  rows,
+  kind,
+}: {
+  title: string;
+  rows: DbLead[];
+  kind: "예약" | "상담" | "고려";
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="text-sm font-bold text-slate-900">{title}</div>
+        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{rows.length}건</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="px-4 py-10 text-center text-sm text-slate-400">현재 표시할 DB가 없습니다.</div>
+      ) : (
+        <div className="max-h-[420px] divide-y divide-slate-100 overflow-y-auto">
+          {rows.map((lead) => (
+            <div key={lead.id} className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-slate-900">{lead.name}</span>
+                  <span className="text-xs text-slate-400">{lead.phone}</span>
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {kind === "예약" && lead.reservationAt
+                    ? `예약 ${lead.reservationAt.replace("T", " ")}`
+                    : kind === "상담"
+                      ? "상담 진행 중"
+                      : "고려중 · 재컨택 필요"}
+                  {lead.memo ? ` · ${lead.memo}` : ""}
+                </div>
+              </div>
+              <Link
+                href="/db"
+                className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                DB 열기
+              </Link>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// v22 개인 대시보드: 실제 로그인 연동 전에는 CURRENT_STAFF를 로그인 계정으로 간주합니다.
+// 로그인 기능이 붙으면 CURRENT_STAFF 자리에 세션 사용자를 연결하면 동일 집계가 개인별로 동작합니다.
 export default function DashboardPage() {
-  const { clients, cases, installments, scheduleItems, leads } = useStore();
-  const initialRange = monthRange();
-  const currentMonth = today().slice(0, 7);
-  const [rangeStart, setRangeStart] = useState(initialRange.start);
-  const [rangeEnd, setRangeEnd] = useState(initialRange.end);
-  const [paymentMonth, setPaymentMonth] = useState(currentMonth);
-  const [hearingMonth, setHearingMonth] = useState(currentMonth);
+  const { leads, cases } = useStore();
+  const today = kstDateStr();
+  const [contractPeriod, setContractPeriod] = useState<ContractPeriod>("월");
+  const month = monthBounds(today);
+  const [customStart, setCustomStart] = useState(month.start);
+  const [customEnd, setCustomEnd] = useState(today);
 
-  // ---- 상단 KPI (도원 Admin 대시보드와 동일하게 DateRangePicker로 선택한 기간 기준) ----
-  const kpi = useMemo(() => {
-    const newClients = clients.filter((c) => inRange(c.registeredAt, rangeStart, rangeEnd));
-    const contractSales = cases
-      .filter((c) => inRange(c.contractDate, rangeStart, rangeEnd))
-      .reduce((a, c) => a + c.contractAmount, 0);
-    const realSales = installments
-      .filter((i) => i.status === "완료" && i.paidDate && inRange(i.paidDate, rangeStart, rangeEnd))
-      .reduce((a, i) => a + i.amount, 0);
-    const receivable = cases.reduce((a, c) => a + Math.max(0, c.contractAmount - c.paidAmount), 0);
-    return { newClients: newClients.length, contractSales, realSales, receivable };
-  }, [clients, cases, installments, rangeStart, rangeEnd]);
-
-  // ---- 분납 캘린더 / 기일·제출기한 캘린더 (도원 Admin의 분납·상환 캘린더 UI 이식) ----
-  const paymentItems: CalendarItem[] = useMemo(
-    () =>
-      installments
-        .filter((i) => i.dueDate.startsWith(paymentMonth))
-        .map((i) => {
-          const c = cases.find((x) => x.id === i.caseId);
-          const client = c ? clients.find((x) => x.id === c.clientId) : undefined;
-          return {
-            id: i.id,
-            date: i.dueDate,
-            label: client?.name ?? "-",
-            sub: `${i.seq === 1 ? "계약금" : `${i.seq - 1}회차`} · ${fmtWon(i.amount)}`,
-            done: i.status === "완료",
-            status: i.status,
-            amount: i.amount,
-          };
-        }),
-    [installments, cases, clients, paymentMonth]
+  const personalLeads = useMemo(
+    () => leads.filter((lead) => lead.assignedStaff === CURRENT_STAFF),
+    [leads]
   );
-  const paymentSummary = useMemo(() => {
-    const monthRows = installments.filter((i) => i.dueDate.startsWith(paymentMonth));
-    const paid = monthRows.filter((i) => i.status === "완료").reduce((a, i) => a + i.amount, 0);
-    const expected = monthRows.filter((i) => i.status !== "완료").reduce((a, i) => a + i.amount, 0);
-    return { paid, expected, total: paid + expected };
-  }, [installments, paymentMonth]);
-
-  const hearingItems: CalendarItem[] = useMemo(
-    () =>
-      scheduleItems
-        .filter((s) => s.date.startsWith(hearingMonth))
-        .map((s) => {
-          const c = s.caseId ? cases.find((x) => x.id === s.caseId) : undefined;
-          const client = c ? clients.find((x) => x.id === c.clientId) : undefined;
-          return {
-            id: s.id,
-            date: s.date,
-            label: client?.name ?? "-",
-            sub: `${s.type} · ${s.title}`,
-            done: s.done,
-            amount: 0,
-          };
-        }),
-    [scheduleItems, cases, clients, hearingMonth]
+  const personalCases = useMemo(
+    () => cases.filter((record) => record.assignedStaff === CURRENT_STAFF),
+    [cases]
   );
 
-  // ---- TM 영업 관점 KPI ("계약·분납 정보보다 오늘 뭘 해야 하는지가 먼저 보였으면 좋겠다"는
-  // 피드백 반영) — DB관리의 실시간 leads를 기준으로 계산해 상태·콜횟수를 바꾸면 바로 반영됨.
-  const leadKpis = useMemo(() => getLeadKpis(leads), [leads]);
-  const considerationTodo = useMemo(() => getConsiderationTodoList(leads, 8), [leads]);
-
-  // ---- 기간별 통계(년/월/주/일) — 기존 로피 기간엔진 이식분을 그대로 유지, 톤만 재적용 ----
-  const [mode, setMode] = useState<PeriodMode>("month");
-  const [anchor, setAnchor] = useState<Date>(() => new Date());
-  const stats = useMemo(() => computeStats(mode, anchor, dayMap), [mode, anchor]);
-  const headline = useMemo(() => periodHeadline(mode, stats.bounds), [mode, stats.bounds]);
-
-  const overdue = useMemo(() => getOverdueList(8), []);
-  const stageDist = useMemo(() => getStageDistribution(), []);
-  const overdueTotal = overdue.reduce((a, r) => a + r.amount, 0);
-
-  function handleShift(delta: 1 | -1) {
-    setAnchor((prev) => {
-      if (delta > 0) {
-        if (isNextBlocked(mode, prev)) return prev;
-        return nextAnchor(mode, prev);
-      }
-      return prevAnchor(mode, prev);
+  const dashboard = useMemo(() => {
+    const newGreetingDone = personalLeads.filter((lead) => greetingCompletedToday(lead, today));
+    const noAnswerNeed = personalLeads.filter(
+      (lead) => leadStage(lead) === "부재" && checkCallWarning(lead.consultation?.memoLog, today).active && !lead.convertedClientId
+    );
+    const recall = personalLeads
+      .filter((lead) => leadStage(lead) === "예약" && !lead.convertedClientId)
+      .sort((a, b) => (a.reservationAt ?? a.receivedAt).localeCompare(b.reservationAt ?? b.receivedAt));
+    const consulting = personalLeads
+      .filter((lead) => leadStage(lead) === "상담" && !lead.convertedClientId)
+      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    // 상담 후 착수금 안내/설득 단계로 넘어갔거나 고객전환까지 끝난 건을 상담완료로 봅니다.
+    const completed = personalLeads.filter((lead) => {
+      const stage = leadStage(lead);
+      return !!lead.convertedClientId || stage === "착수금 안내" || stage === "설득필요";
     });
-  }
+    const consideration = personalLeads
+      .filter((lead) => (lead.status === "고려중" || leadStage(lead) === "설득필요") && !lead.convertedClientId)
+      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+
+    return { newGreetingDone, noAnswerNeed, recall, consulting, completed, consideration };
+  }, [personalLeads, today]);
+
+  const contractBounds = useMemo(() => {
+    if (contractPeriod === "일") return { start: today, end: today };
+    if (contractPeriod === "주") return weekBounds(today);
+    if (contractPeriod === "월") return monthBounds(today);
+    return { start: customStart, end: customEnd };
+  }, [contractPeriod, today, customStart, customEnd]);
+
+  const contractSummary = useMemo(() => {
+    const rows = personalCases.filter(
+      (record) => record.contractDate >= contractBounds.start && record.contractDate <= contractBounds.end
+    );
+    return {
+      count: rows.length,
+      amount: rows.reduce((sum, record) => sum + record.contractAmount, 0),
+    };
+  }, [personalCases, contractBounds]);
+
+  const topCards = [
+    { icon: UserPlus, label: "당일신규 DB", value: dashboard.newGreetingDone.length, sub: "문자인사 완료건", tone: "blue" },
+    { icon: PhoneMissed, label: "부재컨택 필요 DB", value: dashboard.noAnswerNeed.length, sub: "오늘 콜 관리 대상", tone: "red" },
+    { icon: CalendarClock, label: "재통화약속 DB", value: dashboard.recall.length, sub: "예약 일정 등록", tone: "amber" },
+    { icon: PhoneCall, label: "상담중인 DB", value: dashboard.consulting.length, sub: "현재 상담 단계", tone: "blue" },
+    { icon: CheckCircle2, label: "상담완료 DB", value: dashboard.completed.length, sub: "상담 후속 단계 포함", tone: "emerald" },
+  ] as const;
 
   return (
     <>
       <PageHeader
-        title="대시보드"
-        description="선택한 기간의 신규 의뢰인·계약·결제 현황과 월별 분납·기일 일정을 확인합니다."
-        action={
-          <DateRangePicker
-            start={rangeStart}
-            end={rangeEnd}
-            onChange={(s, e) => {
-              setRangeStart(s);
-              setRangeEnd(e);
-            }}
-          />
-        }
+        title={`${CURRENT_STAFF} 개인 대시보드`}
+        description="개인계정 기준으로 본인에게 배정된 DB와 계약 실적만 표시합니다."
       />
 
-      {/* ---- TM 영업 KPI — "계약·분납 정보도 좋지만 오늘 뭘 해야 하는지가 먼저 보였으면"이라는
-          피드백을 반영해 대시보드 맨 위에 배치했습니다. ---- */}
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {(
-          [
-            [UserPlus, "당일 신규 DB", `${leadKpis.newToday}건`, "normal"],
-            [PhoneMissed, "전일 부재중", `${leadKpis.noAnswerYesterday}명`, leadKpis.noAnswerYesterday > 0 ? "red" : "normal"],
-            [
-              ShieldAlert,
-              "콜 관리 경고 활성 비율",
-              `${leadKpis.callWarningRate.toFixed(0)}%`,
-              leadKpis.callWarningRate >= 40 ? "red" : "normal",
-            ],
-            [
-              TrendingUp,
-              "이번달 신규DB 대비 선임률",
-              `${leadKpis.monthConverted}/${leadKpis.monthNewLeads}건 (${leadKpis.conversionRate.toFixed(1)}%)`,
-              "normal",
-            ],
-          ] as const
-        ).map(([Icon, label, value, tone]) => (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        {topCards.map(({ icon: Icon, label, value, sub, tone }) => (
           <Card key={label} className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-500">{label}</span>
-              <Icon size={16} className="text-slate-400" />
+              <Icon
+                size={16}
+                className={
+                  tone === "red"
+                    ? "text-red-500"
+                    : tone === "amber"
+                      ? "text-amber-500"
+                      : tone === "emerald"
+                        ? "text-emerald-500"
+                        : "text-blue-500"
+                }
+              />
             </div>
-            <div className={`mt-3 text-xl font-bold ${tone === "red" ? "text-red-600" : "text-slate-900"}`}>
-              {value}
-            </div>
+            <div className={`mt-3 text-2xl font-bold ${tone === "red" ? "text-red-600" : "text-slate-900"}`}>{value}건</div>
+            <div className="mt-1 text-[11px] text-slate-400">{sub}</div>
           </Card>
         ))}
-      </div>
 
-      <Card className="mb-4 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <AlarmClock size={16} className="text-amber-500" />
-            고려중 의뢰인 재설득 컨택 투두리스트
+        <Card className="p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500">계약건</span>
+            <FileSignature size={16} className="text-blue-500" />
           </div>
-          <span className="text-xs text-slate-400">{considerationTodo.length}건</span>
-        </div>
-        {considerationTodo.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-slate-400">현재 '고려중' 상태로 재설득이 필요한 DB가 없습니다.</div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {considerationTodo.map((t) => (
-              <div key={t.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-900">{t.name}</span>
-                    <span className="text-xs text-slate-400">{t.phone}</span>
-                    <span className="text-xs text-slate-400">담당 {t.assignedStaff}</span>
-                  </div>
-                  <div className="mt-0.5 text-xs text-slate-500">
-                    접수 {t.receivedAt.slice(0, 10)}
-                    {t.noAnswerCountToday > 0 && ` · 오늘 부재중 ${t.noAnswerCountToday}회`}
-                    {t.warningActive && <span className="ml-1 font-semibold text-red-600">콜 관리 경고</span>}
-                  </div>
-                </div>
-                <Link href="/db" className="shrink-0 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
-                  DB관리에서 컨택하기
-                </Link>
-              </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {(["일", "주", "월", "기간설정"] as ContractPeriod[]).map((period) => (
+              <button
+                key={period}
+                type="button"
+                onClick={() => setContractPeriod(period)}
+                className={`rounded-md px-1.5 py-1 text-[10px] font-semibold ${
+                  contractPeriod === period ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                }`}
+              >
+                {period}
+              </button>
             ))}
           </div>
-        )}
-      </Card>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{contractSummary.count}건</div>
+          <div className="mt-1 truncate text-[11px] text-slate-400">계약금액 {fmtWon(contractSummary.amount)}</div>
+        </Card>
+      </div>
 
-      {overdue.length > 0 && (
-        <Card className="mb-4 flex flex-wrap items-center gap-3 border-red-100 bg-red-50/60 px-4 py-3">
-          <span className="text-sm text-slate-900">
-            연체·결제실패 <b>{overdue.length}건</b> (총 {fmtEokMan(overdueTotal)}) — 추심 우선순위 확인이 필요해요.
-          </span>
-          <Link href="/billing" className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">
-            입금·분납 관리로 이동
-          </Link>
+      {contractPeriod === "기간설정" && (
+        <Card className="mt-3 flex flex-wrap items-center gap-2 p-3">
+          <span className="text-xs font-semibold text-slate-500">계약기간</span>
+          <input
+            type="date"
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400"
+          />
+          <span className="text-slate-300">~</span>
+          <input
+            type="date"
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400"
+          />
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {(
-          [
-            [Users, "신규 의뢰인", `${kpi.newClients}명`, "normal"],
-            [CircleDollarSign, "계약금액", fmtWon(kpi.contractSales), "normal"],
-            [WalletCards, "결제완료액", fmtWon(kpi.realSales), "normal"],
-            [CircleDollarSign, "미수금", fmtWon(kpi.receivable), "red"],
-          ] as const
-        ).map(([Icon, label, value, tone]) => (
-          <Card key={label} className="p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500">{label}</span>
-              <Icon size={16} className="text-slate-400" />
-            </div>
-            <div className={`mt-3 text-xl font-bold ${tone === "red" ? "text-red-600" : "text-slate-900"}`}>
-              {value}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <MonthCalendar
-          title="분납 캘린더"
-          month={paymentMonth}
-          onMonthChange={setPaymentMonth}
-          items={paymentItems}
-          tone="blue"
-          summary={paymentSummary}
-        />
-        <MonthCalendar
-          title="기일·제출기한 캘린더"
-          month={hearingMonth}
-          onMonthChange={setHearingMonth}
-          items={hearingItems}
-          tone="amber"
-        />
-      </div>
-
-      <Card className="mt-4 p-4 sm:p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm font-semibold text-slate-900">기간별 통계</div>
-          <PeriodControl mode={mode} anchor={anchor} bounds={stats.bounds} onModeChange={setMode} onShift={handleShift} />
-        </div>
-
-        <p className="mb-4 text-base font-semibold text-slate-900 sm:text-lg">
-          {headline.periodLabel}, 결제완료액 <span className="text-blue-600">{fmtEokMan(stats.current.paymentAmount)}</span>을{" "}
-          {headline.isOngoing ? "기록하고 있어요" : "기록했어요"}
-        </p>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard label={`${headline.periodLabel} 신규 상담`} value={`${stats.current.newConsultCount}건`} />
-          <KpiCard
-            label={`${headline.periodLabel} 신규 계약`}
-            value={`${stats.current.newContractCount}건`}
-            deltaPct={stats.deltas.newContractCount}
-          />
-          <KpiCard label="계약금액" value={fmtEokMan(stats.current.contractAmount)} deltaPct={stats.deltas.contractAmount} />
-          <KpiCard label="미수금" value={fmtEokMan(stats.receivableTotal)} deltaPct={stats.deltas.receivable} invert />
-        </div>
-      </Card>
-
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card className="p-4 sm:p-5">
-          <div className="mb-4 text-sm font-semibold text-slate-900">사건유형별 결제 구성</div>
-          <DonutChart
-            centerLabel={fmtEokMan(stats.current.paymentAmount)}
-            segments={[
-              { label: "개인회생", value: stats.current.caseTypeSplit.개인회생, color: CASE_TYPE_COLORS.개인회생 },
-              { label: "개인파산", value: stats.current.caseTypeSplit.개인파산, color: CASE_TYPE_COLORS.개인파산 },
-            ]}
-          />
-        </Card>
-        <Card className="p-4 sm:p-5">
-          <div className="mb-4 text-sm font-semibold text-slate-900">절차단계별 사건 현황</div>
-          <StackedRatioBar
-            segments={stageDist.map((s) => ({
-              label: STAGE_GENERIC_LABELS[s.stage],
-              count: s.count,
-              color: STAGE_CHART_COLORS[s.stage],
-            }))}
-          />
-        </Card>
+      <div className="mt-4 grid gap-4 xl:grid-cols-3">
+        <TodoCard title="재통화약속 DB" rows={dashboard.recall.slice(0, 12)} kind="예약" />
+        <TodoCard title="상담 중 DB" rows={dashboard.consulting.slice(0, 12)} kind="상담" />
+        <TodoCard title="고려중 DB" rows={dashboard.consideration.slice(0, 12)} kind="고려" />
       </div>
     </>
   );

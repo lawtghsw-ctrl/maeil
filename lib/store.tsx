@@ -160,7 +160,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     (id: string, patch: Partial<Client>) => {
       setClients((prev) => {
         const before = prev.find((c) => c.id === id);
-        if (before) logChange("고객관리", "수정", before.name, "고객정보 수정");
+        if (before) logChange("계약관리", "수정", before.name, "고객정보 수정");
         return prev.map((c) => (c.id === id ? { ...c, ...patch } : c));
       });
     },
@@ -172,7 +172,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const clientCaseIds = cases.filter((c) => c.clientId === id).map((c) => c.id);
       setClients((prev) => {
         const target = prev.find((c) => c.id === id);
-        if (target) logChange("고객관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
+        if (target) logChange("계약관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
         return prev.filter((c) => c.id !== id);
       });
       setCases((prev) => prev.filter((c) => c.clientId !== id));
@@ -241,7 +241,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         )
       );
 
-      logChange("DB관리", "수정", lead.name, "고객관리로 전환(전환 완료)");
+      logChange("DB관리", "수정", lead.name, "계약관리로 전환(전환 완료)");
 
       return newClientId;
     },
@@ -290,7 +290,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const paidAmount = updated.filter((i) => i.status === "완료").reduce((a, i) => a + i.amount, 0);
       setCases((prev) => prev.map((c) => (c.id === caseId ? { ...c, paidAmount } : c)));
       const c = cases.find((x) => x.id === caseId);
-      if (c) logChange("입금·분납", "수정", c.caseNumber, "입금/분납 일정 저장");
+      if (c) logChange("계약관리", "수정", c.caseNumber, "분납 일정 저장");
     },
     [cases, logChange]
   );

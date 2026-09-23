@@ -25,7 +25,7 @@ import {
 import { checkCallWarning, checkConsultationRequired, kstDateStr } from "@/lib/consultation";
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import { Button, Card, PageHeader, Pagination, SearchBox, pageRows, useClickOutside } from "@/components/ui/Primitives";
-import { fmtDate, fmtDateTime } from "@/lib/format";
+import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
 import { ClipboardList, ShieldAlert } from "lucide-react";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
@@ -506,6 +506,17 @@ export default function DbManagementPage() {
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
   }, [baseRows, timeFilter, debtFilter, incomeFilter]);
 
+  // DB관리 상단 재무 요약. 담당자 버튼을 선택하면 해당 담당자의 계약만 집계하고,
+  // 전체 상태에서는 전사 계약을 집계합니다. 계약금액/납부금/미수금을 한눈에 확인하도록
+  // 계약관리의 실제 CaseRecord 값을 사용하며 미수금은 항상 빨간색으로 강조합니다.
+  const financeSummary = useMemo(() => {
+    const scopedCases = staffFilter === "전체" ? cases : cases.filter((c) => c.assignedStaff === staffFilter);
+    const contractAmount = scopedCases.reduce((sum, c) => sum + c.contractAmount, 0);
+    const paidAmount = scopedCases.reduce((sum, c) => sum + c.paidAmount, 0);
+    const receivable = scopedCases.reduce((sum, c) => sum + Math.max(0, c.contractAmount - c.paidAmount), 0);
+    return { contractAmount, paidAmount, receivable };
+  }, [cases, staffFilter]);
+
 
   // ---- 오늘 콜 관리 경고 ----
   // 콜 경고는 KST 기준 오늘의 상담메모만 사용합니다. 과거 날짜의 통화완료/부재중 로그는
@@ -547,6 +558,21 @@ export default function DbManagementPage() {
   return (
     <>
       <PageHeader title="DB관리" />
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <div className="text-xs font-semibold text-slate-500">계약금</div>
+          <div className="mt-2 text-xl font-bold text-slate-900">{fmtWon(financeSummary.contractAmount)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs font-semibold text-slate-500">납부금</div>
+          <div className="mt-2 text-xl font-bold text-slate-900">{fmtWon(financeSummary.paidAmount)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs font-semibold text-slate-500">미수금</div>
+          <div className="mt-2 text-xl font-bold text-red-600">{fmtWon(financeSummary.receivable)}</div>
+        </Card>
+      </div>
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -738,8 +764,8 @@ export default function DbManagementPage() {
                   상담일지 작성
                 </Button>
                 {lead.convertedClientId ? (
-                  <Link href="/clients" className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
-                    고객관리로 이동
+                  <Link href={lead.convertedCaseId ? `/cases/${lead.convertedCaseId}` : "/cases"} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                    계약관리로 이동
                   </Link>
                 ) : (
                   <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
@@ -857,8 +883,8 @@ export default function DbManagementPage() {
                           상담일지
                         </Button>
                         {lead.convertedClientId ? (
-                          <Link href="/clients" className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
-                            고객관리로 이동
+                          <Link href={lead.convertedCaseId ? `/cases/${lead.convertedCaseId}` : "/cases"} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                            계약관리로 이동
                           </Link>
                         ) : (
                           <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
@@ -885,9 +911,9 @@ export default function DbManagementPage() {
 
       {justConverted && (
         <Card className="mt-4 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          고객관리로 전환되었습니다.{" "}
-          <Link href="/clients" className="font-semibold underline">
-            고객관리에서 확인하기
+          계약관리로 전환되었습니다.{" "}
+          <Link href="/cases" className="font-semibold underline">
+            계약관리에서 확인하기
           </Link>
         </Card>
       )}

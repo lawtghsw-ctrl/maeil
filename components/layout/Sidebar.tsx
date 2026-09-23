@@ -8,18 +8,15 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Activity,
-  Calculator,
   FileSignature,
+  Calculator,
   History,
   Inbox,
   LayoutDashboard,
   Menu,
-  MessagesSquare,
   Percent,
   Scale,
   ShieldCheck,
-  Users,
-  WalletCards,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,10 +26,7 @@ import { cn } from "@/lib/utils";
 export const menu = [
   ["대시보드", "/", LayoutDashboard],
   ["DB관리", "/db", Inbox],
-  ["고객관리", "/clients", Users],
   ["계약관리", "/cases", FileSignature],
-  ["입금·분납", "/billing", WalletCards],
-  ["게시판", "/board", MessagesSquare],
   ["정산", "/settlements", Calculator],
   ["정산설정", "/settlement-settings", Percent],
   ["최저생계비 계산기", "/min-living-cost", Scale],
