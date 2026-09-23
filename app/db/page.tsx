@@ -101,6 +101,7 @@ function legacyStatusForStage(stage: DbDetailStage, current: DbLeadStatus): DbLe
   if (stage === "예약") return "상담예정";
   if (stage === "상담") return "상담완료";
   if (stage === "부재") return "부재중";
+  if (stage === "착수금 안내") return "재통화필요";
   if (stage === "설득필요") return "재통화필요";
   if (stage === "장기부재") return "종결_중단";
   if (stage === "불가") return "부적합";
@@ -113,11 +114,13 @@ function legacyStatusForStage(stage: DbDetailStage, current: DbLeadStatus): DbLe
 
 function StageBoard({
   counts,
+  warningCounts,
   total,
   active,
   onSelect,
 }: {
   counts: Partial<Record<DbDetailStage, number>>;
+  warningCounts: Partial<Record<DbDetailStage, number>>;
   total: number;
   active: DbDetailStage | "전체";
   onSelect: (stage: DbDetailStage | "전체") => void;
@@ -158,7 +161,19 @@ function StageBoard({
                       selected ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700 hover:bg-slate-100"
                     }`}
                   >
-                    <span className="truncate">{stage}</span>
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="truncate">{stage}</span>
+                      {(stage === "부재" || stage === "설득필요") && (warningCounts[stage] ?? 0) > 0 && (
+                        <span
+                          title={`오늘 콜 관리가 필요한 DB ${(warningCounts[stage] ?? 0)}건`}
+                          className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${
+                            selected ? "bg-white text-red-600" : "bg-red-500 text-white"
+                          }`}
+                        >
+                          !
+                        </span>
+                      )}
+                    </span>
                     <span className={`ml-2 shrink-0 ${selected ? "text-white/80" : "text-slate-400"}`}>
                       {count}건{count > 0 ? ` (${pct.toFixed(pct < 1 ? 1 : 0)}%)` : ""}
                     </span>
@@ -273,6 +288,72 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
   );
 }
 
+
+// ---- 예약일시 간편 입력 ----
+// 브라우저의 datetime-local 팝업은 날짜/시/분을 한 번에 조작해야 해서 빠른 콜 예약에
+// 불편했습니다. 날짜 달력 + 시간(오전/오후 표기) + 10분 단위 분 선택으로 분리해 같은
+// reservationAt(YYYY-MM-DDTHH:mm) 필드에 저장합니다.
+const RESERVATION_MINUTES = ["00", "10", "20", "30", "40", "50"] as const;
+const RESERVATION_HOURS = Array.from({ length: 24 }, (_, hour) => {
+  const period = hour < 12 ? "오전" : "오후";
+  const displayHour = hour % 12 || 12;
+  return { value: String(hour).padStart(2, "0"), label: `${period} ${displayHour}시` };
+});
+
+function ReservationDateTimeEditor({
+  value,
+  disabled,
+  onChange,
+  compact = false,
+}: {
+  value?: string;
+  disabled?: boolean;
+  onChange: (value: string | undefined) => void;
+  compact?: boolean;
+}) {
+  const date = value?.slice(0, 10) ?? "";
+  const time = value?.slice(11, 16) ?? "";
+  const [hour = "", minute = ""] = time.split(":");
+
+  const commit = (nextDate: string, nextHour: string, nextMinute: string) => {
+    if (!nextDate) {
+      onChange(undefined);
+      return;
+    }
+    onChange(`${nextDate}T${nextHour || "10"}:${nextMinute || "00"}`);
+  };
+
+  return (
+    <div className={`flex items-center gap-1 ${compact ? "min-w-[300px]" : "w-full"}`}>
+      <input
+        type="date"
+        value={date}
+        disabled={disabled}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => commit(e.target.value, hour || "10", minute || "00")}
+        className={`${compact ? "w-[126px]" : "min-w-0 flex-1"} h-9 rounded-lg border border-amber-200 bg-amber-50 px-2 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
+      />
+      <select
+        value={hour || "10"}
+        disabled={disabled}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => commit(date || kstDateStr(), e.target.value, minute || "00")}
+        className={`${compact ? "w-[92px]" : "w-[104px]"} h-9 rounded-lg border border-amber-200 bg-amber-50 px-1.5 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
+      >
+        {RESERVATION_HOURS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+      <select
+        value={minute || "00"}
+        disabled={disabled}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => commit(date || kstDateStr(), hour || "10", e.target.value)}
+        className={`${compact ? "w-[68px]" : "w-[76px]"} h-9 rounded-lg border border-amber-200 bg-amber-50 px-1.5 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
+      >
+        {RESERVATION_MINUTES.map((m) => <option key={m} value={m}>{m}분</option>)}
+      </select>
+    </div>
+  );
+}
+
 // ---- 콜 관리 경고 인라인 뱃지 ----
 // v12: 별도 상단 배너 대신 고객(DB) 리스트 각 행에 직접 뜨도록 요청 반영. 이미 전환됐거나
 // 거절/부적합/종결 처리된 리드는 표시하지 않고(=더 이상 관리 대상 아님), 오늘 기준으로
@@ -280,6 +361,9 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
 function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }) {
   const done = !!lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단";
   if (done) return null;
+  // 영업 콜 경고는 요청대로 진행단계가 "부재" 또는 "착수금 안내"일 때만 고객 행에 노출합니다.
+  const stage = effectiveStage(lead);
+  if (stage !== "부재" && stage !== "착수금 안내") return null;
   const warning = checkCallWarning(lead.consultation?.memoLog, todayIso);
   if (!warning.active) return null;
   return (
@@ -407,6 +491,20 @@ export default function DbManagementPage() {
   // 각 행에 내려줍니다.
   const todayIso = kstDateStr();
 
+  // 상단 상담 진행판에서는 "부재"와 "설득필요"에 오늘 콜 관리가 남아있는 고객이 있으면
+  // 빨간 느낌표로 즉시 알려줍니다. 고객 행의 상세 경고는 부재/착수금 안내 단계에만 노출합니다.
+  const stageWarningCounts = useMemo(() => {
+    const map: Partial<Record<DbDetailStage, number>> = {};
+    for (const lead of stageUniverse) {
+      if (lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단") continue;
+      const stage = effectiveStage(lead);
+      if (stage !== "부재" && stage !== "설득필요") continue;
+      if (!checkCallWarning(lead.consultation?.memoLog, todayIso).active) continue;
+      map[stage] = (map[stage] ?? 0) + 1;
+    }
+    return map;
+  }, [stageUniverse, todayIso]);
+
   return (
     <>
       <PageHeader title="DB관리" />
@@ -462,6 +560,7 @@ export default function DbManagementPage() {
 
       <StageBoard
         counts={stageCounts}
+        warningCounts={stageWarningCounts}
         total={stageUniverse.length}
         active={stageFilter}
         onSelect={(stage) => {
@@ -570,12 +669,10 @@ export default function DbManagementPage() {
               {effectiveStage(lead) === "예약" && (
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
-                  <input
-                    type="datetime-local"
-                    value={lead.reservationAt ?? ""}
+                  <ReservationDateTimeEditor
+                    value={lead.reservationAt}
                     disabled={!!lead.convertedClientId}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => updateLead(lead.id, { reservationAt: e.target.value || undefined })}
-                    className="h-10 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm text-amber-900 outline-none focus:border-amber-400"
+                    onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
                   />
                 </label>
               )}
@@ -617,7 +714,7 @@ export default function DbManagementPage() {
 
         {/* 데스크톱: 테이블 */}
         <div className="hidden overflow-x-auto md:block">
-          <table className="admin-responsive-table w-full min-w-[1540px] text-sm">
+          <table className="admin-responsive-table w-full min-w-[1680px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
                 {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "상담후방향", "담당자", "진행단계", "예약일시", "메모", ""].map((h) => (
@@ -689,16 +786,12 @@ export default function DbManagementPage() {
                       ))}
                     </select>
                   </td>
-                  <td className="min-w-[180px] px-4 py-3">
-                    <input
-                      type="datetime-local"
-                      value={lead.reservationAt ?? ""}
+                  <td className="min-w-[320px] px-4 py-3">
+                    <ReservationDateTimeEditor
+                      value={lead.reservationAt}
                       disabled={!!lead.convertedClientId || effectiveStage(lead) !== "예약"}
-                      onChange={(e: ChangeEvent<HTMLInputElement>) => updateLead(lead.id, { reservationAt: e.target.value || undefined })}
-                      title={effectiveStage(lead) === "예약" ? "예약일시 지정" : "진행단계를 예약으로 선택하면 입력할 수 있습니다"}
-                      className={`w-[168px] rounded-lg border px-2 py-1.5 text-[11px] outline-none disabled:cursor-not-allowed ${
-                        effectiveStage(lead) === "예약" ? "border-amber-200 bg-amber-50 text-amber-900 focus:border-amber-400" : "border-slate-100 bg-slate-50 text-slate-300"
-                      }`}
+                      onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
+                      compact
                     />
                   </td>
                   <td className="min-w-[220px] px-4 py-3">

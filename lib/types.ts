@@ -203,6 +203,7 @@ export const DB_DETAIL_STAGE_OPTIONS = [
   // 재설득요망+최종설득실패 → 설득필요 로 통합.
   "신규디비",
   "부재",
+  "착수금 안내",
   "설득필요",
   "예약",
   "상담",
@@ -240,7 +241,7 @@ export const DB_DETAIL_STAGE_OPTIONS = [
 export type DbDetailStage = (typeof DB_DETAIL_STAGE_OPTIONS)[number];
 
 export const DB_DETAIL_STAGE_GROUPS: Record<DbDetailStageTrack, DbDetailStage[]> = {
-  상담: ["신규디비", "부재", "설득필요", "예약", "상담", "장기부재", "불가"],
+  상담: ["신규디비", "부재", "착수금 안내", "설득필요", "예약", "상담", "장기부재", "불가"],
   착수: ["착수금착수", "착수 1차안내", "착수 추후진행", "취소예정"],
   서류: ["1차 서류미비", "1차 서류완료", "2차서류안내", "2차서류미비", "2차서류완료", "접수보류"],
   법원: ["법원접수(대기)", "법원접수", "금지명령", "금지기각", "개시결정", "인가결정", "종결"],
