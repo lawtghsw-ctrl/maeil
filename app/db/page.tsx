@@ -94,6 +94,30 @@ function effectiveStage(lead: DbLead): DbDetailStage {
   return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
 }
 
+// 콜 관리 경고는 "부재" / "착수금 안내" 단계에서만 운영합니다.
+// 상단 진행보드의 느낌표와 고객 행의 상세 경고가 서로 다른 조건을 쓰지 않도록
+// 하나의 Set으로 공유합니다. 날짜별 판정은 checkCallWarning()이 KST 기준 오늘 기록만
+// 집계하므로 전날의 통화완료/부재중 기록은 자동으로 무시되고 매일 00:00에 초기화됩니다.
+const CALL_WARNING_STAGES = new Set<DbDetailStage>(["부재", "착수금 안내"]);
+
+// 화면을 밤새 열어둔 경우에도 KST 00:00에 콜 경고를 즉시 새 날짜 기준으로 다시 계산합니다.
+// 다음 한국시간 자정의 실제 epoch를 구해 setTimeout을 한 번 걸고, 실행 뒤 다음 자정을 다시 예약합니다.
+function msUntilNextKstMidnight(now = new Date()): number {
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  const kstNow = new Date(now.getTime() + KST_OFFSET_MS);
+  const nextKstMidnightAsUtc = Date.UTC(
+    kstNow.getUTCFullYear(),
+    kstNow.getUTCMonth(),
+    kstNow.getUTCDate() + 1,
+    0,
+    0,
+    0,
+    0,
+  );
+  const nextKstMidnightEpoch = nextKstMidnightAsUtc - KST_OFFSET_MS;
+  return Math.max(250, nextKstMidnightEpoch - now.getTime());
+}
+
 // 기존 status는 전환/콜경고 등 내부 호환에 계속 쓰므로, 사용자가 통합 진행단계를 바꾸면
 // 가장 가까운 기존 status도 함께 갱신합니다. 화면의 실질 관리값은 detailStage입니다.
 function legacyStatusForStage(stage: DbDetailStage, current: DbLeadStatus): DbLeadStatus {
@@ -163,7 +187,7 @@ function StageBoard({
                   >
                     <span className="flex min-w-0 items-center gap-1">
                       <span className="truncate">{stage}</span>
-                      {(stage === "부재" || stage === "설득필요") && (warningCounts[stage] ?? 0) > 0 && (
+                      {CALL_WARNING_STAGES.has(stage) && (warningCounts[stage] ?? 0) > 0 && (
                         <span
                           title={`오늘 콜 관리가 필요한 DB ${(warningCounts[stage] ?? 0)}건`}
                           className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${
@@ -363,7 +387,7 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
   if (done) return null;
   // 영업 콜 경고는 요청대로 진행단계가 "부재" 또는 "착수금 안내"일 때만 고객 행에 노출합니다.
   const stage = effectiveStage(lead);
-  if (stage !== "부재" && stage !== "착수금 안내") return null;
+  if (!CALL_WARNING_STAGES.has(stage)) return null;
   const warning = checkCallWarning(lead.consultation?.memoLog, todayIso);
   if (!warning.active) return null;
   return (
@@ -484,21 +508,36 @@ export default function DbManagementPage() {
 
 
   // ---- 오늘 콜 관리 경고 ----
-  // v12: "콜 관리 경고는 상단에 따로 띄우는게 아니라 고객리스트 자체에 뜨게끔 해달라"는
-  // 요청 반영 — 별도 상단 배너 Card는 없애고, 아래 리스트(모바일 카드/데스크톱 표) 각 행에
-  // CallWarningBadge로 인라인 표시합니다. 판정 로직(lib/consultation.ts의
-  // checkCallWarning) 자체는 그대로이며, "오늘" 기준 날짜(todayIso)만 여기서 한 번 계산해
-  // 각 행에 내려줍니다.
-  const todayIso = kstDateStr();
+  // 콜 경고는 KST 기준 오늘의 상담메모만 사용합니다. 과거 날짜의 통화완료/부재중 로그는
+  // 판정에서 제외하며, 화면을 계속 열어둔 상태에서도 한국시간 00:00이 되면 todayIso를
+  // 새 날짜로 갱신해 즉시 다시 초기 상태로 계산합니다.
+  const [todayIso, setTodayIso] = useState(() => kstDateStr());
 
-  // 상단 상담 진행판에서는 "부재"와 "설득필요"에 오늘 콜 관리가 남아있는 고객이 있으면
-  // 빨간 느낌표로 즉시 알려줍니다. 고객 행의 상세 경고는 부재/착수금 안내 단계에만 노출합니다.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleNextReset = () => {
+      timer = setTimeout(() => {
+        setTodayIso(kstDateStr());
+        scheduleNextReset();
+      }, msUntilNextKstMidnight() + 50);
+    };
+
+    scheduleNextReset();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  // 상단 상담 진행판과 고객 행 모두 "부재" / "착수금 안내" 단계만 콜 관리 대상으로 봅니다.
+  // checkCallWarning은 KST 기준 오늘 로그만 집계하므로 이전 날짜의 통화완료/부재중 기록은
+  // 전부 무시되고 매일 00:00에 다시 경고 판정이 시작됩니다.
   const stageWarningCounts = useMemo(() => {
     const map: Partial<Record<DbDetailStage, number>> = {};
     for (const lead of stageUniverse) {
       if (lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단") continue;
       const stage = effectiveStage(lead);
-      if (stage !== "부재" && stage !== "설득필요") continue;
+      if (!CALL_WARNING_STAGES.has(stage)) continue;
       if (!checkCallWarning(lead.consultation?.memoLog, todayIso).active) continue;
       map[stage] = (map[stage] ?? 0) + 1;
     }
