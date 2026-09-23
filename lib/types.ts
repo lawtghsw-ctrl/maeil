@@ -65,9 +65,9 @@ export const STAGE_GENERIC_LABELS: Record<CaseStage, string> = {
 
 export type CaseStatus = "진행중" | "보류" | "취하" | "종결";
 
-// 담당 직원 목록 — 데모 버전에서는 실명 대신 직원1/직원2/직원3으로 표기.
-// DB관리·고객관리의 담당자 필드는 모두 이 목록을 드롭다운으로 사용합니다.
-export const STAFF_LIST = ["직원1", "직원2", "직원3"] as const;
+// 담당 직원 목록 — 현재 실무 담당자 4명을 고정 목록으로 사용합니다.
+// 추후 로그인 기능이 붙으면 로그인 계정과 이 값을 연결하면 됩니다.
+export const STAFF_LIST = ["박형원", "강이삭", "신홍규", "이중호"] as const;
 export type StaffName = (typeof STAFF_LIST)[number];
 
 // 상담 후 진행 방향 — 예전에는 DB 접수 시점에 "신청분류"로 미리 지정했지만, 실제로는

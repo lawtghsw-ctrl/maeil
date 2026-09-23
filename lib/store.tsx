@@ -83,8 +83,9 @@ export interface ChangeLogEntry {
   at: string; // ISO datetime
 }
 
-// 데모 버전 로그인 주체 — 실제 인증 연동 전까지 '직원1' 고정
-export const CURRENT_STAFF = "직원1";
+// 데모 버전 로그인 주체 — 실제 인증 연동 전까지 박형원 고정.
+// 로그인 기능 추가 시 인증 세션의 사용자 이름/ID로 교체합니다.
+export const CURRENT_STAFF: StaffName = "박형원";
 
 interface AppStoreValue {
   clients: Client[];

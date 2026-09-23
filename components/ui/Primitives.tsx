@@ -87,16 +87,18 @@ export function PageHeader({
   action,
 }: {
   title: string;
-  description: string;
+  description?: string;
   action?: ReactNode;
 }) {
   return (
     <div className="mb-4 flex flex-col justify-between gap-3 sm:mb-5 lg:flex-row lg:items-end">
       <div className="min-w-0">
         <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{title}</h1>
-        <p className="mt-1 break-keep text-[13px] leading-5 text-slate-500 sm:text-sm">
-          {description}
-        </p>
+        {description && (
+          <p className="mt-1 break-keep text-[13px] leading-5 text-slate-500 sm:text-sm">
+            {description}
+          </p>
+        )}
       </div>
       {action && <div className="w-full lg:w-auto">{action}</div>}
     </div>

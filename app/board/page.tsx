@@ -28,7 +28,7 @@ function today(): string {
 }
 
 function emptyDraft(): Omit<BoardPost, "id"> {
-  return { title: "", body: "", writer: "직원1", date: today(), isNotice: false, noticeOrder: 1, attachments: [] };
+  return { title: "", body: "", writer: "박형원", date: today(), isNotice: false, noticeOrder: 1, attachments: [] };
 }
 
 const textarea =

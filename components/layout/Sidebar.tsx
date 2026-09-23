@@ -81,7 +81,7 @@ function ProfileBlock() {
             직
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-bold">직원1</div>
+            <div className="truncate text-sm font-bold">박형원</div>
             <div className="text-xs text-slate-500">STAFF · 데모 버전</div>
           </div>
         </div>

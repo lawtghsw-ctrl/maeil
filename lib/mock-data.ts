@@ -77,7 +77,7 @@ const COURTS = [
   "광주지방법원",
 ];
 
-// 데모 버전에서는 실명 대신 직원1/직원2/직원3으로 표기
+// 담당자 샘플 데이터도 실제 운영 예정 4인 목록에서 배정
 const STAFF = STAFF_LIST;
 
 const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "로피분납", "신카할부완납", "캐피탈분납"];
@@ -311,14 +311,14 @@ const SAMPLE_CONSULTATION: ConsultationInfo = {
   memoLog: [
     {
       id: "MEMO-SEED-SAMPLE-2",
-      staff: "직원1",
+      staff: "박형원",
       at: isoOf(daysAgo(2)) + "T09:40:00.000Z",
       text: "서류 준비 안내 완료 — 급여명세서 3개월분 요청함.",
       tag: "재통화",
     },
     {
       id: "MEMO-SEED-SAMPLE-1",
-      staff: "직원1",
+      staff: "박형원",
       at: isoOf(daysAgo(9)) + "T02:15:00.000Z",
       text: "최초 상담 — 개인회생 진행 희망.",
       tag: "일반",
@@ -793,28 +793,28 @@ const BOARD_SEED: Array<Omit<BoardPost, "id" | "attachments" | "date">> = [
   {
     title: "서류제출안내문 최신본 안내",
     body: "매일법률사무소 서류제출안내문 양식이 갱신되었습니다. 사건 상세 화면의 서류 체크리스트에 그대로 반영되어 있으니, 신규 계약 건은 최신본 기준으로 안내 부탁드립니다.",
-    writer: "직원1",
+    writer: "박형원",
     isNotice: true,
     noticeOrder: 1,
   },
   {
     title: "이번 주 법원기일 공유",
     body: "이번 주 개인회생 심문기일 2건, 개인파산 채권자집회 1건이 예정되어 있습니다. 대시보드의 기일·제출기한 캘린더에서 날짜를 다시 확인해주세요.",
-    writer: "직원2",
+    writer: "강이삭",
     isNotice: true,
     noticeOrder: 2,
   },
   {
     title: "신규 DB 응대 시 유의사항",
     body: "DB관리에서 신규 접수 건은 당일 중 상태를 업데이트해주세요. 상담 후 진행 의사가 없는 경우 '거절' 또는 '부적합'으로 정리하면 대시보드 집계에서 자동 제외됩니다.",
-    writer: "직원1",
+    writer: "박형원",
     isNotice: false,
     noticeOrder: 1,
   },
   {
     title: "분납 연체 고객 응대 가이드",
     body: "입금·분납 관리에서 연체·실패 건은 대시보드 상단 배너에 실시간으로 집계됩니다. 고객관리에서 해당 고객을 선택해 분납관리 화면으로 바로 이동할 수 있습니다.",
-    writer: "직원3",
+    writer: "신홍규",
     isNotice: false,
     noticeOrder: 1,
   },

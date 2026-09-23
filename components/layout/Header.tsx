@@ -3,8 +3,8 @@
 // 도원 Admin(tg_m) components/header.tsx와 동일한 구조(검색 + 알림벨 + 새로고침)로 이식 —
 // 검색 대상은 고객(의뢰인), 알림은 연체·실패 분납 + 오늘까지의 기일·제출기한, 신규 DB
 // 뱃지는 DB관리의 미확인(신규접수) 리드 건수로 매핑.
-import { Bell, CalendarClock, Inbox, RefreshCcw, Search, X } from "lucide-react";
-import { useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { Bell, CalendarClock, ChevronDown, ChevronUp, Clock3, Inbox, PhoneCall, RefreshCcw, Search, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { CURRENT_STAFF, useStore } from "@/lib/store";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -18,13 +18,40 @@ function kstDate(): string {
   }).format(new Date());
 }
 
+function kstDateKey(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function reservationTimeMs(value: string): number {
+  // datetime-local 값은 타임존이 없으므로 KST(+09:00)로 명시해 서버/브라우저 위치와 무관하게 계산합니다.
+  const normalized = value.length === 16 ? `${value}:00+09:00` : `${value}+09:00`;
+  return new Date(normalized).getTime();
+}
+
+function formatReservationClock(value: string): string {
+  const time = value.split("T")[1] ?? "";
+  return time.slice(0, 5);
+}
+
 export function Header() {
   const { clients, installments, cases, scheduleItems, leads } = useStore();
   const router = useRouter();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [q, setQ] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const [reservationCallOpen, setReservationCallOpen] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const todayIso = kstDateKey(new Date(nowMs));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const matches = useMemo(
     () =>
@@ -58,15 +85,15 @@ export function Header() {
   );
 
   // DB관리의 진행단계가 "예약"이고 예약일시가 지정된 건 중 현재 로그인 담당자 몫만
-  // 헤더 알림에 띄웁니다. 실제 인증 전 데모는 CURRENT_STAFF("직원1") 기준이며,
+  // 헤더 알림에 띄웁니다. 실제 인증 전 데모는 CURRENT_STAFF(박형원) 기준이며,
   // 예약 24시간 전부터 지난 24시간까지 계속 보여 단계 변경을 놓치지 않게 했습니다.
   const reservationAlerts = useMemo(() => {
-    const now = Date.now();
+    const now = nowMs;
     const min = now - 24 * 60 * 60 * 1000;
     const max = now + 24 * 60 * 60 * 1000;
     return leads
       .filter((lead) => lead.assignedStaff === CURRENT_STAFF && lead.detailStage === "예약" && !!lead.reservationAt)
-      .map((lead) => ({ lead, at: new Date(lead.reservationAt as string).getTime() }))
+      .map((lead) => ({ lead, at: reservationTimeMs(lead.reservationAt as string) }))
       .filter(({ at }) => Number.isFinite(at) && at >= min && at <= max)
       .sort((a, b) => a.at - b.at)
       .map(({ lead, at }) => ({
@@ -76,7 +103,39 @@ export function Header() {
         reservationAt: lead.reservationAt as string,
         overdue: at < now,
       }));
-  }, [leads]);
+  }, [leads, nowMs]);
+
+  // 로그인 담당자의 "오늘 예약콜"은 별도 고정 바에서 항상 확인할 수 있습니다.
+  // 평소에는 노란색, 예약 10분 전부터(예약시간 경과 후 단계가 아직 예약인 경우 포함) 빨간색으로 강조합니다.
+  const todayReservationCalls = useMemo(() => {
+    const today = kstDateKey(new Date(nowMs));
+    return leads
+      .filter(
+        (lead) =>
+          lead.assignedStaff === CURRENT_STAFF &&
+          lead.detailStage === "예약" &&
+          !!lead.reservationAt &&
+          lead.reservationAt.slice(0, 10) === today
+      )
+      .map((lead) => ({
+        lead,
+        at: reservationTimeMs(lead.reservationAt as string),
+      }))
+      .filter(({ at }) => Number.isFinite(at))
+      .sort((a, b) => a.at - b.at)
+      .map(({ lead, at }) => ({
+        id: lead.id,
+        name: lead.name,
+        phone: lead.phone,
+        reservationAt: lead.reservationAt as string,
+        at,
+        urgent: at <= nowMs + 10 * 60 * 1000,
+        overdue: at < nowMs,
+      }));
+  }, [leads, nowMs]);
+
+  const hasUrgentReservation = todayReservationCalls.some((item) => item.urgent);
+  const nextReservation = todayReservationCalls.find((item) => item.at >= nowMs) ?? todayReservationCalls[todayReservationCalls.length - 1];
 
   const alertCount = overdueAlerts.length + scheduleAlerts.length + reservationAlerts.length;
   const newLeadCount = leads.filter((l) => (l.detailStage ?? (l.status === "신규접수" || l.status === "상담예정" ? "신규디비" : "")) === "신규디비").length;
@@ -88,6 +147,7 @@ export function Header() {
   }
 
   return (
+    <>
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 pl-16 pr-4 backdrop-blur lg:px-7">
       <div className="relative hidden w-full max-w-md md:block">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -245,5 +305,88 @@ export function Header() {
         </div>
       </div>
     </header>
+
+    <div className="fixed right-4 top-[72px] z-40 hidden w-[360px] max-w-[calc(100vw-24px)] sm:block">
+      <button
+        type="button"
+        onClick={() => setReservationCallOpen((v) => !v)}
+        className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left shadow-md transition ${
+          hasUrgentReservation
+            ? "border-red-400 bg-red-50 text-red-900 ring-2 ring-red-100"
+            : "border-amber-300 bg-amber-50 text-amber-950"
+        }`}
+        title="오늘 예약콜 보기"
+      >
+        <span className={`grid size-8 shrink-0 place-items-center rounded-full ${hasUrgentReservation ? "bg-red-600 text-white" : "bg-amber-500 text-white"}`}>
+          <PhoneCall size={16} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2 text-xs font-black">
+            예약콜 · {CURRENT_STAFF}
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${hasUrgentReservation ? "bg-red-600 text-white" : "bg-amber-600 text-white"}`}>
+              {todayReservationCalls.length}건
+            </span>
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] font-semibold opacity-80">
+            {nextReservation
+              ? `${formatReservationClock(nextReservation.reservationAt)} ${nextReservation.name}${nextReservation.urgent ? " · 10분 이내/경과" : ""}`
+              : "오늘 예정된 예약콜이 없습니다."}
+          </span>
+        </span>
+        {reservationCallOpen ? <ChevronUp size={16} className="shrink-0" /> : <ChevronDown size={16} className="shrink-0" />}
+      </button>
+
+      {reservationCallOpen && (
+        <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+            <div>
+              <div className="text-sm font-bold text-slate-900">오늘 예약콜</div>
+              <div className="text-[11px] text-slate-400">담당 {CURRENT_STAFF} · 예약시간 순</div>
+            </div>
+            <button type="button" onClick={() => setReservationCallOpen(false)} className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {todayReservationCalls.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-slate-400">오늘 예약된 고객이 없습니다.</div>
+            ) : (
+              todayReservationCalls.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setReservationCallOpen(false);
+                    router.push("/db");
+                  }}
+                  className={`flex w-full items-center gap-3 border-b border-slate-100 px-3 py-2.5 text-left last:border-0 ${
+                    item.urgent ? "bg-red-50 hover:bg-red-100" : "hover:bg-amber-50"
+                  }`}
+                >
+                  <span className={`grid size-9 shrink-0 place-items-center rounded-lg ${item.urgent ? "bg-red-600 text-white" : "bg-amber-100 text-amber-700"}`}>
+                    <Clock3 size={16} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <b className="truncate text-sm text-slate-900">{item.name}</b>
+                      <span className={`shrink-0 text-xs font-black ${item.urgent ? "text-red-700" : "text-amber-700"}`}>
+                        {formatReservationClock(item.reservationAt)}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block text-[11px] text-slate-500">{item.phone}</span>
+                    {item.urgent && (
+                      <span className="mt-0.5 block text-[10px] font-bold text-red-600">
+                        {item.overdue ? "예약시간 경과 · 확인 필요" : "예약 10분 이내 · 통화 준비"}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+    </>
   );
 }

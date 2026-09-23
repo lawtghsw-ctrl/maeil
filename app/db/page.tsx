@@ -71,7 +71,7 @@ function PivotBar<T extends string>({
           active === "전체" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
         }`}
       >
-        전체 {total}
+        전체 [{total}건]
       </button>
       {options.map((opt) => (
         <button
@@ -82,7 +82,7 @@ function PivotBar<T extends string>({
             active === opt ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
           }`}
         >
-          {opt} {counts[opt] ?? 0}
+          {opt} [{counts[opt] ?? 0}건]
         </button>
       ))}
     </div>
@@ -292,7 +292,7 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
 }
 
 export default function DbManagementPage() {
-  const { leads, updateLead, convertLeadToClient } = useStore();
+  const { leads, cases, updateLead, convertLeadToClient } = useStore();
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<DbDetailStage | "전체">("전체");
   const [staffFilter, setStaffFilter] = useState<StaffName | "전체">("전체");
@@ -320,13 +320,46 @@ export default function DbManagementPage() {
   // 검색어·담당자까지 적용한 전체 집합에서 진행단계 건수를 먼저 계산하고, 상단 보드에서
   // 선택한 단계만 baseRows로 내려보냅니다. 따라서 다른 광고 피벗과 조합해서 사용할 수 있습니다.
   const stageUniverse = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const compactNeedle = needle.replace(/[\s\-().]/g, "");
+
     return leads
       .filter((l) => staffFilter === "전체" || l.assignedStaff === staffFilter)
       .filter((l) => {
-        if (!query.trim()) return true;
-        return l.name.includes(query) || l.phone.includes(query);
+        if (!needle) return true;
+
+        // 이름/연락처/기초메모/상담메모/사건번호를 모두 한 검색창에서 부분검색합니다.
+        // 같은 문자열(예: 전화번호 중간 1111)을 가진 고객이 여러 명이면 모두 남깁니다.
+        const memoLogText = (l.consultation?.memoLog ?? [])
+          .map((entry) => `${entry.text} ${entry.tag} ${entry.staff}`)
+          .join(" ");
+        const relatedCaseNumbers = cases
+          .filter(
+            (c) =>
+              c.fromLeadId === l.id ||
+              c.id === l.convertedCaseId ||
+              (!!l.convertedClientId && c.clientId === l.convertedClientId)
+          )
+          .map((c) => c.caseNumber)
+          .join(" ");
+        const searchable = [
+          l.name,
+          l.phone,
+          l.memo ?? "",
+          l.consultation?.memo ?? "",
+          memoLogText,
+          relatedCaseNumbers,
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        if (searchable.includes(needle)) return true;
+        if (!compactNeedle) return false;
+
+        // 하이픈/공백을 빼고도 비교해 0101111 또는 사건번호 일부 입력도 동작하게 합니다.
+        return searchable.replace(/[\s\-().]/g, "").includes(compactNeedle);
       });
-  }, [leads, staffFilter, query]);
+  }, [leads, cases, staffFilter, query]);
 
   const stageCounts = useMemo(() => {
     const map: Partial<Record<DbDetailStage, number>> = {};
@@ -366,7 +399,6 @@ export default function DbManagementPage() {
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
   }, [baseRows, timeFilter, debtFilter, incomeFilter]);
 
-  const newTodayCount = leads.filter((l) => effectiveStage(l) === "신규디비").length;
 
   // ---- 오늘 콜 관리 경고 ----
   // v12: "콜 관리 경고는 상단에 따로 띄우는게 아니라 고객리스트 자체에 뜨게끔 해달라"는
@@ -378,10 +410,7 @@ export default function DbManagementPage() {
 
   return (
     <>
-      <PageHeader
-        title="DB관리"
-        description={`광고 등으로 접수된 상담 신청 ${leads.length}건 · 미확인 신규 ${newTodayCount}건 — 기초정보를 메모하고 상태를 정리한 뒤 '고객 전환'으로 고객관리에 등록하세요.`}
-      />
+      <PageHeader title="DB관리" />
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -394,24 +423,41 @@ export default function DbManagementPage() {
             setQuery("");
             setPage(1);
           }}
-          placeholder="이름 · 연락처 검색"
+          placeholder="고객명 · 메모 · 연락처 · 사건번호 검색"
         />
-        <div className="flex flex-wrap gap-2">
-          <select
-            value={staffFilter}
-            onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-              setStaffFilter(e.target.value as StaffName | "전체");
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs font-semibold text-slate-500">담당자</span>
+          <button
+            type="button"
+            onClick={() => {
+              setStaffFilter("전체");
               setPage(1);
             }}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700"
+            className={`h-8 rounded-md border px-3 text-xs font-semibold transition ${
+              staffFilter === "전체"
+                ? "border-blue-600 bg-blue-600 text-white"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
           >
-            <option value="전체">담당자 전체</option>
-            {STAFF_LIST.map((s) => (
-              <option key={s} value={s}>
-                담당 {s}
-              </option>
-            ))}
-          </select>
+            전체
+          </button>
+          {STAFF_LIST.map((staff) => (
+            <button
+              key={staff}
+              type="button"
+              onClick={() => {
+                setStaffFilter(staffFilter === staff ? "전체" : staff);
+                setPage(1);
+              }}
+              className={`h-8 rounded-md border px-3 text-xs font-semibold transition ${
+                staffFilter === staff
+                  ? "border-blue-600 bg-blue-600 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {staff}
+            </button>
+          ))}
         </div>
       </Card>
 
@@ -426,9 +472,6 @@ export default function DbManagementPage() {
       />
 
       <Card className="mb-4 space-y-2.5 p-3">
-        <div className="mb-1 text-xs font-semibold text-slate-400">
-          광고 인스턴트 양식 피벗 — 그룹을 클릭하면 해당 리드만 걸러볼 수 있어요.
-        </div>
         <PivotBar
           label="상담가능시간"
           options={CONSULT_TIME_OPTIONS}
