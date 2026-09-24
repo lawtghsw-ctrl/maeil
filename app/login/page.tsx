@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -110,5 +110,34 @@ export default function LoginPage() {
         )}
       </div>
     </main>
+  );
+}
+
+function LoginFallback() {
+  return (
+    <main className="grid min-h-screen place-items-center bg-[#f6f8fb] p-4">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="grid size-11 place-items-center rounded-xl bg-blue-600 text-white">
+            <ShieldCheck size={22} />
+          </div>
+          <div>
+            <h1 className="text-xl font-black text-slate-900">로파워 관리자 로그인</h1>
+            <p className="text-xs text-slate-500">LawPower Admin</p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+          로그인 화면을 불러오는 중입니다.
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginFallback />}>
+      <LoginForm />
+    </Suspense>
   );
 }
