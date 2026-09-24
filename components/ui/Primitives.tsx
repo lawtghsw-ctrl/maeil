@@ -3,7 +3,7 @@
 // 도원 Admin(tg_m) components/ui.tsx · pagination.tsx의 디자인 시스템을 그대로 이식한
 // 공용 프리미티브 — Card/Button/Badge/PageHeader/Input/Select/Modal 및 리스트 화면에서
 // 반복 사용하는 SearchBox/StatusTabs/Label/NumberInput.
-import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type InputHTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -106,28 +106,14 @@ export function PageHeader({
 }
 
 export function Input({
-  value,
-  onChange,
-  placeholder,
-  type = "text",
   className,
   readOnly = false,
   disabled = false,
-}: {
-  value?: string;
-  onChange?: (e: ChangeEvent<HTMLInputElement>) => void;
-  placeholder?: string;
-  type?: string;
-  className?: string;
-  readOnly?: boolean;
-  disabled?: boolean;
-}) {
+  ...props
+}: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      value={value}
-      onChange={onChange}
-      type={type}
-      placeholder={placeholder}
+      {...props}
       readOnly={readOnly}
       disabled={disabled}
       className={cn(
