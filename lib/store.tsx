@@ -1,28 +1,21 @@
 "use client";
 
-// 전역(메모리) 상태 스토어 — 실제 백엔드가 없는 데모이므로, DB관리→고객관리 전환이나
-// 고객정보 수정, 분납 일정 편집, 게시판 CRUD 같은 상호작용이 여러 화면에서 일관되게
-// 보이도록 React Context로 관리합니다.
-// 새로고침하면 seed 데이터로 초기화됩니다(브라우저 저장소 사용 안 함).
-// 실서비스 전환 시 이 파일의 setState 호출부를 Supabase insert/update 호출로 바꾸면 됩니다.
+// v25 실사용 전환:
+// - mock-data seed를 완전히 제거하고 Supabase를 영구 저장소로 사용합니다.
+// - 화면 컴포넌트는 기존 useStore() 인터페이스를 최대한 유지해 대규모 UI 재작성 없이 실DB로 전환합니다.
+// - 모든 쓰기는 먼저 화면에 반영한 뒤 Supabase에 저장하고, 실패하면 오류를 표시한 후 서버 상태로 재동기화합니다.
+// - Realtime 구독으로 여러 직원이 동시에 수정한 내용도 자동 반영합니다.
 
 import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import {
-  cases as seedCases,
-  clients as seedClients,
-  installments as seedInstallments,
-  leads as seedLeads,
-  posts as seedPosts,
-  scheduleItems as seedScheduleItems,
-} from "./mock-data";
+import type { User } from "@supabase/supabase-js";
 import type {
   BoardPost,
   CaseRecord,
@@ -36,8 +29,9 @@ import type {
 } from "./types";
 import { STAFF_LIST } from "./types";
 import { checkConsultationRequired, defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
+import { createClient, hasSupabaseEnv } from "./supabase/client";
 
-type DocumentState = Record<string, Record<string, boolean>>; // caseId -> itemId -> checked
+type DocumentState = Record<string, Record<string, boolean>>;
 
 export interface InstallmentDraft {
   id?: string;
@@ -47,16 +41,28 @@ export interface InstallmentDraft {
   paidDate?: string;
 }
 
-// ---- 기간별 변동내역(도원 Admin '변동내역'과 동일한 취지) ----
-// 실제 DB가 없는 데모라 Supabase 트리거 대신, 각 store 메서드 호출부에서 직접
-// 변경 요약 문자열을 남기는 방식으로 단순화했습니다.
 export type ChangeCategory = "DB관리" | "고객관리" | "계약관리" | "입금·분납" | "게시판" | "설정";
 export type ChangeAction = "등록" | "수정" | "삭제";
-
-// ---- 결제수단별 정산요율 (담당자별로 로펌 관리자가 설정) ----
-// 결제수단(단순분납/로피분납/신카할부완납/캐피탈분납)에 따라 실제 정산금이 달라지고,
-// 같은 결제수단이라도 담당자별로 다른 요율을 적용할 수 있어야 한다는 요청을 반영.
 export type SettlementRateMap = Record<StaffName, Record<PaymentMethod, number>>;
+
+export interface ChangeLogEntry {
+  id: string;
+  category: ChangeCategory;
+  action: ChangeAction;
+  targetName: string;
+  detail: string;
+  staff: string;
+  at: string;
+}
+
+export interface AppUserProfile {
+  id: string;
+  email?: string;
+  displayName: string;
+  role: "admin" | "staff";
+  staffName?: StaffName;
+  isActive: boolean;
+}
 
 const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
   단순분납: 100,
@@ -67,25 +73,23 @@ const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
 
 function defaultSettlementRates(): SettlementRateMap {
   const map = {} as SettlementRateMap;
-  for (const staff of STAFF_LIST) {
-    map[staff] = { ...DEFAULT_RATE_BY_METHOD };
-  }
+  for (const staff of STAFF_LIST) map[staff] = { ...DEFAULT_RATE_BY_METHOD };
   return map;
 }
 
-export interface ChangeLogEntry {
-  id: string;
-  category: ChangeCategory;
-  action: ChangeAction;
-  targetName: string; // 대상 이름(고객명·게시글 제목 등)
-  detail: string; // 변경 내용 요약
-  staff: string;
-  at: string; // ISO datetime
+function todayIsoStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// 데모 버전 로그인 주체 — 실제 인증 연동 전까지 박형원 고정.
-// 로그인 기능 추가 시 인증 세션의 사용자 이름/ID로 교체합니다.
-export const CURRENT_STAFF: StaffName = "박형원";
+function makeId(prefix: string): string {
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  return `${prefix}-${id}`;
+}
+
+function asStaffName(value: unknown): StaffName | undefined {
+  return typeof value === "string" && (STAFF_LIST as readonly string[]).includes(value) ? (value as StaffName) : undefined;
+}
 
 interface AppStoreValue {
   clients: Client[];
@@ -98,11 +102,21 @@ interface AppStoreValue {
   changeLog: ChangeLogEntry[];
   settlementRates: SettlementRateMap;
   minLivingCostTable: MinLivingCostTable;
+  loading: boolean;
+  syncError: string | null;
+  currentUser: User | null;
+  profile: AppUserProfile | null;
+  isAdmin: boolean;
+  currentStaff?: StaffName;
+  reloadData: () => Promise<void>;
+  signOut: () => Promise<void>;
+  addLead: (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }) => string;
   updateClient: (id: string, patch: Partial<Client>) => void;
   deleteClient: (id: string) => void;
   updateLead: (id: string, patch: Partial<DbLead>) => void;
-  convertLeadToClient: (leadId: string) => string | undefined; // 생성된(또는 기존) clientId 반환
+  convertLeadToClient: (leadId: string) => string | undefined;
   toggleDocument: (caseId: string, itemId: string) => void;
+  addCase: (draft: Omit<CaseRecord, "id">) => string;
   updateCase: (id: string, patch: Partial<CaseRecord>) => void;
   setCaseInstallments: (caseId: string, rows: InstallmentDraft[]) => void;
   addPost: (draft: Omit<BoardPost, "id">) => void;
@@ -115,94 +129,292 @@ interface AppStoreValue {
 
 const AppStoreContext = createContext<AppStoreValue | null>(null);
 
-function todayIsoStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(
-    2,
-    "0"
-  )}`;
-}
-
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [clients, setClients] = useState<Client[]>(seedClients);
-  const [cases, setCases] = useState<CaseRecord[]>(seedCases);
-  const [installments, setInstallments] = useState<Installment[]>(seedInstallments);
-  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(seedScheduleItems);
-  const [leads, setLeads] = useState<DbLead[]>(seedLeads);
-  const [posts, setPosts] = useState<BoardPost[]>(seedPosts);
+  const configured = hasSupabaseEnv();
+  const supabase = useMemo(() => (configured ? createClient() : null), [configured]);
+
+  const [clients, setClients] = useState<Client[]>([]);
+  const [cases, setCases] = useState<CaseRecord[]>([]);
+  const [installments, setInstallments] = useState<Installment[]>([]);
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
+  const [leads, setLeads] = useState<DbLead[]>([]);
+  const [posts, setPosts] = useState<BoardPost[]>([]);
   const [caseDocuments, setCaseDocuments] = useState<DocumentState>({});
   const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
   const [settlementRates, setSettlementRates] = useState<SettlementRateMap>(() => defaultSettlementRates());
   const [minLivingCostTable, setMinLivingCostTable] = useState<MinLivingCostTable>(() => defaultMinLivingCostTable());
-  const clientSeqRef = useRef(seedClients.length);
-  const postSeqRef = useRef(seedPosts.length);
-  const insSeqRef = useRef(0);
-  const changeSeqRef = useRef(0);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<AppUserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(configured ? null : "Supabase 환경변수가 설정되지 않았습니다.");
+
+  const actorName = profile?.displayName || profile?.staffName || currentUser?.email || "시스템";
+  const currentStaff = profile?.staffName;
+  const isAdmin = profile?.role === "admin";
+
+  const fetchEntityTable = useCallback(
+    async <T,>(table: string): Promise<T[]> => {
+      if (!supabase) return [];
+      const { data, error } = await supabase.from(table).select("id,data");
+      if (error) throw error;
+      return (data ?? []).map((row: { id: string; data: unknown }) => ({ ...(row.data as T), id: row.id } as T));
+    },
+    [supabase]
+  );
+
+  const reloadData = useCallback(async () => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setSyncError(null);
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      const user = userData.user;
+      setCurrentUser(user ?? null);
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      const [
+        loadedLeads,
+        loadedClients,
+        loadedCases,
+        loadedInstallments,
+        loadedSchedule,
+        loadedPosts,
+        loadedChanges,
+        settingsRes,
+        profileRes,
+      ] = await Promise.all([
+        fetchEntityTable<DbLead>("app_leads"),
+        fetchEntityTable<Client>("app_clients"),
+        fetchEntityTable<CaseRecord>("app_cases"),
+        fetchEntityTable<Installment>("app_installments"),
+        fetchEntityTable<ScheduleItem>("app_schedule_items"),
+        fetchEntityTable<BoardPost>("app_board_posts"),
+        fetchEntityTable<ChangeLogEntry>("app_change_logs"),
+        supabase.from("app_settings").select("key,value"),
+        supabase.from("profiles").select("id,email,display_name,role,staff_name,is_active").eq("id", user.id).maybeSingle(),
+      ]);
+
+      if (settingsRes.error) throw settingsRes.error;
+      if (profileRes.error) throw profileRes.error;
+
+      setLeads(loadedLeads.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)));
+      setClients(loadedClients);
+      setCases(loadedCases);
+      setInstallments(loadedInstallments);
+      setScheduleItems(loadedSchedule);
+      setPosts(loadedPosts);
+      setChangeLog(loadedChanges.sort((a, b) => b.at.localeCompare(a.at)));
+
+      const settings = new Map((settingsRes.data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
+      const rates = settings.get("settlement_rates") as SettlementRateMap | undefined;
+      const living = settings.get("min_living_cost") as MinLivingCostTable | undefined;
+      const docs = settings.get("case_documents") as DocumentState | undefined;
+      if (rates) setSettlementRates({ ...defaultSettlementRates(), ...rates });
+      if (living) setMinLivingCostTable(living);
+      if (docs) setCaseDocuments(docs);
+
+      const p = profileRes.data;
+      if (!p || p.is_active === false) {
+        setProfile(
+          p
+            ? {
+                id: p.id,
+                email: p.email ?? user.email ?? undefined,
+                displayName: p.display_name || user.email || "사용자",
+                role: p.role === "admin" ? "admin" : "staff",
+                staffName: asStaffName(p.staff_name),
+                isActive: false,
+              }
+            : null
+        );
+        setLeads([]);
+        setClients([]);
+        setCases([]);
+        setInstallments([]);
+        setScheduleItems([]);
+        setPosts([]);
+        setChangeLog([]);
+        setSyncError(p ? "비활성 계정입니다. 최종관리자에게 계정 활성화를 요청해주세요." : "사용자 프로필이 없습니다. Supabase 초기 SQL을 확인해주세요.");
+        await supabase.auth.signOut();
+        if (typeof window !== "undefined") window.location.replace("/login");
+        return;
+      }
+
+      setProfile({
+        id: p.id,
+        email: p.email ?? user.email ?? undefined,
+        displayName: p.display_name || user.email || "사용자",
+        role: p.role === "admin" ? "admin" : "staff",
+        staffName: asStaffName(p.staff_name),
+        isActive: true,
+      });
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : "Supabase 데이터 로딩에 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchEntityTable, supabase]);
+
+  useEffect(() => {
+    void reloadData();
+  }, [reloadData]);
+
+  useEffect(() => {
+    if (!supabase || !currentUser) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void reloadData(), 180);
+    };
+
+    const channel = supabase.channel("lawpower-live");
+    for (const table of [
+      "app_leads",
+      "app_clients",
+      "app_cases",
+      "app_installments",
+      "app_schedule_items",
+      "app_board_posts",
+      "app_change_logs",
+      "app_settings",
+    ]) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleReload);
+    }
+    channel.subscribe();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, currentUser, reloadData]);
+
+  const saveEntity = useCallback(
+    async (table: string, entity: { id: string }) => {
+      if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
+      const { error } = await supabase.from(table).upsert({ id: entity.id, data: entity }, { onConflict: "id" });
+      if (error) throw error;
+    },
+    [supabase]
+  );
+
+  const deleteEntity = useCallback(
+    async (table: string, id: string) => {
+      if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
+      const { error } = await supabase.from(table).delete().eq("id", id);
+      if (error) throw error;
+    },
+    [supabase]
+  );
+
+  const saveSetting = useCallback(
+    async (key: string, value: unknown) => {
+      if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
+      const { error } = await supabase.from("app_settings").upsert({ key, value }, { onConflict: "key" });
+      if (error) throw error;
+    },
+    [supabase]
+  );
+
+  const queueWrite = useCallback(
+    (promise: Promise<unknown>) => {
+      void promise.catch((err) => {
+        setSyncError(err instanceof Error ? err.message : "데이터 저장에 실패했습니다.");
+        void reloadData();
+      });
+    },
+    [reloadData]
+  );
 
   const logChange = useCallback(
     (category: ChangeCategory, action: ChangeAction, targetName: string, detail: string) => {
-      changeSeqRef.current += 1;
       const entry: ChangeLogEntry = {
-        id: `CHG-${String(changeSeqRef.current).padStart(5, "0")}`,
+        id: makeId("CHG"),
         category,
         action,
         targetName,
         detail,
-        staff: CURRENT_STAFF,
+        staff: actorName,
         at: new Date().toISOString(),
       };
       setChangeLog((prev) => [entry, ...prev]);
+      queueWrite(saveEntity("app_change_logs", entry));
     },
-    []
+    [actorName, queueWrite, saveEntity]
+  );
+
+  const addLead = useCallback(
+    (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }): string => {
+      const lead: DbLead = {
+        ...draft,
+        id: makeId("DB"),
+        receivedAt: draft.receivedAt ?? new Date().toISOString(),
+      };
+      setLeads((prev) => [lead, ...prev]);
+      queueWrite(saveEntity("app_leads", lead));
+      logChange("DB관리", "등록", lead.name, "신규 DB 등록");
+      return lead.id;
+    },
+    [logChange, queueWrite, saveEntity]
   );
 
   const updateClient = useCallback(
     (id: string, patch: Partial<Client>) => {
-      setClients((prev) => {
-        const before = prev.find((c) => c.id === id);
-        if (before) logChange("계약관리", "수정", before.name, "고객정보 수정");
-        return prev.map((c) => (c.id === id ? { ...c, ...patch } : c));
-      });
+      const before = clients.find((c) => c.id === id);
+      if (!before) return;
+      const next = { ...before, ...patch };
+      setClients((prev) => prev.map((c) => (c.id === id ? next : c)));
+      queueWrite(saveEntity("app_clients", next));
+      logChange("계약관리", "수정", before.name, "고객정보 수정");
     },
-    [logChange]
+    [clients, logChange, queueWrite, saveEntity]
   );
 
   const deleteClient = useCallback(
     (id: string) => {
-      const clientCaseIds = cases.filter((c) => c.clientId === id).map((c) => c.id);
-      setClients((prev) => {
-        const target = prev.find((c) => c.id === id);
-        if (target) logChange("계약관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
-        return prev.filter((c) => c.id !== id);
-      });
+      const target = clients.find((c) => c.id === id);
+      if (!target) return;
+      const linkedCases = cases.filter((c) => c.clientId === id);
+      const caseIds = new Set(linkedCases.map((c) => c.id));
+      const linkedInstallments = installments.filter((i) => caseIds.has(i.caseId));
+      const linkedSchedule = scheduleItems.filter((s) => s.clientId === id || (!!s.caseId && caseIds.has(s.caseId)));
+
+      setClients((prev) => prev.filter((c) => c.id !== id));
       setCases((prev) => prev.filter((c) => c.clientId !== id));
-      setInstallments((prev) => prev.filter((i) => !clientCaseIds.includes(i.caseId)));
-      setScheduleItems((prev) =>
-        prev.filter((s) => s.clientId !== id && !(s.caseId && clientCaseIds.includes(s.caseId)))
+      setInstallments((prev) => prev.filter((i) => !caseIds.has(i.caseId)));
+      setScheduleItems((prev) => prev.filter((s) => !linkedSchedule.some((x) => x.id === s.id)));
+
+      queueWrite(
+        Promise.all([
+          deleteEntity("app_clients", id),
+          ...linkedCases.map((c) => deleteEntity("app_cases", c.id)),
+          ...linkedInstallments.map((i) => deleteEntity("app_installments", i.id)),
+          ...linkedSchedule.map((s) => deleteEntity("app_schedule_items", s.id)),
+        ])
       );
+      logChange("계약관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
     },
-    [cases, logChange]
+    [cases, clients, deleteEntity, installments, logChange, queueWrite, scheduleItems]
   );
 
   const updateLead = useCallback(
     (id: string, patch: Partial<DbLead>) => {
-      setLeads((prev) => {
-        const before = prev.find((l) => l.id === id);
-        if (before) logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
-        return prev.map((l) => (l.id === id ? { ...l, ...patch } : l));
-      });
+      const before = leads.find((l) => l.id === id);
+      if (!before) return;
+      const next = { ...before, ...patch };
+      setLeads((prev) => prev.map((l) => (l.id === id ? next : l)));
+      queueWrite(saveEntity("app_leads", next));
+      logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
     },
-    [logChange]
+    [leads, logChange, queueWrite, saveEntity]
   );
 
-  // leads를 직접 참조해야 해서(이미 전환됐는지 확인) 의존성 배열에 leads를 포함함.
-  //
-  // v12: "필수값 validation을 프론트에만 구현하지 말고 DB/API 레벨에서도 한 번 더
-  // 수행해서 우회가 불가능하게 해달라"는 요청 반영. 실제 백엔드가 없는 이 데모에서는
-  // store의 convertLeadToClient() 자체가 "API 레벨"에 해당하므로, 화면(UI)의 사전 확인과
-  // 별개로 이 함수 내부에서도 checkConsultationRequired()를 다시 실행합니다 — 화면의
-  // "고객 전환" 버튼을 우회해 이 함수를 직접 호출하더라도(예: 콘솔에서 store 메서드를
-  // 바로 호출) 필수항목이 비어있으면 변환이 거부되고 상태가 전혀 바뀌지 않습니다.
   const convertLeadToClient = useCallback(
     (leadId: string): string | undefined => {
       const lead = leads.find((l) => l.id === leadId);
@@ -210,145 +422,179 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (lead.convertedClientId) return lead.convertedClientId;
 
       const completeness = checkConsultationRequired(lead.applicationType, lead.consultation);
-      if (!completeness.ok) {
-        // 화면단 검증을 우회해 직접 호출된 경우 — 상태 변경 없이 조용히 거부.
-        // (호출부인 app/db/page.tsx의 tryConvert()가 이미 동일한 검증으로 사용자에게
-        // 누락 항목을 안내하고 상담일지 팝업을 열어주므로, 여기서는 이중 안내를 하지 않음)
-        return undefined;
-      }
+      if (!completeness.ok) return undefined;
 
-      clientSeqRef.current += 1;
-      const newClientId = `CL-${String(clientSeqRef.current).padStart(4, "0")}`;
+      const client: Client = {
+        id: makeId("CL"),
+        name: lead.name,
+        phone: lead.phone,
+        registeredAt: todayIsoStr(),
+        assignedStaff: lead.assignedStaff,
+        memo: lead.memo,
+        fromLeadId: lead.id,
+        applicationType: lead.applicationType,
+        consultation: lead.consultation,
+      };
+      const nextLead: DbLead = { ...lead, status: "수임전환", convertedClientId: client.id };
 
-      setClients((prev) => [
-        ...prev,
-        {
-          id: newClientId,
-          name: lead.name,
-          phone: lead.phone,
-          registeredAt: todayIsoStr(),
-          assignedStaff: lead.assignedStaff,
-          memo: lead.memo,
-          fromLeadId: lead.id,
-          applicationType: lead.applicationType,
-          consultation: lead.consultation,
-        },
-      ]);
-
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.id === leadId ? { ...l, status: "수임전환" as const, convertedClientId: newClientId } : l
-        )
-      );
-
-      logChange("DB관리", "수정", lead.name, "계약관리로 전환(전환 완료)");
-
-      return newClientId;
+      setClients((prev) => [...prev, client]);
+      setLeads((prev) => prev.map((l) => (l.id === leadId ? nextLead : l)));
+      queueWrite(Promise.all([saveEntity("app_clients", client), saveEntity("app_leads", nextLead)]));
+      logChange("DB관리", "수정", lead.name, "계약관리 전환용 고객 생성");
+      return client.id;
     },
-    [leads, logChange]
+    [leads, logChange, queueWrite, saveEntity]
   );
 
-  const toggleDocument = useCallback((caseId: string, itemId: string) => {
-    setCaseDocuments((prev) => {
-      const caseState = prev[caseId] ?? {};
-      return {
-        ...prev,
-        [caseId]: { ...caseState, [itemId]: !caseState[itemId] },
+  const toggleDocument = useCallback(
+    (caseId: string, itemId: string) => {
+      const next: DocumentState = {
+        ...caseDocuments,
+        [caseId]: {
+          ...(caseDocuments[caseId] ?? {}),
+          [itemId]: !(caseDocuments[caseId]?.[itemId] ?? false),
+        },
       };
-    });
-  }, []);
+      setCaseDocuments(next);
+      queueWrite(saveSetting("case_documents", next));
+    },
+    [caseDocuments, queueWrite, saveSetting]
+  );
+
+  const addCase = useCallback(
+    (draft: Omit<CaseRecord, "id">): string => {
+      const record: CaseRecord = { ...draft, id: makeId("CASE") };
+      setCases((prev) => [record, ...prev]);
+      queueWrite(saveEntity("app_cases", record));
+
+      const client = clients.find((c) => c.id === record.clientId);
+      if (client?.fromLeadId) {
+        const lead = leads.find((l) => l.id === client.fromLeadId);
+        if (lead) {
+          const nextLead = { ...lead, convertedCaseId: record.id };
+          setLeads((prev) => prev.map((l) => (l.id === lead.id ? nextLead : l)));
+          queueWrite(saveEntity("app_leads", nextLead));
+        }
+      }
+      logChange("계약관리", "등록", record.caseNumber, "계약 등록");
+      return record.id;
+    },
+    [clients, leads, logChange, queueWrite, saveEntity]
+  );
 
   const updateCase = useCallback(
     (id: string, patch: Partial<CaseRecord>) => {
-      setCases((prev) => {
-        const before = prev.find((c) => c.id === id);
-        if (before) logChange("계약관리", "수정", before.caseNumber, "계약 관련 메모/정보 수정");
-        return prev.map((c) => (c.id === id ? { ...c, ...patch } : c));
-      });
+      const before = cases.find((c) => c.id === id);
+      if (!before) return;
+      const next = { ...before, ...patch };
+      setCases((prev) => prev.map((c) => (c.id === id ? next : c)));
+      queueWrite(saveEntity("app_cases", next));
+      logChange("계약관리", "수정", before.caseNumber, "계약 관련 정보 수정");
     },
-    [logChange]
+    [cases, logChange, queueWrite, saveEntity]
   );
 
-  // 고객 상세 패널의 '분납관리'에서 사건 하나의 입금/분납 일정 전체를 새 배열로 교체.
-  // 계약금(1회차) 표시 규칙(seq===1)을 유지하기 위해 배열 순서를 그대로 seq로 사용하고,
-  // 저장 시 사건의 기납부액(paidAmount)도 완료 건 합계로 재계산해 미수금이 자동 반영되게 함.
   const setCaseInstallments = useCallback(
     (caseId: string, rows: InstallmentDraft[]) => {
-      const updated: Installment[] = rows.map((r, idx) => {
-        insSeqRef.current += 1;
-        return {
-          id: r.id ?? `${caseId}-INS-NEW-${insSeqRef.current}`,
-          caseId,
-          seq: idx + 1,
-          dueDate: r.dueDate,
-          amount: r.amount,
-          status: r.status,
-          paidDate: r.paidDate || undefined,
-        };
-      });
+      const oldRows = installments.filter((i) => i.caseId === caseId);
+      const updated: Installment[] = rows.map((r, idx) => ({
+        id: r.id ?? makeId(`${caseId}-INS`),
+        caseId,
+        seq: idx + 1,
+        dueDate: r.dueDate,
+        amount: r.amount,
+        status: r.status,
+        paidDate: r.paidDate || undefined,
+      }));
+      const keepIds = new Set(updated.map((i) => i.id));
+      const removed = oldRows.filter((i) => !keepIds.has(i.id));
+      const paidAmount = updated.filter((i) => i.status === "완료").reduce((sum, i) => sum + i.amount, 0);
+      const caseBefore = cases.find((c) => c.id === caseId);
+      const caseNext = caseBefore ? { ...caseBefore, paidAmount } : undefined;
+
       setInstallments((prev) => [...prev.filter((i) => i.caseId !== caseId), ...updated]);
-      const paidAmount = updated.filter((i) => i.status === "완료").reduce((a, i) => a + i.amount, 0);
-      setCases((prev) => prev.map((c) => (c.id === caseId ? { ...c, paidAmount } : c)));
-      const c = cases.find((x) => x.id === caseId);
-      if (c) logChange("계약관리", "수정", c.caseNumber, "분납 일정 저장");
+      if (caseNext) setCases((prev) => prev.map((c) => (c.id === caseId ? caseNext : c)));
+
+      queueWrite(
+        Promise.all([
+          ...removed.map((i) => deleteEntity("app_installments", i.id)),
+          ...updated.map((i) => saveEntity("app_installments", i)),
+          ...(caseNext ? [saveEntity("app_cases", caseNext)] : []),
+        ])
+      );
+      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "분납 일정 저장");
     },
-    [cases, logChange]
+    [cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
   );
 
   const addPost = useCallback(
     (draft: Omit<BoardPost, "id">) => {
-      postSeqRef.current += 1;
-      setPosts((prev) => [...prev, { ...draft, id: `POST-${String(postSeqRef.current).padStart(4, "0")}` }]);
+      const post: BoardPost = { ...draft, id: makeId("POST") };
+      setPosts((prev) => [...prev, post]);
+      queueWrite(saveEntity("app_board_posts", post));
       logChange("게시판", "등록", draft.title, "게시글 등록");
     },
-    [logChange]
+    [logChange, queueWrite, saveEntity]
   );
 
   const updatePost = useCallback(
     (id: string, patch: Partial<BoardPost>) => {
-      setPosts((prev) => {
-        const before = prev.find((p) => p.id === id);
-        if (before) logChange("게시판", "수정", before.title, "게시글 수정");
-        return prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
-      });
+      const before = posts.find((p) => p.id === id);
+      if (!before) return;
+      const next = { ...before, ...patch };
+      setPosts((prev) => prev.map((p) => (p.id === id ? next : p)));
+      queueWrite(saveEntity("app_board_posts", next));
+      logChange("게시판", "수정", before.title, "게시글 수정");
     },
-    [logChange]
+    [logChange, posts, queueWrite, saveEntity]
   );
 
   const deletePost = useCallback(
     (id: string) => {
-      setPosts((prev) => {
-        const before = prev.find((p) => p.id === id);
-        if (before) logChange("게시판", "삭제", before.title, "게시글 삭제");
-        return prev.filter((p) => p.id !== id);
-      });
+      const before = posts.find((p) => p.id === id);
+      if (!before) return;
+      setPosts((prev) => prev.filter((p) => p.id !== id));
+      queueWrite(deleteEntity("app_board_posts", id));
+      logChange("게시판", "삭제", before.title, "게시글 삭제");
     },
-    [logChange]
+    [deleteEntity, logChange, posts, queueWrite]
   );
 
   const updateSettlementRate = useCallback(
     (staff: StaffName, method: PaymentMethod, rate: number) => {
-      setSettlementRates((prev) => ({ ...prev, [staff]: { ...prev[staff], [method]: rate } }));
+      const next = { ...settlementRates, [staff]: { ...settlementRates[staff], [method]: rate } };
+      setSettlementRates(next);
+      queueWrite(saveSetting("settlement_rates", next));
       logChange("설정", "수정", `${staff} · ${method}`, `정산요율 ${rate}%로 변경`);
     },
-    [logChange]
+    [logChange, queueWrite, saveSetting, settlementRates]
   );
 
   const setMinLivingCostForSize = useCallback(
     (size: number, amount: number) => {
-      setMinLivingCostTable((prev) => ({ ...prev, sizes: { ...prev.sizes, [size]: amount } }));
+      const next = { ...minLivingCostTable, sizes: { ...minLivingCostTable.sizes, [size]: amount } };
+      setMinLivingCostTable(next);
+      queueWrite(saveSetting("min_living_cost", next));
       logChange("설정", "수정", "최저생계비 계산기", `${size}인가구 최저생계비 ${amount.toLocaleString("ko-KR")}원으로 설정`);
     },
-    [logChange]
+    [logChange, minLivingCostTable, queueWrite, saveSetting]
   );
 
   const setMinLivingCostExtraPerPerson = useCallback(
     (amount: number) => {
-      setMinLivingCostTable((prev) => ({ ...prev, extraPerPerson: amount }));
-      logChange("설정", "수정", "최저생계비 계산기", `7인 이상 1인당 추가금액 ${amount.toLocaleString("ko-KR")}원으로 설정`);
+      const next = { ...minLivingCostTable, extraPerPerson: amount };
+      setMinLivingCostTable(next);
+      queueWrite(saveSetting("min_living_cost", next));
+      logChange("설정", "수정", "최저생계비 계산기", `추가 가구원 기준금액 ${amount.toLocaleString("ko-KR")}원으로 설정`);
     },
-    [logChange]
+    [logChange, minLivingCostTable, queueWrite, saveSetting]
   );
+
+  const signOut = useCallback(async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }, [supabase]);
 
   const value = useMemo<AppStoreValue>(
     () => ({
@@ -362,11 +608,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       changeLog,
       settlementRates,
       minLivingCostTable,
+      loading,
+      syncError,
+      currentUser,
+      profile,
+      isAdmin,
+      currentStaff,
+      reloadData,
+      signOut,
+      addLead,
       updateClient,
       deleteClient,
       updateLead,
       convertLeadToClient,
       toggleDocument,
+      addCase,
       updateCase,
       setCaseInstallments,
       addPost,
@@ -387,11 +643,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       changeLog,
       settlementRates,
       minLivingCostTable,
+      loading,
+      syncError,
+      currentUser,
+      profile,
+      isAdmin,
+      currentStaff,
+      reloadData,
+      signOut,
+      addLead,
       updateClient,
       deleteClient,
       updateLead,
       convertLeadToClient,
       toggleDocument,
+      addCase,
       updateCase,
       setCaseInstallments,
       addPost,
@@ -403,13 +669,26 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     ]
   );
 
-  return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;
+  return (
+    <AppStoreContext.Provider value={value}>
+      {loading ? (
+        <div className="grid min-h-screen place-items-center bg-[#f6f8fb] text-sm font-semibold text-slate-500">데이터를 불러오는 중...</div>
+      ) : (
+        <>
+          {syncError && (
+            <div className="fixed left-1/2 top-3 z-[200] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700 shadow-lg">
+              데이터 동기화 오류: {syncError}
+            </div>
+          )}
+          {children}
+        </>
+      )}
+    </AppStoreContext.Provider>
+  );
 }
 
 export function useStore(): AppStoreValue {
-  const ctx = useContext<AppStoreValue | null>(AppStoreContext);
-  if (!ctx) {
-    throw new Error("useStore는 AppStoreProvider 내부에서만 사용할 수 있습니다.");
-  }
+  const ctx = useContext(AppStoreContext);
+  if (!ctx) throw new Error("useStore는 AppStoreProvider 내부에서만 사용할 수 있습니다.");
   return ctx;
 }

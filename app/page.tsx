@@ -14,6 +14,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import {
+  buildDayMap,
   computeStats,
   isNextBlocked,
   nextAnchor,
@@ -21,7 +22,6 @@ import {
   prevAnchor,
   type PeriodMode,
 } from "@/lib/period-engine";
-import { dayMap } from "@/lib/mock-data";
 import { useStore } from "@/lib/store";
 import {
   CASE_TYPE_COLORS,
@@ -210,15 +210,22 @@ function TodoBoard({
 }
 
 export default function DashboardPage() {
-  const { clients, cases, installments, scheduleItems, leads } = useStore();
+  const { clients, cases, installments, scheduleItems, leads, isAdmin, currentStaff } = useStore();
   const today = kstDateStr();
   const initialRange = monthRange();
   const currentMonth = todayLocal().slice(0, 7);
 
-  // 현재 제작 기준은 "최종관리자" 계정입니다. 따라서 상단 영업 KPI는 전 직원 데이터를 합산합니다.
-  // 실제 로그인 기능을 붙일 때 개인계정인 경우에만 아래 topLeads/topCases를 로그인 담당자 기준으로 필터링하면 됩니다.
-  const topLeads = leads;
-  const topCases = cases;
+  // 최종관리자는 전사 합계, 직원계정은 상단 KPI만 본인 담당 실적으로 제한합니다.
+  // 투두리스트와 기존 분납/기일 캘린더 등 나머지 대시보드는 전체 업무 현황을 유지합니다.
+  const topLeads = useMemo(
+    () => (isAdmin ? leads : leads.filter((lead) => !!currentStaff && lead.assignedStaff === currentStaff)),
+    [isAdmin, leads, currentStaff]
+  );
+  const topCases = useMemo(
+    () => (isAdmin ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff)),
+    [isAdmin, cases, currentStaff]
+  );
+  const dayMap = useMemo(() => buildDayMap(cases, installments, leads), [cases, installments, leads]);
 
   const [contractPeriod, setContractPeriod] = useState<ContractPeriod>("월");
   const month = monthBounds(today);
@@ -233,7 +240,7 @@ export default function DashboardPage() {
     const newGreetingDone = topLeads.filter((lead) => greetingCompletedToday(lead, today));
     const noAnswerNeed = topLeads.filter(
       (lead) =>
-        leadStage(lead) === "부재" &&
+        (leadStage(lead) === "부재" || leadStage(lead) === "착수금 안내") &&
         checkCallWarning(lead.consultation?.memoLog, today).active &&
         !lead.convertedClientId
     );
@@ -348,8 +355,8 @@ export default function DashboardPage() {
   const stats = useMemo(() => computeStats(mode, anchor, dayMap), [mode, anchor]);
   const headline = useMemo(() => periodHeadline(mode, stats.bounds), [mode, stats.bounds]);
 
-  const overdue = useMemo(() => getOverdueList(8), []);
-  const stageDist = useMemo(() => getStageDistribution(), []);
+  const overdue = useMemo(() => getOverdueList(installments, cases, clients, 8), [installments, cases, clients]);
+  const stageDist = useMemo(() => getStageDistribution(cases), [cases]);
   const overdueTotal = overdue.reduce((a, r) => a + r.amount, 0);
 
   function handleShift(delta: 1 | -1) {

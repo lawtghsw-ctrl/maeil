@@ -12,6 +12,7 @@ import {
   DB_LEAD_DEFAULT_STAGE_BY_STATUS,
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_OPTIONS,
+  LEAD_SOURCE_OPTIONS,
   STAFF_LIST,
   type ConsultDirection,
   type ConsultTimeSlot,
@@ -20,14 +21,15 @@ import {
   type DbLeadStatus,
   type DebtRange,
   type IncomeRange,
+  type LeadSource,
   type StaffName,
 } from "@/lib/types";
 import { checkCallWarning, checkConsultationRequired, kstDateStr } from "@/lib/consultation";
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
-import { Button, Card, PageHeader, Pagination, SearchBox, pageRows, useClickOutside } from "@/components/ui/Primitives";
+import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows, useClickOutside } from "@/components/ui/Primitives";
 import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEditor";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
-import { ClipboardList, ShieldAlert } from "lucide-react";
+import { ClipboardList, Plus, ShieldAlert } from "lucide-react";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -371,8 +373,108 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
   );
 }
 
+
+function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { addLead } = useStore();
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [assignedStaff, setAssignedStaff] = useState<StaffName>(STAFF_LIST[0]);
+  const [source, setSource] = useState<LeadSource | "">("");
+  const [debtRange, setDebtRange] = useState<DebtRange | "">("");
+  const [incomeRange, setIncomeRange] = useState<IncomeRange | "">("");
+  const [consultTime, setConsultTime] = useState<ConsultTimeSlot | "">("");
+  const [memo, setMemo] = useState("");
+
+  function save() {
+    if (!name.trim() || !phone.trim()) return;
+    addLead({
+      name: name.trim(),
+      phone: phone.trim(),
+      status: "신규접수",
+      assignedStaff,
+      detailStage: "신규디비",
+      source: source || undefined,
+      debtRange: debtRange || undefined,
+      incomeRange: incomeRange || undefined,
+      consultTime: consultTime || undefined,
+      memo: memo.trim() || undefined,
+    });
+    setName("");
+    setPhone("");
+    setSource("");
+    setDebtRange("");
+    setIncomeRange("");
+    setConsultTime("");
+    setMemo("");
+    onClose();
+  }
+
+  return (
+    <Modal open={open} title="신규 DB 등록" onClose={onClose} size="md">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-xs font-semibold text-slate-600">
+          이름 *
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="고객명" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          연락처 *
+          <Input className="mt-1" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="010-0000-0000" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          담당자
+          <Select className="mt-1 w-full" value={assignedStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
+            {STAFF_LIST.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          유입경로
+          <Select className="mt-1 w-full" value={source} onChange={(e) => setSource(e.target.value as LeadSource | "")}>
+            <option value="">미지정</option>
+            {LEAD_SOURCE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          채무 총금액
+          <Select className="mt-1 w-full" value={debtRange} onChange={(e) => setDebtRange(e.target.value as DebtRange | "")}>
+            <option value="">미지정</option>
+            {DEBT_RANGE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          실 월소득
+          <Select className="mt-1 w-full" value={incomeRange} onChange={(e) => setIncomeRange(e.target.value as IncomeRange | "")}>
+            <option value="">미지정</option>
+            {INCOME_RANGE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+          상담가능시간
+          <Select className="mt-1 w-full" value={consultTime} onChange={(e) => setConsultTime(e.target.value as ConsultTimeSlot | "")}>
+            <option value="">미지정</option>
+            {CONSULT_TIME_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+          메모
+          <textarea
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            className="mt-1 min-h-24 w-full rounded-lg border border-slate-200 p-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            placeholder="초기 상담 메모"
+          />
+        </label>
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>취소</Button>
+        <Button onClick={save} disabled={!name.trim() || !phone.trim()}>등록</Button>
+      </div>
+    </Modal>
+  );
+}
+
 export default function DbManagementPage() {
   const { leads, cases, updateLead, convertLeadToClient } = useStore();
+  const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<DbDetailStage | "전체">("전체");
   const [staffFilter, setStaffFilter] = useState<StaffName | "전체">("전체");
@@ -530,7 +632,14 @@ export default function DbManagementPage() {
 
   return (
     <>
-      <PageHeader title="DB관리" />
+      <PageHeader
+        title="DB관리"
+        action={
+          <Button onClick={() => setNewLeadOpen(true)}>
+            <Plus size={15} /> 신규 DB 등록
+          </Button>
+        }
+      />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
@@ -912,6 +1021,8 @@ export default function DbManagementPage() {
           </div>
         </Card>
       )}
+
+      <NewLeadModal open={newLeadOpen} onClose={() => setNewLeadOpen(false)} />
 
       {consultTarget && (
         <LeadConsultationModal

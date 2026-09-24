@@ -7,7 +7,7 @@
 // 동일한 입력 UI를 그대로 재사용합니다. 부모가 tab(현재 활성 탭)과 각 값·setter를
 // 그대로 넘겨주는 완전한 controlled 컴포넌트입니다.
 import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { useStore, CURRENT_STAFF } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import type {
   AssetRow,
   AttachedFileMeta,
@@ -78,7 +78,7 @@ export function ConsultationTabsEditor({
   setAttachedFiles: Updater<AttachedFileMeta[]>;
   result: RepaymentPlanResult;
 }) {
-  const { minLivingCostTable } = useStore();
+  const { minLivingCostTable, profile, currentUser } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [memoDraft, setMemoDraft] = useState("");
   const [memoTag, setMemoTag] = useState<MemoLogTag>("일반");
@@ -90,7 +90,7 @@ export function ConsultationTabsEditor({
     if (!memoDraft.trim() && memoTag === "일반") return;
     const entry: MemoLogEntry = {
       id: `MEMO-${Date.now()}`,
-      staff: CURRENT_STAFF,
+      staff: profile?.displayName || currentUser?.email || "사용자",
       at: new Date().toISOString(),
       text: memoDraft.trim(),
       tag: memoTag,

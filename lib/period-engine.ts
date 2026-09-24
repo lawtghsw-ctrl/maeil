@@ -2,9 +2,63 @@
 // TypeScript로 이식한 버전. 년/월/주/일 탭 전환, 이전/다음 기간 이동(미래 차단),
 // 월 상대 주차 라벨링, 구간 합산, 전기간 대비 증감률 계산을 동일한 규칙으로 재구현함.
 
-import type { CaseType, DayAggregate } from "./types";
+import type { CaseRecord, CaseType, DayAggregate, DbLead, Installment } from "./types";
 
 export type PeriodMode = "year" | "month" | "week" | "day";
+
+export function buildDayMap(
+  casesArr: CaseRecord[],
+  installmentsArr: Installment[],
+  leadsArr: DbLead[]
+): Map<string, DayAggregate> {
+  const map = new Map<string, DayAggregate>();
+
+  const ensure = (date: string): DayAggregate => {
+    const existing = map.get(date);
+    if (existing) return existing;
+    const created: DayAggregate = {
+      date,
+      newConsultCount: 0,
+      newContractCount: 0,
+      contractAmount: 0,
+      paymentAmount: 0,
+      caseTypeSplit: { 개인회생: 0, 개인파산: 0 },
+    };
+    map.set(date, created);
+    return created;
+  };
+
+  for (const lead of leadsArr) {
+    const date = lead.receivedAt?.slice(0, 10);
+    if (date) ensure(date).newConsultCount += 1;
+  }
+
+  for (const record of casesArr) {
+    if (!record.contractDate) continue;
+    const day = ensure(record.contractDate.slice(0, 10));
+    day.newContractCount += 1;
+    day.contractAmount += record.contractAmount || 0;
+  }
+
+  for (const installment of installmentsArr) {
+    if (installment.status !== "완료" || !installment.paidDate) continue;
+    const record = casesArr.find((c) => c.id === installment.caseId);
+    if (!record) continue;
+    const day = ensure(installment.paidDate.slice(0, 10));
+    day.paymentAmount += installment.amount || 0;
+    day.caseTypeSplit[record.caseType] += installment.amount || 0;
+  }
+
+  for (const day of map.values()) {
+    const total = day.caseTypeSplit.개인회생 + day.caseTypeSplit.개인파산;
+    if (total > 0) {
+      day.caseTypeSplit.개인회생 /= total;
+      day.caseTypeSplit.개인파산 /= total;
+    }
+  }
+
+  return map;
+}
 
 export function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate();

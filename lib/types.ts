@@ -290,7 +290,7 @@ export type MemoLogTag = "일반" | "재통화" | "부재중";
 
 export interface MemoLogEntry {
   id: string;
-  staff: StaffName;
+  staff: string;
   at: string; // ISO datetime
   text: string;
   tag: MemoLogTag;
@@ -374,7 +374,7 @@ export interface DayAggregate {
 }
 
 // ---- 내부 게시판 (도원 Admin '내부 게시판'과 동일 기능) ----
-// 실제 백엔드가 없어 첨부파일은 이름/용량만 기록하고 실제 바이트는 저장하지 않습니다.
+// 게시글 데이터는 Supabase에 저장됩니다. 첨부파일 바이트 저장은 별도 Storage 연동 전까지 메타정보만 유지합니다.
 export interface BoardAttachment {
   id: string;
   name: string;
@@ -541,9 +541,9 @@ export interface LoanRecord {
   sourceFileName?: string; // 파일에서 가져온 경우 원본 파일명(첨부파일 목록과 연결 참고용)
 }
 
-// 상담기록지에 첨부한 파일(신용정보 열람서비스 다운로드 파일 등)의 메타정보만 기록합니다.
-// 이 데모에는 파일 업로드 백엔드가 없어 실제 파일 내용은 서버에 저장되지 않고, 첨부
-// 사실과 파일명만 상담기록에 남습니다 — 실제 자동 추출(OCR/파싱)은 아직 지원하지 않습니다.
+// 상담기록지에 첨부한 파일(신용정보 열람서비스 다운로드 파일 등)의 메타정보입니다.
+// 파일은 브라우저에서 즉시 파싱하고 추출된 채무정보/파일 메타정보를 Supabase 상담일지에 저장합니다.
+// 원본 파일 바이트 자체는 현재 Storage에 보관하지 않습니다.
 export interface AttachedFileMeta {
   id: string;
   name: string;

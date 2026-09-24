@@ -1,8 +1,8 @@
 "use client";
 
 // 도원 Admin(tg_m) components/sidebar.tsx와 동일한 구조(고정 사이드바 + 모바일 드로어)로
-// 이식 — 메뉴/브랜딩만 로파워(회생·파산)에 맞게 교체. 별도 로그인 백엔드가 없으므로
-// 프로필 블록은 데모용 고정 표기로 대체합니다.
+// 이식 — 메뉴/브랜딩만 로파워(회생·파산)에 맞게 교체. v25부터 Supabase Auth의 실제 로그인
+// 프로필/역할을 표시하고, 사이드바에서 로그아웃할 수 있습니다.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -17,9 +17,11 @@ import {
   Percent,
   Scale,
   ShieldCheck,
+  LogOut,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useStore } from "@/lib/store";
 
 // v17: 상세 DB관리의 단계 타일을 DB관리 상단으로 통합했으므로 별도 메뉴를 제거했습니다.
 // 기존 /db/detail 주소는 /db로 리다이렉트해 북마크 호환만 유지합니다.
@@ -67,17 +69,30 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
 }
 
 function ProfileBlock() {
+  const { profile, currentUser, signOut } = useStore();
+  const name = profile?.displayName || currentUser?.email?.split("@")[0] || "사용자";
+  const roleLabel = profile?.role === "admin" ? "최종관리자" : profile?.staffName ? `STAFF · ${profile.staffName}` : "STAFF";
+  const initial = name.trim().slice(0, 1) || "관";
+
   return (
     <div className="border-t border-slate-100 p-4">
       <div className="rounded-xl bg-slate-50 p-3">
         <div className="flex items-center gap-3">
           <div className="grid size-9 place-items-center rounded-full bg-slate-800 text-xs font-bold text-white">
-            직
+            {initial}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-bold">박형원</div>
-            <div className="text-xs text-slate-500">STAFF · 데모 버전</div>
+            <div className="truncate text-sm font-bold">{name}</div>
+            <div className="text-xs text-slate-500">{roleLabel}</div>
           </div>
+          <button
+            type="button"
+            title="로그아웃"
+            onClick={() => void signOut()}
+            className="grid size-8 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-red-600"
+          >
+            <LogOut size={15} />
+          </button>
         </div>
       </div>
     </div>

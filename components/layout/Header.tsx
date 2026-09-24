@@ -6,7 +6,7 @@
 import { Bell, CalendarClock, ChevronDown, ChevronUp, Clock3, Inbox, PhoneCall, RefreshCcw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import { CURRENT_STAFF, useStore } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 function kstDate(): string {
@@ -39,7 +39,7 @@ function formatReservationClock(value: string): string {
 }
 
 export function Header() {
-  const { clients, installments, cases, scheduleItems, leads } = useStore();
+  const { clients, installments, cases, scheduleItems, leads, isAdmin, currentStaff, profile } = useStore();
   const router = useRouter();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -84,15 +84,14 @@ export function Header() {
     [scheduleItems, cases, clients, todayIso]
   );
 
-  // DB관리의 진행단계가 "예약"이고 예약일시가 지정된 건 중 현재 로그인 담당자 몫만
-  // 헤더 알림에 띄웁니다. 실제 인증 전 데모는 CURRENT_STAFF(박형원) 기준이며,
-  // 예약 24시간 전부터 지난 24시간까지 계속 보여 단계 변경을 놓치지 않게 했습니다.
+  // 최종관리자는 전체 예약을 보고, 추후 직원계정에는 본인 담당 예약만 노출합니다.
+  // 예약 24시간 전부터 지난 24시간까지 계속 보여 단계 변경을 놓치지 않게 합니다.
   const reservationAlerts = useMemo(() => {
     const now = nowMs;
     const min = now - 24 * 60 * 60 * 1000;
     const max = now + 24 * 60 * 60 * 1000;
     return leads
-      .filter((lead) => lead.assignedStaff === CURRENT_STAFF && lead.detailStage === "예약" && !!lead.reservationAt)
+      .filter((lead) => (isAdmin || (!!currentStaff && lead.assignedStaff === currentStaff)) && lead.detailStage === "예약" && !!lead.reservationAt)
       .map((lead) => ({ lead, at: reservationTimeMs(lead.reservationAt as string) }))
       .filter(({ at }) => Number.isFinite(at) && at >= min && at <= max)
       .sort((a, b) => a.at - b.at)
@@ -103,7 +102,7 @@ export function Header() {
         reservationAt: lead.reservationAt as string,
         overdue: at < now,
       }));
-  }, [leads, nowMs]);
+  }, [leads, nowMs, isAdmin, currentStaff]);
 
   // 로그인 담당자의 "오늘 예약콜"은 별도 고정 바에서 항상 확인할 수 있습니다.
   // 평소에는 노란색, 예약 10분 전부터(예약시간 경과 후 단계가 아직 예약인 경우 포함) 빨간색으로 강조합니다.
@@ -112,7 +111,7 @@ export function Header() {
     return leads
       .filter(
         (lead) =>
-          lead.assignedStaff === CURRENT_STAFF &&
+          (isAdmin || (!!currentStaff && lead.assignedStaff === currentStaff)) &&
           lead.detailStage === "예약" &&
           !!lead.reservationAt &&
           lead.reservationAt.slice(0, 10) === today
@@ -132,13 +131,15 @@ export function Header() {
         urgent: at <= nowMs + 10 * 60 * 1000,
         overdue: at < nowMs,
       }));
-  }, [leads, nowMs]);
+  }, [leads, nowMs, isAdmin, currentStaff]);
 
   const hasUrgentReservation = todayReservationCalls.some((item) => item.urgent);
   const nextReservation = todayReservationCalls.find((item) => item.at >= nowMs) ?? todayReservationCalls[todayReservationCalls.length - 1];
 
   const alertCount = overdueAlerts.length + scheduleAlerts.length + reservationAlerts.length;
-  const newLeadCount = leads.filter((l) => (l.detailStage ?? (l.status === "신규접수" || l.status === "상담예정" ? "신규디비" : "")) === "신규디비").length;
+  const scopedLeads = isAdmin ? leads : leads.filter((l) => !!currentStaff && l.assignedStaff === currentStaff);
+  const newLeadCount = scopedLeads.filter((l) => (l.detailStage ?? (l.status === "신규접수" || l.status === "상담예정" ? "신규디비" : "")) === "신규디비").length;
+  const reservationOwnerLabel = isAdmin ? "전체 담당자" : currentStaff ?? profile?.displayName ?? "내 예약";
 
   function choose(id: string) {
     setQ("");
@@ -323,7 +324,7 @@ export function Header() {
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2 text-xs font-black">
-            예약콜 · {CURRENT_STAFF}
+            예약콜 · {reservationOwnerLabel}
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${hasUrgentReservation ? "bg-red-600 text-white" : "bg-amber-600 text-white"}`}>
               {todayReservationCalls.length}건
             </span>
@@ -342,7 +343,7 @@ export function Header() {
           <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
             <div>
               <div className="text-sm font-bold text-slate-900">오늘 예약콜</div>
-              <div className="text-[11px] text-slate-400">담당 {CURRENT_STAFF} · 예약시간 순</div>
+              <div className="text-[11px] text-slate-400">{reservationOwnerLabel} · 예약시간 순</div>
             </div>
             <button type="button" onClick={() => setReservationCallOpen(false)} className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100">
               <X size={14} />

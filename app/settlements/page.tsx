@@ -68,7 +68,7 @@ export default function SettlementsPage() {
     return { contractSales, realSales, receivable };
   }, [cases, paidRows, rangeStart, rangeEnd]);
 
-  const staffRows = useMemo(() => getStaffPerformance(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
+  const staffRows = useMemo(() => getStaffPerformance(cases, rangeStart, rangeEnd), [cases, rangeStart, rangeEnd]);
 
   // ---- 담당자별 예상 정산액 — 정산설정 메뉴에서 설정한 담당자×결제수단 요율을, 고객관리에서
   // 실제 선택된 결제방식(case.paymentMethod)에 곱해 자동 계산합니다. 정산설정에서 요율을

@@ -2,17 +2,123 @@
 
 import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
-import { type CaseStatus, type CaseType } from "@/lib/types";
+import { STAFF_LIST, type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/Badge";
-import { Card, PageHeader, Pagination, SearchBox, pageRows } from "@/components/ui/Primitives";
+import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
+import { Plus } from "lucide-react";
 
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", "개인회생", "개인파산"];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
 
+
+const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "로피분납", "신카할부완납", "캐피탈분납"];
+
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const router = useRouter();
+  const { clients, cases, addCase } = useStore();
+  const [clientId, setClientId] = useState("");
+  const [caseType, setCaseType] = useState<CaseType>("개인회생");
+  const [court, setCourt] = useState("");
+  const [assignedStaff, setAssignedStaff] = useState<StaffName>(STAFF_LIST[0]);
+  const [contractAmount, setContractAmount] = useState("");
+  const [contractDate, setContractDate] = useState(todayIso());
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("단순분납");
+
+  function chooseClient(id: string) {
+    setClientId(id);
+    const client = clients.find((item) => item.id === id);
+    if (client?.assignedStaff) setAssignedStaff(client.assignedStaff);
+    if (client?.applicationType === "개인파산") setCaseType("개인파산");
+    if (client?.applicationType === "개인회생") setCaseType("개인회생");
+  }
+
+  function save() {
+    if (!clientId) return;
+    const amount = Number(contractAmount.replace(/[^0-9]/g, "")) || 0;
+    const id = addCase({
+      caseNumber: `미접수-${Date.now().toString().slice(-6)}`,
+      clientId,
+      caseType,
+      court: court.trim() || "미지정",
+      stage: "상담접수",
+      stageUpdatedAt: todayIso(),
+      status: "진행중",
+      assignedStaff,
+      totalDebt: 0,
+      contractAmount: amount,
+      contractDate,
+      paidAmount: 0,
+      paymentMethod,
+      fromLeadId: clients.find((item) => item.id === clientId)?.fromLeadId,
+    });
+    onClose();
+    router.push(`/cases/${id}`);
+  }
+
+  return (
+    <Modal open={open} title="계약 등록" onClose={onClose} size="md">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+          고객 *
+          <Select className="mt-1 w-full" value={clientId} onChange={(e) => chooseClient(e.target.value)}>
+            <option value="">고객 선택</option>
+            {clients.map((client) => {
+              const count = cases.filter((record) => record.clientId === client.id).length;
+              return <option key={client.id} value={client.id}>{client.name} · {client.phone}{count ? ` · 기존계약 ${count}건` : ""}</option>;
+            })}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          사건유형
+          <Select className="mt-1 w-full" value={caseType} onChange={(e) => setCaseType(e.target.value as CaseType)}>
+            <option value="개인회생">개인회생</option>
+            <option value="개인파산">개인파산</option>
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          담당자
+          <Select className="mt-1 w-full" value={assignedStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
+            {STAFF_LIST.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
+          </Select>
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          관할법원
+          <Input className="mt-1" value={court} onChange={(e) => setCourt(e.target.value)} placeholder="예: 수원회생법원" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          계약일
+          <Input className="mt-1" type="date" value={contractDate} onChange={(e) => setContractDate(e.target.value)} />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          계약금액(원)
+          <Input className="mt-1" value={contractAmount} onChange={(e) => setContractAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="예: 3300000" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          결제수단
+          <Select className="mt-1 w-full" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}>
+            {PAYMENT_METHODS.map((method) => <option key={method} value={method}>{method}</option>)}
+          </Select>
+        </label>
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>취소</Button>
+        <Button onClick={save} disabled={!clientId}>계약 등록</Button>
+      </div>
+    </Modal>
+  );
+}
+
 export default function CasesPage() {
   const { cases, clients } = useStore();
+  const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
@@ -36,7 +142,11 @@ export default function CasesPage() {
 
   return (
     <>
-      <PageHeader title="계약관리" description={`고객·계약 통합관리 · 전체 ${cases.length}건 중 ${rows.length}건 표시`} />
+      <PageHeader
+        title="계약관리"
+        description={`고객·계약 통합관리 · 전체 ${cases.length}건 중 ${rows.length}건 표시`}
+        action={<Button onClick={() => setCreateOpen(true)}><Plus size={15} /> 계약 등록</Button>}
+      />
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -158,6 +268,7 @@ export default function CasesPage() {
         </div>
         <Pagination page={page} total={rows.length} onChange={setPage} pageSize={10} />
       </Card>
+      <ContractCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
     </>
   );
 }

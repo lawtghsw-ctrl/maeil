@@ -6,8 +6,7 @@
 // (대시보드 1차 정리에서 걷어낸 '계약·결제 추이', '담당자별 실적'을 이 페이지로 재배치)
 import { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { dayMap } from "@/lib/mock-data";
-import { addMonths, sumRange } from "@/lib/period-engine";
+import { addMonths, buildDayMap, sumRange } from "@/lib/period-engine";
 import { getStaffPerformance, getStageDistribution, CASE_TYPE_COLORS, STAGE_CHART_COLORS } from "@/lib/dashboard";
 import { STAGE_GENERIC_LABELS } from "@/lib/types";
 import { fmtEokMan, fmtWon } from "@/lib/format";
@@ -27,11 +26,12 @@ function monthRange() {
 }
 
 export default function AnalyticsPage() {
-  const { clients, cases, installments } = useStore();
+  const { clients, cases, installments, leads } = useStore();
   const [range] = useState(monthRange());
 
-  const stageDist = useMemo(() => getStageDistribution(), []);
-  const staffRows = useMemo(() => getStaffPerformance("2000-01-01", "2999-12-31"), []);
+  const dayMap = useMemo(() => buildDayMap(cases, installments, leads), [cases, installments, leads]);
+  const stageDist = useMemo(() => getStageDistribution(cases), [cases]);
+  const staffRows = useMemo(() => getStaffPerformance(cases, "2000-01-01", "2999-12-31"), [cases]);
 
   const caseTypeSplit = useMemo(() => {
     const 개인회생 = cases.filter((c) => c.caseType === "개인회생").length;
@@ -54,7 +54,7 @@ export default function AnalyticsPage() {
       });
     }
     return buckets;
-  }, []);
+  }, [dayMap]);
 
   const thisMonthContract = cases.filter((c) => c.contractDate >= range.start && c.contractDate <= range.end).length;
   const thisMonthPayment = installments
