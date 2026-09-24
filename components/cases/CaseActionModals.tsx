@@ -26,23 +26,24 @@ function todayIsoStr(): string {
 }
 
 export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRecord: CaseRecord }) {
+  const { can } = useStore();
   const [open, setOpen] = useState<ActionKind>(null);
 
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => setOpen("installment")}>
+        {can("cases.manage_installments") && <Button onClick={() => setOpen("installment")}>
           <WalletCards size={15} />
           분납관리
-        </Button>
-        <Button variant="secondary" onClick={() => setOpen("eform")}>
+        </Button>}
+        {can("cases.econtract") && <Button variant="secondary" onClick={() => setOpen("eform")}>
           <FileSignature size={15} />
           전자계약서
-        </Button>
-        <Button variant="secondary" onClick={() => setOpen("docGuide")}>
+        </Button>}
+        {can("cases.send_docs") && <Button variant="secondary" onClick={() => setOpen("docGuide")}>
           <Send size={15} />
           서류안내문 전송
-        </Button>
+        </Button>}
       </div>
 
       <CaseInstallmentModal

@@ -8,7 +8,7 @@
 //  2) 정산 메뉴의 담당자별 예상 정산액에 담당자×결제방식 조합으로 즉시 반영됩니다.
 import { useMemo, useState, type ChangeEvent } from "react";
 import { useStore } from "@/lib/store";
-import { PAYMENT_METHOD_NOTE, STAFF_LIST, type PaymentMethod, type StaffName } from "@/lib/types";
+import { PAYMENT_METHOD_NOTE, type PaymentMethod, type StaffName } from "@/lib/types";
 import { fmtWon } from "@/lib/format";
 import { Card, NumberInput, PageHeader } from "@/components/ui/Primitives";
 
@@ -16,8 +16,8 @@ const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const EXAMPLE_CONTRACT_AMOUNT = 3_300_000;
 
 export default function SettlementSettingsPage() {
-  const { settlementRates, updateSettlementRate } = useStore();
-  const [exStaff, setExStaff] = useState<StaffName>(STAFF_LIST[0]);
+  const { settlementRates, updateSettlementRate, workStaffNames, can } = useStore();
+  const [exStaff, setExStaff] = useState<StaffName>(workStaffNames[0] || "");
   const [exMethod, setExMethod] = useState<PaymentMethod>(PAYMENT_METHODS[0]);
 
   const exRate = settlementRates[exStaff]?.[exMethod] ?? 0;
@@ -54,13 +54,13 @@ export default function SettlementSettingsPage() {
               </tr>
             </thead>
             <tbody>
-              {STAFF_LIST.map((staff) => (
+              {workStaffNames.map((staff) => (
                 <tr key={staff} className="border-t border-slate-100">
                   <td className="px-4 py-3 font-semibold text-slate-700">{staff}</td>
                   {PAYMENT_METHODS.map((m) => (
                     <td key={m} className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        <NumberInput className="w-20" value={settlementRates[staff]?.[m] ?? 0} onChange={(v) => updateSettlementRate(staff, m, v)} />
+                        <NumberInput className="w-20" disabled={!can("settlement_settings.edit")} value={settlementRates[staff]?.[m] ?? 0} onChange={(v) => updateSettlementRate(staff, m, v)} />
                         <span className="text-slate-400">%</span>
                       </div>
                     </td>
@@ -92,7 +92,7 @@ export default function SettlementSettingsPage() {
             onChange={(e: ChangeEvent<HTMLSelectElement>) => setExStaff(e.target.value as StaffName)}
             className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm"
           >
-            {STAFF_LIST.map((s) => (
+            {workStaffNames.map((s) => (
               <option key={s} value={s}>
                 담당 {s}
               </option>

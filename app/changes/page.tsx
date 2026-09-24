@@ -54,7 +54,7 @@ function CategoryCard({ category, rows }: { category: ChangeCategory; rows: Chan
 }
 
 export default function ChangesPage() {
-  const { changeLog } = useStore();
+  const { changeLog, can, profile } = useStore();
   const [categoryFilter, setCategoryFilter] = useState<ChangeCategory | "전체">("전체");
 
   const byCategory = useMemo(() => {
@@ -72,7 +72,7 @@ export default function ChangesPage() {
     <>
       <PageHeader
         title="기간별 변동내역"
-        description={`DB관리·계약관리·설정에서 발생한 등록·수정·삭제 이력 ${changeLog.length}건 (데모 버전 — 새로고침 시 초기화됩니다)`}
+        description={`${can("changes.view_all") ? "전체 직원" : profile?.displayName ?? "내"} 기준 · DB관리·계약관리·설정 등록/수정/삭제 이력 ${changeLog.length}건`}
       />
 
       <Card className="mb-4 flex flex-wrap gap-2 p-3">

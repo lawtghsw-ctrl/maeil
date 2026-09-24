@@ -30,6 +30,7 @@ import type {
 import { STAFF_LIST } from "./types";
 import { checkConsultationRequired, defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
+import type { PermissionKey, PermissionMap } from "./permissions";
 
 type DocumentState = Record<string, Record<string, boolean>>;
 
@@ -43,7 +44,7 @@ export interface InstallmentDraft {
 
 export type ChangeCategory = "DB관리" | "고객관리" | "계약관리" | "입금·분납" | "게시판" | "설정";
 export type ChangeAction = "등록" | "수정" | "삭제";
-export type SettlementRateMap = Record<StaffName, Record<PaymentMethod, number>>;
+export type SettlementRateMap = Record<string, Record<PaymentMethod, number>>;
 
 export interface ChangeLogEntry {
   id: string;
@@ -62,6 +63,8 @@ export interface AppUserProfile {
   role: "admin" | "staff";
   staffName?: StaffName;
   isActive: boolean;
+  isWorkStaff: boolean;
+  permissions: PermissionMap;
 }
 
 const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
@@ -71,9 +74,9 @@ const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
   캐피탈분납: 80,
 };
 
-function defaultSettlementRates(): SettlementRateMap {
-  const map = {} as SettlementRateMap;
-  for (const staff of STAFF_LIST) map[staff] = { ...DEFAULT_RATE_BY_METHOD };
+function defaultSettlementRates(staffNames: readonly string[] = STAFF_LIST): SettlementRateMap {
+  const map: SettlementRateMap = {};
+  for (const staff of staffNames) map[staff] = { ...DEFAULT_RATE_BY_METHOD };
   return map;
 }
 
@@ -88,7 +91,7 @@ function makeId(prefix: string): string {
 }
 
 function asStaffName(value: unknown): StaffName | undefined {
-  return typeof value === "string" && (STAFF_LIST as readonly string[]).includes(value) ? (value as StaffName) : undefined;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 interface AppStoreValue {
@@ -106,8 +109,11 @@ interface AppStoreValue {
   syncError: string | null;
   currentUser: User | null;
   profile: AppUserProfile | null;
+  staffDirectory: AppUserProfile[];
+  workStaffNames: StaffName[];
   isAdmin: boolean;
   currentStaff?: StaffName;
+  can: (permission: PermissionKey) => boolean;
   reloadData: () => Promise<void>;
   signOut: () => Promise<void>;
   addLead: (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }) => string;
@@ -145,12 +151,55 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [minLivingCostTable, setMinLivingCostTable] = useState<MinLivingCostTable>(() => defaultMinLivingCostTable());
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<AppUserProfile | null>(null);
+  const [staffDirectory, setStaffDirectory] = useState<AppUserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(configured ? null : "Supabase 환경변수가 설정되지 않았습니다.");
 
   const actorName = profile?.displayName || profile?.staffName || currentUser?.email || "시스템";
   const currentStaff = profile?.staffName;
   const isAdmin = profile?.role === "admin";
+  const can = useCallback(
+    (permission: PermissionKey) => Boolean(profile?.isActive && (profile.role === "admin" || profile.permissions?.[permission] === true)),
+    [profile]
+  );
+  const workStaffNames = useMemo(() => {
+    const names = staffDirectory
+      .filter((item) => item.isWorkStaff && item.staffName)
+      .map((item) => item.staffName as StaffName);
+    return names.length ? Array.from(new Set(names)) : [...STAFF_LIST];
+  }, [staffDirectory]);
+
+  const canPatchLead = useCallback(
+    (patch: Partial<DbLead>) => {
+      if (isAdmin) return true;
+      const keys = Object.keys(patch) as Array<keyof DbLead>;
+      if (!keys.length) return false;
+      return keys.every((key) => {
+        if (key === "consultation") return can("db.edit_consultation");
+        if (key === "detailStage" || key === "status") return can("db.change_stage");
+        if (key === "assignedStaff") return can("db.change_assignee");
+        if (key === "reservationAt") return can("db.manage_reservation");
+        if (key === "convertedClientId" || key === "convertedCaseId") return can("db.convert");
+        return can("db.edit_basic");
+      });
+    },
+    [can, isAdmin]
+  );
+
+  const canPatchCase = useCallback(
+    (patch: Partial<CaseRecord>) => {
+      if (isAdmin) return true;
+      const keys = Object.keys(patch) as Array<keyof CaseRecord>;
+      if (!keys.length) return false;
+      return keys.every((key) => {
+        if (key === "assignedStaff") return can("cases.change_assignee");
+        if (key === "paidAmount") return can("cases.manage_installments");
+        if (key === "docsSentAt") return can("cases.send_docs");
+        return false;
+      });
+    },
+    [can, isAdmin]
+  );
 
   const fetchEntityTable = useCallback(
     async <T,>(table: string): Promise<T[]> => {
@@ -189,6 +238,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         loadedChanges,
         settingsRes,
         profileRes,
+        directoryRes,
       ] = await Promise.all([
         fetchEntityTable<DbLead>("app_leads"),
         fetchEntityTable<Client>("app_clients"),
@@ -198,11 +248,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         fetchEntityTable<BoardPost>("app_board_posts"),
         fetchEntityTable<ChangeLogEntry>("app_change_logs"),
         supabase.from("app_settings").select("key,value"),
-        supabase.from("profiles").select("id,email,display_name,role,staff_name,is_active").eq("id", user.id).maybeSingle(),
+        supabase.from("profiles").select("id,email,display_name,role,staff_name,is_active,is_work_staff,permissions").eq("id", user.id).maybeSingle(),
+        supabase.from("profiles").select("id,display_name,role,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name"),
       ]);
 
       if (settingsRes.error) throw settingsRes.error;
       if (profileRes.error) throw profileRes.error;
+      if (directoryRes.error) throw directoryRes.error;
 
       setLeads(loadedLeads.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)));
       setClients(loadedClients);
@@ -212,11 +264,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setPosts(loadedPosts);
       setChangeLog(loadedChanges.sort((a, b) => b.at.localeCompare(a.at)));
 
+      const directory: AppUserProfile[] = (directoryRes.data ?? []).map((row: any) => ({
+        id: row.id,
+        displayName: row.display_name || row.staff_name || "사용자",
+        role: row.role === "admin" ? "admin" : "staff",
+        staffName: asStaffName(row.staff_name || row.display_name),
+        isActive: row.is_active !== false,
+        isWorkStaff: row.is_work_staff !== false,
+        permissions: (row.permissions ?? {}) as PermissionMap,
+      }));
+      setStaffDirectory(directory);
+
       const settings = new Map((settingsRes.data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
       const rates = settings.get("settlement_rates") as SettlementRateMap | undefined;
       const living = settings.get("min_living_cost") as MinLivingCostTable | undefined;
       const docs = settings.get("case_documents") as DocumentState | undefined;
-      if (rates) setSettlementRates({ ...defaultSettlementRates(), ...rates });
+      const rateDefaults = defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]);
+      if (rates) setSettlementRates({ ...rateDefaults, ...rates });
+      else setSettlementRates(rateDefaults);
       if (living) setMinLivingCostTable(living);
       if (docs) setCaseDocuments(docs);
 
@@ -229,8 +294,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
                 email: p.email ?? user.email ?? undefined,
                 displayName: p.display_name || user.email || "사용자",
                 role: p.role === "admin" ? "admin" : "staff",
-                staffName: asStaffName(p.staff_name),
+                staffName: asStaffName(p.staff_name || p.display_name),
                 isActive: false,
+                isWorkStaff: p.is_work_staff !== false,
+                permissions: (p.permissions ?? {}) as PermissionMap,
               }
             : null
         );
@@ -252,8 +319,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         email: p.email ?? user.email ?? undefined,
         displayName: p.display_name || user.email || "사용자",
         role: p.role === "admin" ? "admin" : "staff",
-        staffName: asStaffName(p.staff_name),
+        staffName: asStaffName(p.staff_name || p.display_name),
         isActive: true,
+        isWorkStaff: p.is_work_staff !== false,
+        permissions: (p.permissions ?? {}) as PermissionMap,
       });
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : "Supabase 데이터 로딩에 실패했습니다.");
@@ -284,6 +353,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       "app_board_posts",
       "app_change_logs",
       "app_settings",
+      "profiles",
     ]) {
       channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleReload);
     }
@@ -351,8 +421,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const addLead = useCallback(
     (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }): string => {
+      if (!can("db.create")) return "";
       const lead: DbLead = {
         ...draft,
+        assignedStaff: can("db.change_assignee") ? draft.assignedStaff : (currentStaff || draft.assignedStaff),
         id: makeId("DB"),
         receivedAt: draft.receivedAt ?? new Date().toISOString(),
       };
@@ -361,11 +433,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "등록", lead.name, "신규 DB 등록");
       return lead.id;
     },
-    [logChange, queueWrite, saveEntity]
+    [can, currentStaff, logChange, queueWrite, saveEntity]
   );
 
   const updateClient = useCallback(
     (id: string, patch: Partial<Client>) => {
+      if (!isAdmin) return;
       const before = clients.find((c) => c.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -373,11 +446,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_clients", next));
       logChange("계약관리", "수정", before.name, "고객정보 수정");
     },
-    [clients, logChange, queueWrite, saveEntity]
+    [clients, isAdmin, logChange, queueWrite, saveEntity]
   );
 
   const deleteClient = useCallback(
     (id: string) => {
+      if (!isAdmin) return;
       const target = clients.find((c) => c.id === id);
       if (!target) return;
       const linkedCases = cases.filter((c) => c.clientId === id);
@@ -400,11 +474,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       );
       logChange("계약관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
     },
-    [cases, clients, deleteEntity, installments, logChange, queueWrite, scheduleItems]
+    [cases, clients, deleteEntity, installments, isAdmin, logChange, queueWrite, scheduleItems]
   );
 
   const updateLead = useCallback(
     (id: string, patch: Partial<DbLead>) => {
+      if (!canPatchLead(patch)) return;
       const before = leads.find((l) => l.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -412,11 +487,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_leads", next));
       logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
     },
-    [leads, logChange, queueWrite, saveEntity]
+    [canPatchLead, leads, logChange, queueWrite, saveEntity]
   );
 
   const convertLeadToClient = useCallback(
     (leadId: string): string | undefined => {
+      if (!can("db.convert")) return undefined;
       const lead = leads.find((l) => l.id === leadId);
       if (!lead) return undefined;
       if (lead.convertedClientId) return lead.convertedClientId;
@@ -443,11 +519,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "수정", lead.name, "계약관리 전환용 고객 생성");
       return client.id;
     },
-    [leads, logChange, queueWrite, saveEntity]
+    [can, leads, logChange, queueWrite, saveEntity]
   );
 
   const toggleDocument = useCallback(
     (caseId: string, itemId: string) => {
+      if (!can("cases.send_docs")) return;
       const next: DocumentState = {
         ...caseDocuments,
         [caseId]: {
@@ -458,12 +535,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setCaseDocuments(next);
       queueWrite(saveSetting("case_documents", next));
     },
-    [caseDocuments, queueWrite, saveSetting]
+    [can, caseDocuments, queueWrite, saveSetting]
   );
 
   const addCase = useCallback(
     (draft: Omit<CaseRecord, "id">): string => {
-      const record: CaseRecord = { ...draft, id: makeId("CASE") };
+      if (!can("cases.create")) return "";
+      const record: CaseRecord = {
+        ...draft,
+        assignedStaff: can("cases.change_assignee") ? draft.assignedStaff : (currentStaff || draft.assignedStaff),
+        id: makeId("CASE"),
+      };
       setCases((prev) => [record, ...prev]);
       queueWrite(saveEntity("app_cases", record));
 
@@ -479,11 +561,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("계약관리", "등록", record.caseNumber, "계약 등록");
       return record.id;
     },
-    [clients, leads, logChange, queueWrite, saveEntity]
+    [can, clients, currentStaff, leads, logChange, queueWrite, saveEntity]
   );
 
   const updateCase = useCallback(
     (id: string, patch: Partial<CaseRecord>) => {
+      if (!canPatchCase(patch)) return;
       const before = cases.find((c) => c.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -491,11 +574,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_cases", next));
       logChange("계약관리", "수정", before.caseNumber, "계약 관련 정보 수정");
     },
-    [cases, logChange, queueWrite, saveEntity]
+    [canPatchCase, cases, logChange, queueWrite, saveEntity]
   );
 
   const setCaseInstallments = useCallback(
     (caseId: string, rows: InstallmentDraft[]) => {
+      if (!can("cases.manage_installments")) return;
       const oldRows = installments.filter((i) => i.caseId === caseId);
       const updated: Installment[] = rows.map((r, idx) => ({
         id: r.id ?? makeId(`${caseId}-INS`),
@@ -524,7 +608,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       );
       if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "분납 일정 저장");
     },
-    [cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
+    [can, cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
   );
 
   const addPost = useCallback(
@@ -562,32 +646,35 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const updateSettlementRate = useCallback(
     (staff: StaffName, method: PaymentMethod, rate: number) => {
+      if (!can("settlement_settings.edit")) return;
       const next = { ...settlementRates, [staff]: { ...settlementRates[staff], [method]: rate } };
       setSettlementRates(next);
       queueWrite(saveSetting("settlement_rates", next));
       logChange("설정", "수정", `${staff} · ${method}`, `정산요율 ${rate}%로 변경`);
     },
-    [logChange, queueWrite, saveSetting, settlementRates]
+    [can, logChange, queueWrite, saveSetting, settlementRates]
   );
 
   const setMinLivingCostForSize = useCallback(
     (size: number, amount: number) => {
+      if (!can("living.edit")) return;
       const next = { ...minLivingCostTable, sizes: { ...minLivingCostTable.sizes, [size]: amount } };
       setMinLivingCostTable(next);
       queueWrite(saveSetting("min_living_cost", next));
       logChange("설정", "수정", "최저생계비 계산기", `${size}인가구 최저생계비 ${amount.toLocaleString("ko-KR")}원으로 설정`);
     },
-    [logChange, minLivingCostTable, queueWrite, saveSetting]
+    [can, logChange, minLivingCostTable, queueWrite, saveSetting]
   );
 
   const setMinLivingCostExtraPerPerson = useCallback(
     (amount: number) => {
+      if (!can("living.edit")) return;
       const next = { ...minLivingCostTable, extraPerPerson: amount };
       setMinLivingCostTable(next);
       queueWrite(saveSetting("min_living_cost", next));
       logChange("설정", "수정", "최저생계비 계산기", `추가 가구원 기준금액 ${amount.toLocaleString("ko-KR")}원으로 설정`);
     },
-    [logChange, minLivingCostTable, queueWrite, saveSetting]
+    [can, logChange, minLivingCostTable, queueWrite, saveSetting]
   );
 
   const signOut = useCallback(async () => {
@@ -612,8 +699,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       syncError,
       currentUser,
       profile,
+      staffDirectory,
+      workStaffNames,
       isAdmin,
       currentStaff,
+      can,
       reloadData,
       signOut,
       addLead,
@@ -647,8 +737,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       syncError,
       currentUser,
       profile,
+      staffDirectory,
+      workStaffNames,
       isAdmin,
       currentStaff,
+      can,
       reloadData,
       signOut,
       addLead,

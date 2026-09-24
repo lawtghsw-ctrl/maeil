@@ -13,7 +13,6 @@ import {
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_OPTIONS,
   LEAD_SOURCE_OPTIONS,
-  STAFF_LIST,
   type ConsultDirection,
   type ConsultTimeSlot,
   type DbDetailStage,
@@ -219,7 +218,7 @@ function StageBoard({
 // "리스트 맨 우측 메모부분 텍스트란을 누르면 여태 했던 메모들이 보이게" 요청 반영.
 // 상담일지에서 작성한 메모 게시판(memoLog)의 최신 항목을 미리 보여주고, 클릭하면
 // 지금까지 쌓인 메모 전체를 팝오버로 펼쳐 보여줍니다. 새 메모 작성은 상담일지 팝업에서.
-function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsultation: () => void }) {
+function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsultation?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useClickOutside<HTMLDivElement>(() => setOpen(false));
   const log = lead.consultation?.memoLog ?? [];
@@ -267,7 +266,7 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
               ))}
             </ul>
           )}
-          <button
+          {onOpenConsultation && <button
             type="button"
             onClick={() => {
               setOpen(false);
@@ -275,8 +274,8 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
             }}
             className="mt-2 w-full rounded-lg bg-blue-50 px-2 py-1.5 text-center text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
           >
-            상담일지에서 메모 작성 →
-          </button>
+            상담일지 열기 →
+          </button>}
         </div>
       )}
     </div>
@@ -287,7 +286,7 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
 // v17: 진행단계는 DB관리 상단 통합 보드/리스트에서 직접 관리하므로 상담일지 팝업의
 // 중복 "상세 단계" 드롭다운은 더 이상 띄우지 않습니다. 상담일지는 상담 내용 자체에 집중.
 function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: DbLead; onClose: () => void }) {
-  const { updateLead, cases } = useStore();
+  const { updateLead, cases, can } = useStore();
   const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
   const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(
     effectiveStage(lead) === "예약" || !!lead.reservationAt ? true : false
@@ -325,26 +324,38 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       caseNumberLabel="- (법원 접수 전)"
       applicationType={applicationType}
       onApplicationTypeChange={setApplicationType}
+      allowApplicationTypeEdit={can("db.edit_basic")}
       initialConsultation={lead.consultation}
       contractAmount={contractAmount}
       paidAmount={paidAmount}
       outstandingAmount={outstandingAmount}
+      showFinanceSummary={can("db.view_finance")}
+      readOnly={!can("db.edit_consultation")}
       reservationChoice={reservationChoice}
       reservationAt={reservationAt}
-      onReservationChoiceChange={(value) => {
+      onReservationChoiceChange={can("db.manage_reservation") ? (value) => {
         setReservationChoice(value);
         if (value !== true) setReservationAt(undefined);
-      }}
-      onReservationAtChange={setReservationAt}
+      } : undefined}
+      onReservationAtChange={can("db.manage_reservation") ? setReservationAt : undefined}
       onSave={(consultation) => {
-        const wasReservationStage = effectiveStage(lead) === "예약";
-        const reservationPatch = reservationChoice === true
-          ? { detailStage: "예약" as const, status: "상담예정" as const, reservationAt }
-          : wasReservationStage
-            ? { detailStage: "신규디비" as const, status: "신규접수" as const, reservationAt: undefined }
-            : { reservationAt: undefined };
-
-        updateLead(lead.id, { applicationType, consultation, ...reservationPatch });
+        const patch: Partial<DbLead> = { consultation };
+        if (can("db.edit_basic")) patch.applicationType = applicationType;
+        if (can("db.manage_reservation")) {
+          const wasReservationStage = effectiveStage(lead) === "예약";
+          if (reservationChoice === true) {
+            patch.detailStage = "예약";
+            patch.status = "상담예정";
+            patch.reservationAt = reservationAt;
+          } else if (wasReservationStage) {
+            patch.detailStage = "신규디비";
+            patch.status = "신규접수";
+            patch.reservationAt = undefined;
+          } else {
+            patch.reservationAt = undefined;
+          }
+        }
+        updateLead(lead.id, patch);
       }}
     />
   );
@@ -375,10 +386,10 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
 
 
 function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { addLead } = useStore();
+  const { addLead, workStaffNames, currentStaff, can } = useStore();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [assignedStaff, setAssignedStaff] = useState<StaffName>(STAFF_LIST[0]);
+  const [assignedStaff, setAssignedStaff] = useState<StaffName>((currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
   const [source, setSource] = useState<LeadSource | "">("");
   const [debtRange, setDebtRange] = useState<DebtRange | "">("");
   const [incomeRange, setIncomeRange] = useState<IncomeRange | "">("");
@@ -422,8 +433,8 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
         </label>
         <label className="text-xs font-semibold text-slate-600">
           담당자
-          <Select className="mt-1 w-full" value={assignedStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
-            {STAFF_LIST.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
+          <Select className="mt-1 w-full" value={assignedStaff} disabled={!can("db.change_assignee") && !!currentStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
+            {workStaffNames.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
           </Select>
         </label>
         <label className="text-xs font-semibold text-slate-600">
@@ -473,7 +484,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 export default function DbManagementPage() {
-  const { leads, cases, updateLead, convertLeadToClient } = useStore();
+  const { leads, cases, updateLead, convertLeadToClient, workStaffNames, currentStaff, can } = useStore();
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<DbDetailStage | "전체">("전체");
@@ -485,6 +496,16 @@ export default function DbManagementPage() {
   const [justConverted, setJustConverted] = useState<string | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string[] | null>(null);
   const [consultTarget, setConsultTarget] = useState<DbLead | null>(null);
+
+  const canViewAllDb = can("db.view_all");
+  const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
+
+  useEffect(() => {
+    if (!canViewAllDb && currentStaff) {
+      setStaffFilter(currentStaff);
+      setPage(1);
+    }
+  }, [canViewAllDb, currentStaff]);
 
   // "실제 계약(=완결된 상담기록지)을 하지 않는 이상 고객관리로 넘기지 않도록" 요청 반영 —
   // 필수 항목이 다 채워졌는지 여기서 먼저 확인한 뒤에만 실제 전환을 실행합니다.
@@ -634,14 +655,14 @@ export default function DbManagementPage() {
     <>
       <PageHeader
         title="DB관리"
-        action={
+        action={can("db.create") ? (
           <Button onClick={() => setNewLeadOpen(true)}>
             <Plus size={15} /> 신규 DB 등록
           </Button>
-        }
+        ) : undefined}
       />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      {can("db.view_finance") && <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
           <div className="text-xs font-semibold text-slate-500">계약금</div>
           <div className="mt-2 text-xl font-bold text-slate-900">{fmtWon(financeSummary.contractAmount)}</div>
@@ -654,7 +675,7 @@ export default function DbManagementPage() {
           <div className="text-xs font-semibold text-slate-500">미수금</div>
           <div className="mt-2 text-xl font-bold text-red-600">{fmtWon(financeSummary.receivable)}</div>
         </Card>
-      </div>
+      </div>}
 
       <Card className="mb-4 space-y-3 p-3">
         <SearchBox
@@ -671,7 +692,7 @@ export default function DbManagementPage() {
         />
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs font-semibold text-slate-500">담당자</span>
-          <button
+          {canViewAllDb && <button
             type="button"
             onClick={() => {
               setStaffFilter("전체");
@@ -684,12 +705,13 @@ export default function DbManagementPage() {
             }`}
           >
             전체
-          </button>
-          {STAFF_LIST.map((staff) => (
+          </button>}
+          {(canViewAllDb ? workStaffNames : workStaffNames.filter((staff) => staff === currentStaff)).map((staff) => (
             <button
               key={staff}
               type="button"
               onClick={() => {
+                if (!canViewAllDb) return;
                 setStaffFilter(staffFilter === staff ? "전체" : staff);
                 setPage(1);
               }}
@@ -773,7 +795,7 @@ export default function DbManagementPage() {
               <LeadTags lead={lead} />
               <select
                 value={lead.applicationType ?? ""}
-                disabled={!!lead.convertedClientId}
+                disabled={!!lead.convertedClientId || !can("db.edit_basic")}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                   updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
                 }
@@ -788,11 +810,12 @@ export default function DbManagementPage() {
               </select>
               <select
                 value={lead.assignedStaff}
-                disabled={!!lead.convertedClientId}
+                disabled={!!lead.convertedClientId || !can("db.change_assignee")}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
               >
-                {STAFF_LIST.map((s) => (
+                {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>담당 {lead.assignedStaff} (기존)</option>}
+                {workStaffNames.map((s) => (
                   <option key={s} value={s}>
                     담당 {s}
                   </option>
@@ -800,7 +823,7 @@ export default function DbManagementPage() {
               </select>
               <select
                 value={effectiveStage(lead)}
-                disabled={!!lead.convertedClientId}
+                disabled={!!lead.convertedClientId || !can("db.change_stage")}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => {
                   const detailStage = e.target.value as DbDetailStage;
                   updateLead(lead.id, { detailStage, status: legacyStatusForStage(detailStage, lead.status) });
@@ -818,14 +841,14 @@ export default function DbManagementPage() {
                   <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
                   <ReservationDateTimeEditor
                     value={lead.reservationAt}
-                    disabled={!!lead.convertedClientId}
+                    disabled={!!lead.convertedClientId || !can("db.manage_reservation")}
                     onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
                   />
                 </label>
               )}
               <div>
                 <div className="mb-1 text-xs font-semibold text-slate-500">상담일지 메모</div>
-                <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} />
+                {canOpenConsultation ? <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} /> : <span className="text-xs text-slate-300">권한없음</span>}
               </div>
               {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
                 <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700">
@@ -837,22 +860,23 @@ export default function DbManagementPage() {
                 <Button
                   variant="secondary"
                   className="px-2.5 py-1.5"
+                  disabled={!canOpenConsultation}
                   onClick={() => {
                     setBlockedNotice(null);
                     setConsultTarget(lead);
                   }}
                 >
                   <ClipboardList size={14} />
-                  상담일지 작성
+                  {can("db.edit_consultation") ? "상담일지 작성" : "상담일지 조회"}
                 </Button>
                 {lead.convertedClientId ? (
                   <Link href={lead.convertedCaseId ? `/cases/${lead.convertedCaseId}` : "/cases"} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
                     계약관리로 이동
                   </Link>
                 ) : (
-                  <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
+                  can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
                     고객 전환
-                  </Button>
+                  </Button> : null
                 )}
               </div>
             </div>
@@ -888,7 +912,7 @@ export default function DbManagementPage() {
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
                       value={lead.applicationType ?? ""}
-                      disabled={!!lead.convertedClientId}
+                      disabled={!!lead.convertedClientId || !can("db.edit_basic")}
                       onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                         updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
                       }
@@ -905,11 +929,12 @@ export default function DbManagementPage() {
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
                       value={lead.assignedStaff}
-                      disabled={!!lead.convertedClientId}
+                      disabled={!!lead.convertedClientId || !can("db.change_assignee")}
                       onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
                       className="min-w-[90px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
                     >
-                      {STAFF_LIST.map((s) => (
+                      {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>{lead.assignedStaff} (기존)</option>}
+                      {workStaffNames.map((s) => (
                         <option key={s} value={s}>
                           {s}
                         </option>
@@ -919,7 +944,7 @@ export default function DbManagementPage() {
                   <td className="px-4 py-3">
                     <select
                       value={effectiveStage(lead)}
-                      disabled={!!lead.convertedClientId}
+                      disabled={!!lead.convertedClientId || !can("db.change_stage")}
                       onChange={(e: ChangeEvent<HTMLSelectElement>) => {
                         const detailStage = e.target.value as DbDetailStage;
                         updateLead(lead.id, { detailStage, status: legacyStatusForStage(detailStage, lead.status) });
@@ -936,13 +961,13 @@ export default function DbManagementPage() {
                   <td className="min-w-[320px] px-4 py-3">
                     <ReservationDateTimeEditor
                       value={lead.reservationAt}
-                      disabled={!!lead.convertedClientId || effectiveStage(lead) !== "예약"}
+                      disabled={!!lead.convertedClientId || effectiveStage(lead) !== "예약" || !can("db.manage_reservation")}
                       onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
                       compact
                     />
                   </td>
                   <td className="min-w-[220px] px-4 py-3">
-                    <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} />
+                    {canOpenConsultation ? <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} /> : <span className="text-xs text-slate-300">권한없음</span>}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex flex-col items-end gap-1.5">
@@ -956,6 +981,7 @@ export default function DbManagementPage() {
                         <Button
                           variant="secondary"
                           className="px-2.5 py-1.5"
+                          disabled={!canOpenConsultation}
                           onClick={() => {
                             setBlockedNotice(null);
                             setConsultTarget(lead);
@@ -969,9 +995,9 @@ export default function DbManagementPage() {
                             계약관리로 이동
                           </Link>
                         ) : (
-                          <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
+                          can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
                             고객 전환
-                          </Button>
+                          </Button> : null
                         )}
                       </div>
                     </div>

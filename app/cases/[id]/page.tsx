@@ -15,7 +15,7 @@ import { fmtDate, fmtWon } from "@/lib/format";
 export default function CaseDetailPage() {
   const params = useParams<{ id: string }>();
   const caseId = Array.isArray(params.id) ? params.id[0] : params.id;
-  const { cases, clients, installments } = useStore();
+  const { cases, clients, installments, can } = useStore();
   const c = caseId ? cases.find((item) => item.id === caseId) : undefined;
 
   if (!c) {
@@ -54,7 +54,7 @@ export default function CaseDetailPage() {
           {client && <CaseActionPanel client={client} caseRecord={c} />}
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {can("cases.view_finance") && <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {[
             ["총 채무액", fmtWon(c.totalDebt)],
             ["계약금액", fmtWon(c.contractAmount)],
@@ -69,7 +69,7 @@ export default function CaseDetailPage() {
               </div>
             </div>
           ))}
-        </div>
+        </div>}
 
         {c.monthlyRepayment && (
           <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
@@ -84,7 +84,7 @@ export default function CaseDetailPage() {
         )}
       </Card>
 
-      <Card className="overflow-hidden">
+      {can("cases.view_finance") && <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div className="text-sm font-semibold text-slate-900">분납 현황</div>
           <div className="text-xs text-slate-400">수정은 상단의 분납관리에서 진행합니다.</div>
@@ -116,7 +116,7 @@ export default function CaseDetailPage() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
     </div>
   );
 }

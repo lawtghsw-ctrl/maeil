@@ -65,10 +65,11 @@ export const STAGE_GENERIC_LABELS: Record<CaseStage, string> = {
 
 export type CaseStatus = "진행중" | "보류" | "취하" | "종결";
 
-// 담당 직원 목록 — 현재 실무 담당자 4명을 고정 목록으로 사용합니다.
-// 추후 로그인 기능이 붙으면 로그인 계정과 이 값을 연결하면 됩니다.
-export const STAFF_LIST = ["박형원", "강이삭", "신홍규", "이중호"] as const;
-export type StaffName = (typeof STAFF_LIST)[number];
+// v26부터 실제 담당자 목록은 Supabase profiles의 is_work_staff=true 계정에서 동적으로 불러옵니다.
+// 현재 실무 기준은 강이삭·박형원이며, 아래 목록은 프로필을 아직 불러오기 전의 안전한 fallback 값입니다.
+// 홍성원 개발자 계정은 최종관리자 권한을 가지되 실무 담당자 목록에서는 제외합니다.
+export const STAFF_LIST = ["강이삭", "박형원"] as const;
+export type StaffName = string;
 
 // 상담 후 진행 방향 — 예전에는 DB 접수 시점에 "신청분류"로 미리 지정했지만, 실제로는
 // 상담을 해봐야 회생/파산/워크아웃 중 어느 방향이 맞는지 알 수 있는 경우가 많아

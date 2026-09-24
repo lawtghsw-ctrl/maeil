@@ -4,7 +4,7 @@ import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
-import { STAFF_LIST, type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
+import { type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -23,11 +23,11 @@ function todayIso() {
 
 function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
-  const { clients, cases, addCase } = useStore();
+  const { clients, cases, addCase, workStaffNames, currentStaff, can } = useStore();
   const [clientId, setClientId] = useState("");
   const [caseType, setCaseType] = useState<CaseType>("개인회생");
   const [court, setCourt] = useState("");
-  const [assignedStaff, setAssignedStaff] = useState<StaffName>(STAFF_LIST[0]);
+  const [assignedStaff, setAssignedStaff] = useState<StaffName>((currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
   const [contractAmount, setContractAmount] = useState("");
   const [contractDate, setContractDate] = useState(todayIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("단순분납");
@@ -85,8 +85,8 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
         </label>
         <label className="text-xs font-semibold text-slate-600">
           담당자
-          <Select className="mt-1 w-full" value={assignedStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
-            {STAFF_LIST.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
+          <Select className="mt-1 w-full" value={assignedStaff} disabled={!can("cases.change_assignee") && !!currentStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
+            {workStaffNames.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
           </Select>
         </label>
         <label className="text-xs font-semibold text-slate-600">
@@ -117,7 +117,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 export default function CasesPage() {
-  const { cases, clients } = useStore();
+  const { cases, clients, can, currentStaff } = useStore();
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
@@ -125,7 +125,8 @@ export default function CasesPage() {
   const [page, setPage] = useState(1);
 
   const rows = useMemo(() => {
-    return cases
+    const scopedCases = can("cases.view_all") ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff);
+    return scopedCases
       .map((c) => ({ c, client: clients.find((cl) => cl.id === c.clientId) }))
       .filter(({ c, client }) => {
         if (typeFilter !== "전체" && c.caseType !== typeFilter) return false;
@@ -138,14 +139,14 @@ export default function CasesPage() {
         return true;
       })
       .sort((a, b) => (a.c.contractDate < b.c.contractDate ? 1 : -1));
-  }, [cases, clients, query, typeFilter, statusFilter]);
+  }, [can, cases, clients, currentStaff, query, typeFilter, statusFilter]);
 
   return (
     <>
       <PageHeader
         title="계약관리"
-        description={`고객·계약 통합관리 · 전체 ${cases.length}건 중 ${rows.length}건 표시`}
-        action={<Button onClick={() => setCreateOpen(true)}><Plus size={15} /> 계약 등록</Button>}
+        description={`고객·계약 통합관리 · 현재 조회범위 ${rows.length}건 표시`}
+        action={can("cases.create") ? <Button onClick={() => setCreateOpen(true)}><Plus size={15} /> 계약 등록</Button> : undefined}
       />
 
       <Card className="mb-4 space-y-3 p-3">
@@ -209,10 +210,10 @@ export default function CasesPage() {
                   <StatusBadge status={c.status} />
                 </div>
                 <div className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</div>
-                <div className="flex items-center justify-between text-sm">
+                {can("cases.view_finance") && <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-500">계약금액 {fmtWon(c.contractAmount)}</span>
                   {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
-                </div>
+                </div>}
               </Link>
             );
           })}
@@ -240,10 +241,10 @@ export default function CasesPage() {
                     <td className="px-4 py-3 text-slate-700">{c.caseType}</td>
                     <td className="px-4 py-3 text-slate-500">{c.assignedStaff}</td>
                     <td className="px-4 py-3 text-slate-500">{fmtDate(c.contractDate)}</td>
-                    <td className="px-4 py-3 text-slate-900">{fmtWon(c.contractAmount)}</td>
-                    <td className="px-4 py-3 text-slate-700">{fmtWon(c.paidAmount)}</td>
+                    <td className="px-4 py-3 text-slate-900">{can("cases.view_finance") ? fmtWon(c.contractAmount) : "권한없음"}</td>
+                    <td className="px-4 py-3 text-slate-700">{can("cases.view_finance") ? fmtWon(c.paidAmount) : "-"}</td>
                     <td className="px-4 py-3">
-                      {receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>}
+                      {can("cases.view_finance") ? (receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>) : <span className="text-slate-300">-</span>}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={c.status} />

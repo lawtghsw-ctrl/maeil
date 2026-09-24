@@ -39,7 +39,7 @@ function formatReservationClock(value: string): string {
 }
 
 export function Header() {
-  const { clients, installments, cases, scheduleItems, leads, isAdmin, currentStaff, profile } = useStore();
+  const { clients, installments, cases, scheduleItems, leads, isAdmin, currentStaff, profile, can } = useStore();
   const router = useRouter();
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -47,6 +47,7 @@ export function Header() {
   const [reservationCallOpen, setReservationCallOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const todayIso = kstDateKey(new Date(nowMs));
+  const canViewAllLeads = isAdmin || can("db.view_all") || can("dashboard.company_metrics") || can("dashboard.company_todo");
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -91,7 +92,7 @@ export function Header() {
     const min = now - 24 * 60 * 60 * 1000;
     const max = now + 24 * 60 * 60 * 1000;
     return leads
-      .filter((lead) => (isAdmin || (!!currentStaff && lead.assignedStaff === currentStaff)) && lead.detailStage === "예약" && !!lead.reservationAt)
+      .filter((lead) => (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) && lead.detailStage === "예약" && !!lead.reservationAt)
       .map((lead) => ({ lead, at: reservationTimeMs(lead.reservationAt as string) }))
       .filter(({ at }) => Number.isFinite(at) && at >= min && at <= max)
       .sort((a, b) => a.at - b.at)
@@ -102,7 +103,7 @@ export function Header() {
         reservationAt: lead.reservationAt as string,
         overdue: at < now,
       }));
-  }, [leads, nowMs, isAdmin, currentStaff]);
+  }, [leads, nowMs, canViewAllLeads, currentStaff]);
 
   // 로그인 담당자의 "오늘 예약콜"은 별도 고정 바에서 항상 확인할 수 있습니다.
   // 평소에는 노란색, 예약 10분 전부터(예약시간 경과 후 단계가 아직 예약인 경우 포함) 빨간색으로 강조합니다.
@@ -111,7 +112,7 @@ export function Header() {
     return leads
       .filter(
         (lead) =>
-          (isAdmin || (!!currentStaff && lead.assignedStaff === currentStaff)) &&
+          (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) &&
           lead.detailStage === "예약" &&
           !!lead.reservationAt &&
           lead.reservationAt.slice(0, 10) === today
@@ -131,15 +132,15 @@ export function Header() {
         urgent: at <= nowMs + 10 * 60 * 1000,
         overdue: at < nowMs,
       }));
-  }, [leads, nowMs, isAdmin, currentStaff]);
+  }, [leads, nowMs, canViewAllLeads, currentStaff]);
 
   const hasUrgentReservation = todayReservationCalls.some((item) => item.urgent);
   const nextReservation = todayReservationCalls.find((item) => item.at >= nowMs) ?? todayReservationCalls[todayReservationCalls.length - 1];
 
   const alertCount = overdueAlerts.length + scheduleAlerts.length + reservationAlerts.length;
-  const scopedLeads = isAdmin ? leads : leads.filter((l) => !!currentStaff && l.assignedStaff === currentStaff);
+  const scopedLeads = canViewAllLeads ? leads : leads.filter((l) => !!currentStaff && l.assignedStaff === currentStaff);
   const newLeadCount = scopedLeads.filter((l) => (l.detailStage ?? (l.status === "신규접수" || l.status === "상담예정" ? "신규디비" : "")) === "신규디비").length;
-  const reservationOwnerLabel = isAdmin ? "전체 담당자" : currentStaff ?? profile?.displayName ?? "내 예약";
+  const reservationOwnerLabel = canViewAllLeads ? "전체 담당자" : currentStaff ?? profile?.displayName ?? "내 예약";
 
   function choose(id: string) {
     setQ("");

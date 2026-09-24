@@ -655,3 +655,22 @@ npm 없이 디자인만 빠르게 보고 싶다면 별도로 전달된 `dashboar
   - 일/주/월/기간설정 계약건
   - 재통화약속 / 상담 중 / 고려중 투두리스트
 - 실제 로그인 연동 전에는 `CURRENT_STAFF = "박형원"`을 로그인 사용자로 간주하며, 추후 인증 세션 사용자로 교체하면 개인 실적 범위가 자동으로 따라가도록 구성.
+
+---
+
+## v26 — 직원계정관리 / 세부 권한 / 동적 담당자
+
+- 최종관리자 전용 `/staff-accounts` 추가.
+- 최종관리자가 Supabase Auth 직원/관리자 계정을 어드민에서 생성·활성화·비활성화·비밀번호 변경·삭제 가능.
+- `profiles.permissions` JSONB와 `profiles.is_work_staff` 추가.
+- 대시보드/DB/계약/정산/설정/변동내역/데이터집계 38개 세부 권한을 수동 체크 가능.
+- 직원계정은 기본 본인 담당 데이터 범위, `*_view_all` 권한으로 전사 범위 확장.
+- 프론트 메뉴/버튼 제어 + Supabase RLS + JSONB update trigger를 함께 적용.
+- 실무담당자 목록을 고정 배열에서 `profiles.is_work_staff=true` 기반 동적 목록으로 변경.
+- 현재 운영 기준 fallback: 강이삭, 박형원. 홍성원 개발자 최종관리자는 실무담당 목록에서 제외.
+- 새 계정을 `실무 담당자로 사용`으로 만들면 DB관리 담당자 버튼/드롭다운과 정산설정 목록에 자동 반영.
+- 직원명 변경 시 기존 DB/고객/계약 assignedStaff 및 정산요율 키를 RPC로 함께 변경.
+- 계정 영구삭제는 해당 직원에게 배정된 DB/고객/계약이 남아 있으면 차단.
+- 직원계정 생성/수정/삭제를 변경이력 `설정` 카테고리에 기록.
+- 직원계정 관리 API는 서버 전용 `SUPABASE_SERVICE_ROLE_KEY` 사용.
+- 적용 SQL: `supabase/migrations/002_staff_accounts_permissions.sql`.

@@ -210,7 +210,7 @@ function TodoBoard({
 }
 
 export default function DashboardPage() {
-  const { clients, cases, installments, scheduleItems, leads, isAdmin, currentStaff } = useStore();
+  const { clients, cases, installments, scheduleItems, leads, isAdmin, currentStaff, can } = useStore();
   const today = kstDateStr();
   const initialRange = monthRange();
   const currentMonth = todayLocal().slice(0, 7);
@@ -218,12 +218,12 @@ export default function DashboardPage() {
   // 최종관리자는 전사 합계, 직원계정은 상단 KPI만 본인 담당 실적으로 제한합니다.
   // 투두리스트와 기존 분납/기일 캘린더 등 나머지 대시보드는 전체 업무 현황을 유지합니다.
   const topLeads = useMemo(
-    () => (isAdmin ? leads : leads.filter((lead) => !!currentStaff && lead.assignedStaff === currentStaff)),
-    [isAdmin, leads, currentStaff]
+    () => (isAdmin || can("dashboard.company_metrics") ? leads : leads.filter((lead) => !!currentStaff && lead.assignedStaff === currentStaff)),
+    [can, isAdmin, leads, currentStaff]
   );
   const topCases = useMemo(
-    () => (isAdmin ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff)),
-    [isAdmin, cases, currentStaff]
+    () => (isAdmin || can("dashboard.company_metrics") ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff)),
+    [can, isAdmin, cases, currentStaff]
   );
   const dayMap = useMemo(() => buildDayMap(cases, installments, leads), [cases, installments, leads]);
 
@@ -259,13 +259,16 @@ export default function DashboardPage() {
 
   // 투두리스트는 개인계정의 상단 실적 필터와 별개입니다. 현재 전체 업무 대상 DB를 게시판 형식으로 보여줍니다.
   const todoGroups = useMemo(() => {
-    const recall = leads
+    const todoLeads = isAdmin || can("dashboard.company_todo")
+      ? leads
+      : leads.filter((lead) => !!currentStaff && lead.assignedStaff === currentStaff);
+    const recall = todoLeads
       .filter((lead) => leadStage(lead) === "예약" && !lead.convertedClientId)
       .sort((a, b) => (a.reservationAt ?? a.receivedAt).localeCompare(b.reservationAt ?? b.receivedAt));
-    const consulting = leads
+    const consulting = todoLeads
       .filter((lead) => leadStage(lead) === "상담" && !lead.convertedClientId)
       .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
-    const consideration = leads
+    const consideration = todoLeads
       .filter((lead) => (lead.status === "고려중" || leadStage(lead) === "설득필요") && !lead.convertedClientId)
       .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
     return [
@@ -273,7 +276,7 @@ export default function DashboardPage() {
       { kind: "상담 중" as const, rows: consulting },
       { kind: "고려중" as const, rows: consideration },
     ];
-  }, [leads]);
+  }, [can, currentStaff, isAdmin, leads]);
 
   const contractBounds = useMemo(() => {
     if (contractPeriod === "일") return { start: today, end: today };
@@ -315,13 +318,13 @@ export default function DashboardPage() {
             id: i.id,
             date: i.dueDate,
             label: client?.name ?? "-",
-            sub: `${i.seq === 1 ? "계약금" : `${i.seq - 1}회차`} · ${fmtWon(i.amount)}`,
+            sub: can("dashboard.finance") ? `${i.seq === 1 ? "계약금" : `${i.seq - 1}회차`} · ${fmtWon(i.amount)}` : `${i.seq === 1 ? "계약금" : `${i.seq - 1}회차`}`,
             done: i.status === "완료",
             status: i.status,
-            amount: i.amount,
+            amount: can("dashboard.finance") ? i.amount : 0,
           };
         }),
-    [installments, cases, clients, paymentMonth]
+    [can, installments, cases, clients, paymentMonth]
   );
 
   const paymentSummary = useMemo(() => {
@@ -381,7 +384,7 @@ export default function DashboardPage() {
     <>
       <PageHeader
         title="대시보드"
-        description="최종관리자 기준으로 전체 영업 현황을 확인하고, 기존 분납·기일·기간별 통계도 함께 관리합니다."
+        description={isAdmin ? "최종관리자 기준으로 전체 영업 현황과 분납·기일·기간별 통계를 관리합니다." : "허용된 담당범위와 권한 기준으로 영업 현황을 확인합니다."}
         action={
           <DateRangePicker
             start={rangeStart}
@@ -437,7 +440,7 @@ export default function DashboardPage() {
             ))}
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900">{contractSummary.count}건</div>
-          <div className="mt-1 truncate text-[11px] text-slate-400">계약금액 {fmtWon(contractSummary.amount)}</div>
+          {can("dashboard.finance") && <div className="mt-1 truncate text-[11px] text-slate-400">계약금액 {fmtWon(contractSummary.amount)}</div>}
         </Card>
       </div>
 
@@ -462,10 +465,10 @@ export default function DashboardPage() {
 
       <TodoBoard groups={todoGroups} />
 
-      {overdue.length > 0 && (
+      {can("dashboard.installment_calendar") && overdue.length > 0 && (
         <Card className="mt-4 flex flex-wrap items-center gap-3 border-red-100 bg-red-50/60 px-4 py-3">
           <span className="text-sm text-slate-900">
-            연체·결제실패 <b>{overdue.length}건</b> (총 {fmtEokMan(overdueTotal)}) — 분납 확인이 필요해요.
+            연체·결제실패 <b>{overdue.length}건</b>{can("dashboard.finance") ? ` (총 ${fmtEokMan(overdueTotal)})` : ""} — 분납 확인이 필요해요.
           </span>
           <Link href="/cases" className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">
             계약관리로 이동
@@ -473,15 +476,15 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {(
-          [
-            [Users, "신규 의뢰인", `${kpi.newClients}명`, "normal"],
+      {can("dashboard.statistics") && <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {([
+          [Users, "신규 의뢰인", `${kpi.newClients}명`, "normal"],
+          ...(can("dashboard.finance") ? [
             [CircleDollarSign, "계약금액", fmtWon(kpi.contractSales), "normal"],
             [WalletCards, "결제완료액", fmtWon(kpi.realSales), "normal"],
             [CircleDollarSign, "미수금", fmtWon(kpi.receivable), "red"],
-          ] as const
-        ).map(([Icon, label, value, tone]) => (
+          ] : []),
+        ] as Array<[typeof Users, string, string, string]>).map(([Icon, label, value, tone]) => (
           <Card key={label} className="p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-500">{label}</span>
@@ -490,35 +493,35 @@ export default function DashboardPage() {
             <div className={`mt-3 text-xl font-bold ${tone === "red" ? "text-red-600" : "text-slate-900"}`}>{value}</div>
           </Card>
         ))}
-      </div>
+      </div>}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <MonthCalendar
+      {(can("dashboard.installment_calendar") || can("dashboard.schedule_calendar")) && <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        {can("dashboard.installment_calendar") && <MonthCalendar
           title="분납 캘린더"
           month={paymentMonth}
           onMonthChange={setPaymentMonth}
           items={paymentItems}
           tone="blue"
-          summary={paymentSummary}
-        />
-        <MonthCalendar
+          summary={can("dashboard.finance") ? paymentSummary : undefined}
+        />}
+        {can("dashboard.schedule_calendar") && <MonthCalendar
           title="기일·제출기한 캘린더"
           month={hearingMonth}
           onMonthChange={setHearingMonth}
           items={hearingItems}
           tone="amber"
-        />
-      </div>
+        />}
+      </div>}
 
-      <Card className="mt-4 p-4 sm:p-5">
+      {can("dashboard.statistics") && <Card className="mt-4 p-4 sm:p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-semibold text-slate-900">기간별 통계</div>
           <PeriodControl mode={mode} anchor={anchor} bounds={stats.bounds} onModeChange={setMode} onShift={handleShift} />
         </div>
 
         <p className="mb-4 text-base font-semibold text-slate-900 sm:text-lg">
-          {headline.periodLabel}, 결제완료액 <span className="text-blue-600">{fmtEokMan(stats.current.paymentAmount)}</span>을{" "}
-          {headline.isOngoing ? "기록하고 있어요" : "기록했어요"}
+          {headline.periodLabel}, 신규 상담 <span className="text-blue-600">{stats.current.newConsultCount}건</span> · 신규 계약 <span className="text-blue-600">{stats.current.newContractCount}건</span>
+          {can("dashboard.finance") && <> · 결제완료액 <span className="text-blue-600">{fmtEokMan(stats.current.paymentAmount)}</span></>}
         </p>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -528,13 +531,13 @@ export default function DashboardPage() {
             value={`${stats.current.newContractCount}건`}
             deltaPct={stats.deltas.newContractCount}
           />
-          <KpiCard label="계약금액" value={fmtEokMan(stats.current.contractAmount)} deltaPct={stats.deltas.contractAmount} />
-          <KpiCard label="미수금" value={fmtEokMan(stats.receivableTotal)} deltaPct={stats.deltas.receivable} invert />
+          {can("dashboard.finance") && <KpiCard label="계약금액" value={fmtEokMan(stats.current.contractAmount)} deltaPct={stats.deltas.contractAmount} />}
+          {can("dashboard.finance") && <KpiCard label="미수금" value={fmtEokMan(stats.receivableTotal)} deltaPct={stats.deltas.receivable} invert />}
         </div>
-      </Card>
+      </Card>}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card className="p-4 sm:p-5">
+      {can("dashboard.statistics") && <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {can("dashboard.finance") && <Card className="p-4 sm:p-5">
           <div className="mb-4 text-sm font-semibold text-slate-900">사건유형별 결제 구성</div>
           <DonutChart
             centerLabel={fmtEokMan(stats.current.paymentAmount)}
@@ -543,7 +546,7 @@ export default function DashboardPage() {
               { label: "개인파산", value: stats.current.caseTypeSplit.개인파산, color: CASE_TYPE_COLORS.개인파산 },
             ]}
           />
-        </Card>
+        </Card>}
         <Card className="p-4 sm:p-5">
           <div className="mb-4 text-sm font-semibold text-slate-900">절차단계별 사건 현황</div>
           <StackedRatioBar
@@ -554,7 +557,7 @@ export default function DashboardPage() {
             }))}
           />
         </Card>
-      </div>
+      </div>}
     </>
   );
 }

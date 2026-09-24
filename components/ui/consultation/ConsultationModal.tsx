@@ -76,6 +76,7 @@ export function ConsultationModal({
   caseNumberLabel,
   applicationType,
   onApplicationTypeChange,
+  allowApplicationTypeEdit = true,
   showDetailStage = false,
   detailStage,
   onDetailStageChange,
@@ -85,6 +86,8 @@ export function ConsultationModal({
   contractAmount = 0,
   paidAmount = 0,
   outstandingAmount = 0,
+  showFinanceSummary = true,
+  readOnly = false,
   reservationChoice,
   reservationAt,
   onReservationChoiceChange,
@@ -101,6 +104,7 @@ export function ConsultationModal({
   caseNumberLabel: string;
   applicationType: ConsultDirection | undefined;
   onApplicationTypeChange: (v: ConsultDirection | undefined) => void;
+  allowApplicationTypeEdit?: boolean;
   // 상세 DB관리 분류(detailStage)는 DB관리 화면에만 있는 개념이라(고객관리 Client에는
   // 없음), 화면별로 켜고 끌 수 있도록 옵션으로 뺐습니다.
   showDetailStage?: boolean;
@@ -116,6 +120,8 @@ export function ConsultationModal({
   contractAmount?: number;
   paidAmount?: number;
   outstandingAmount?: number;
+  showFinanceSummary?: boolean;
+  readOnly?: boolean;
   // DB 리드 상담일지에서만 노출되는 예약 일정 편집. 고객/계약 쪽에서 재사용할 때는 생략 가능.
   reservationChoice?: boolean;
   reservationAt?: string;
@@ -218,6 +224,7 @@ export function ConsultationModal({
   const requiredKeys = useMemo(() => new Set(REQUIRED_CONSULTATION_FIELDS.map((f) => f.key)), []);
 
   function save() {
+    if (readOnly) return;
     onSave(draft);
     onClose();
   }
@@ -235,11 +242,14 @@ export function ConsultationModal({
 
   return (
     <Modal open={open} title={`${displayName} · 상담일지`} headerExtra={headerExtra} onClose={onClose} size="full">
+      {readOnly && <div className="mb-1 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">조회 전용 권한입니다. 상담일지 내용은 확인할 수 있지만 수정·파일반영·예약변경·저장은 할 수 없습니다.</div>}
+      <fieldset disabled={readOnly} className="min-w-0 border-0 p-0 disabled:opacity-100">
       <div className="space-y-1">
         <div className="flex min-h-8 flex-wrap items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
           <span className="shrink-0 whitespace-nowrap rounded bg-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">상담 후 방향</span>
           <Select
             value={applicationType ?? ""}
+            disabled={!allowApplicationTypeEdit}
             onChange={(e: ChangeEvent<HTMLSelectElement>) => onApplicationTypeChange((e.target.value || undefined) as ConsultDirection | undefined)}
             className={`h-7 min-w-[150px] px-2 text-[11px] sm:h-7 sm:text-[11px] ${!applicationType ? "border-sky-400 bg-sky-50" : ""}`}
           >
@@ -270,7 +280,7 @@ export function ConsultationModal({
           </span>
         </div>
 
-        <div className="grid grid-cols-3 overflow-hidden rounded border border-slate-200 bg-white">
+        {showFinanceSummary && <div className="grid grid-cols-3 overflow-hidden rounded border border-slate-200 bg-white">
           <div className="flex min-h-10 items-center justify-between gap-2 border-r border-slate-200 px-3">
             <span className="text-[11px] font-extrabold text-slate-600">계약금</span>
             <strong className="text-[13px] font-black text-blue-700">{fmtWon(contractAmount)}</strong>
@@ -283,7 +293,7 @@ export function ConsultationModal({
             <span className="text-[11px] font-extrabold text-slate-600">미수금</span>
             <strong className="text-[13px] font-black text-red-600">{fmtWon(Math.max(0, outstandingAmount))}</strong>
           </div>
-        </div>
+        </div>}
 
         {/* v14 레이아웃: 상단 3열은 같은 grid row를 공유해 전체 높이가 일치합니다.
             좌=기본정보/기타, 중=소득/자산, 우=의사/플랜. 하단에는 좌측 상담메모와
@@ -349,6 +359,7 @@ export function ConsultationModal({
           </div>
         </div>
       </div>
+      </fieldset>
 
       <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
         <div>
@@ -360,7 +371,7 @@ export function ConsultationModal({
         </div>
         <div className="flex gap-1">
           <Button variant="secondary" className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={onClose}>취소</Button>
-          <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save}>저장</Button>
+          {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save}>저장</Button>}
         </div>
       </div>
     </Modal>

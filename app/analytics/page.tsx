@@ -26,7 +26,7 @@ function monthRange() {
 }
 
 export default function AnalyticsPage() {
-  const { clients, cases, installments, leads } = useStore();
+  const { clients, cases, installments, leads, can, currentStaff } = useStore();
   const [range] = useState(monthRange());
 
   const dayMap = useMemo(() => buildDayMap(cases, installments, leads), [cases, installments, leads]);
@@ -65,19 +65,19 @@ export default function AnalyticsPage() {
 
   return (
     <>
-      <PageHeader title="데이터집계" description="담당자별 실적, 최근 6개월 계약/결제 추이, 사건유형·절차단계 분포를 한눈에 확인합니다." />
+      <PageHeader title="데이터집계" description={can("analytics.view_all") ? "전사 담당자 실적과 사건/계약 통계를 확인합니다." : `${currentStaff ?? "내"} 담당 업무 기준 통계를 확인합니다.`} />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="전체 고객수" value={`${clients.length}명`} />
+        <KpiCard label="현재 조회 고객수" value={`${clients.length}명`} />
         <KpiCard label="진행중 사건" value={`${activeCaseCount}건`} />
         <KpiCard label="이번달 신규계약" value={`${thisMonthContract}건`} />
-        <KpiCard label="이번달 결제완료액" value={fmtWon(thisMonthPayment)} />
+        {can("analytics.finance") && <KpiCard label="이번달 결제완료액" value={fmtWon(thisMonthPayment)} />}
       </div>
 
-      <Card className="mt-4 p-4 sm:p-5">
+      {can("analytics.finance") && <Card className="mt-4 p-4 sm:p-5">
         <div className="mb-4 text-sm font-semibold text-slate-900">최근 6개월 계약·결제 추이</div>
         <TrendBarChart buckets={monthlyTrend} labelA="계약금액" labelB="결제완료액" colorA="#d97706" colorB="#2563eb" valueFmt={fmtEokMan} />
-      </Card>
+      </Card>}
 
       <Card className="mt-4 overflow-hidden">
         <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-900">담당자별 실적 (전체 기간)</div>
@@ -85,7 +85,7 @@ export default function AnalyticsPage() {
           <table className="admin-responsive-table w-full min-w-[640px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["담당자", "계약건수", "계약금액", "결제율"].map((h) => (
+                {(["담당자", "계약건수", ...(can("analytics.finance") ? ["계약금액", "결제율"] : [])]).map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -97,8 +97,8 @@ export default function AnalyticsPage() {
                 <tr key={r.staff} className="border-t border-slate-100">
                   <td className="px-4 py-3 font-semibold text-slate-900">{r.staff}</td>
                   <td className="px-4 py-3 text-slate-500">{r.caseCount}건</td>
-                  <td className="px-4 py-3 text-slate-900">{fmtWon(r.contractAmount)}</td>
-                  <td className="px-4 py-3 text-slate-500">{r.paymentRate.toFixed(1)}%</td>
+                  {can("analytics.finance") && <td className="px-4 py-3 text-slate-900">{fmtWon(r.contractAmount)}</td>}
+                  {can("analytics.finance") && <td className="px-4 py-3 text-slate-500">{r.paymentRate.toFixed(1)}%</td>}
                 </tr>
               ))}
             </tbody>
@@ -128,7 +128,7 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      <Card className="mt-4 bg-slate-50 px-4 py-3 text-xs text-slate-500">현재 전체 미수금 {fmtWon(receivableTotal)} — 상세 내역은 계약관리 상세의 분납관리에서 확인하세요.</Card>
+      {can("analytics.finance") && <Card className="mt-4 bg-slate-50 px-4 py-3 text-xs text-slate-500">현재 조회범위 미수금 {fmtWon(receivableTotal)} — 상세 내역은 계약관리 상세의 분납관리에서 확인하세요.</Card>}
     </>
   );
 }

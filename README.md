@@ -1,89 +1,155 @@
-# 로파워(LawPower) Admin — v25 실사용 전환
+# 로파워(LawPower) Admin — v26 직원계정/세부권한
 
-기존 in-memory/더미데이터 구조를 제거하고 **Supabase Auth + Postgres + Realtime** 기반의 실제 저장 구조로 전환한 버전입니다.
+v25의 **Supabase Auth + Postgres + Realtime 실사용 구조**에 최종관리자 전용 직원계정관리와 기능별 세부 권한을 추가한 버전입니다.
 
-## 현재 실제로 동작하는 범위
+## v26 핵심
 
-- 최종관리자 이메일/비밀번호 로그인
-- DB관리 신규 DB 직접 등록/수정/상담일지/고객전환
-- 상담일지 전체 데이터 영구 저장
-- Credit4U HTML/XLSX/XLS/CSV 파싱 결과 영구 저장
-- 계약 등록/계약 상세
-- 분납 일정 등록 및 실제 납부 상태 저장
-- 계약금/납부금/미수금 자동 집계
-- 예약콜/콜 경고/상담메모 저장
-- 대시보드/정산/데이터집계가 실제 저장 데이터 기준으로 계산
-- 최저생계비/정산요율 설정 저장
-- 변경이력 저장
-- 여러 브라우저/직원 동시 사용 시 Supabase Realtime 재동기화
+- 최종관리자 전용 `직원계정관리` 메뉴
+- 어드민 화면에서 직원/최종관리자 계정 직접 생성
+- 계정 활성/비활성, 이메일, 이름, 임시/새 비밀번호 변경
+- `실무 담당자로 사용` 토글
+- 메뉴/기능 단위 세부 권한을 체크박스로 직접 설정
+- 권한 프리셋 적용 후 수기 재조정 가능
+- 저장 즉시 Realtime 반영
+- DB관리 담당자 버튼/드롭다운을 `profiles.is_work_staff=true` 계정으로 자동 생성
+- 직원명 변경 시 기존 DB/고객/계약 담당자 문자열 및 정산요율 키 자동 이전
+- 직원 삭제 전 남은 담당 DB/고객/계약 확인
+- 직원계정 변경이력도 `기간별 변동내역 > 설정`에 기록
+- 프론트 메뉴 숨김뿐 아니라 Supabase RLS/DB trigger로 조회범위와 주요 수정권한을 함께 제한
 
-고객/DB/계약 더미데이터는 더 이상 생성하지 않습니다. 최초 로그인 후 빈 화면에서 실제 데이터를 등록해 사용합니다.
+현재 운영 기준은 다음과 같습니다.
 
-## 1. Supabase 프로젝트 생성
+- **홍성원**: 최종관리자와 동일 권한, 개발자 계정, `실무 담당자로 사용 = OFF`
+- **강이삭**: 최종관리자, 실제 상담/DB 업무 수행, `실무 담당자로 사용 = ON`
+- **박형원**: 직원, 실제 상담/DB 업무 수행, `실무 담당자로 사용 = ON`
 
-Supabase에서 새 프로젝트를 하나 생성합니다.
+홍성원은 DB 담당자 버튼에 나오지 않고 강이삭·박형원은 표시됩니다. 이후 최종관리자가 새 사용자를 만들 때 `실무 담당자로 사용`을 켜면 같은 방식으로 자동 추가됩니다.
 
-그 다음 SQL Editor에서 아래 파일을 **전체 실행**합니다.
+## 1. Supabase SQL 적용
+
+신규 프로젝트라면 SQL Editor에서 순서대로 실행합니다.
 
 ```text
 supabase/migrations/001_initial.sql
+supabase/migrations/002_staff_accounts_permissions.sql
 ```
 
-이 SQL이 다음을 생성합니다.
+이미 v25의 `001_initial.sql`을 실행한 프로젝트라면 **002만 추가 실행**하면 됩니다.
 
-- profiles
-- app_leads
-- app_clients
-- app_cases
-- app_installments
-- app_schedule_items
-- app_board_posts
-- app_change_logs
-- app_settings
-- RLS 정책
-- Realtime publication
-- 기본 최저생계비/정산요율 설정
+`002_staff_accounts_permissions.sql`은 다음을 추가합니다.
 
-## 2. 최종관리자 계정 생성
+- `profiles.permissions jsonb`
+- `profiles.is_work_staff boolean`
+- 권한 확인 함수
+- 담당자명 변경 RPC
+- DB/계약/분납/설정/이력의 권한 기반 RLS
+- JSONB 내부 주요 필드 변경을 검사하는 DB trigger
+- profiles Realtime 반영
 
-Supabase Authentication의 Users 화면에서 이메일/비밀번호 계정 하나를 생성합니다.
+## 2. 환경변수
 
-**첫 번째 Auth 계정은 자동으로**
-
-- role = `admin`
-- display_name = `최종관리자`
-- is_active = `true`
-
-로 등록됩니다.
-
-직원계정 생성/세부 권한은 다음 단계에서 구현할 예정입니다. 보안을 위해 두 번째 이후 Auth 계정은 기본 `is_active=false`로 생성되어 업무 데이터에 접근하지 못합니다.
-
-가능하면 직원계정 기능을 붙이기 전까지 Supabase의 공개 회원가입 기능도 비활성 상태로 운영하세요.
-
-## 3. 환경변수
-
-`.env.example`을 복사해서 `.env.local`을 만듭니다.
+`.env.example`을 `.env.local`로 복사합니다.
 
 ```powershell
 Copy-Item .env.example .env.local
 ```
 
-`.env.local`:
+필수 값:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 ```
 
-구형 Supabase 프로젝트의 anon key를 쓰는 경우에는 아래 키도 지원합니다.
+`SUPABASE_SERVICE_ROLE_KEY`는 **직원계정 생성/수정/삭제 API에서만 서버 측으로 사용**합니다. 절대 `NEXT_PUBLIC_`을 붙이지 말고 브라우저 코드, 메신저, GitHub 저장소에 노출하지 마세요.
+
+구형 프로젝트는 Publishable key 대신 아래 값도 지원합니다.
 
 ```env
 NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_KEY
 ```
 
-Publishable key와 anon key 둘 다 넣을 필요는 없습니다.
+## 3. Vercel 환경변수
 
-## 4. 로컬 실행
+Vercel > Project > Settings > Environment Variables에 아래 3개를 등록하고 재배포합니다.
+
+```text
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Service role key는 Vercel의 서버 환경변수로만 저장됩니다.
+
+## 4. 최초 최종관리자
+
+`001_initial.sql` 구조에서는 첫 번째 Supabase Auth 사용자가 자동으로 `admin / active`가 됩니다.
+
+이미 최종관리자 로그인이 되는 상태라면 추가 Auth 계정을 Supabase 화면에서 직접 만들 필요가 없습니다. 로그인 후 사이드바의 **직원계정관리**에서 이후 계정을 생성하세요.
+
+현재 첫 계정 이름이 `최종관리자`처럼 되어 있다면 직원계정관리에서 본인 계정 이름을 `홍성원` 또는 실제 사용자명으로 수정할 수 있습니다. 본인 계정의 비활성화/직원 강등/삭제는 안전상 차단됩니다.
+
+## 5. 직원계정 생성
+
+최종관리자 로그인 → `직원계정관리` → `직원계정 생성`
+
+입력 항목:
+
+- 직원명
+- 로그인 이메일
+- 임시 비밀번호(8자 이상)
+- 계정 구분: 직원 / 최종관리자
+- 계정 활성화
+- 실무 담당자로 사용
+- 직원일 경우 세부 권한
+
+계정만 먼저 만들어두려면 **계정 활성화 OFF**로 생성하면 됩니다. `실무 담당자로 사용`을 ON으로 두면 비활성 상태여도 DB관리의 담당자 버튼/선택목록에 바로 나타나 사전 배정이 가능합니다.
+
+퇴사/장기중지는 영구삭제보다 **계정 활성화 OFF + 필요 시 실무 담당자 OFF**를 권장합니다. 영구삭제는 해당 이름으로 남은 DB/고객/계약이 있으면 차단됩니다.
+
+## 6. 세부 권한 범위
+
+현재 어드민 기능을 기준으로 다음 영역을 개별 체크할 수 있습니다.
+
+- 대시보드: 기본 조회, 전사 상단실적, 전사 투두, 금액정보, 분납캘린더, 기일캘린더, 기간통계/차트
+- DB관리: 본인 DB 조회, 전체 DB 조회, 금액요약, 신규등록, 기본정보수정, 상담일지 조회/수정, 진행단계, 담당자변경, 예약, 고객/계약 전환
+- 계약관리: 본인/전체 조회, 금액정보, 계약등록, 담당자변경, 분납관리, 전자계약서, 서류안내문
+- 정산: 본인/전체 조회, CSV, 정산설정 조회/수정
+- 운영기준: 최저생계비 조회/수정
+- 이력/집계: 본인/전체 변경이력, 본인/전사 데이터집계, 금액통계
+
+`최종관리자` 역할은 체크박스와 무관하게 전체 기능을 사용할 수 있습니다. `직원계정관리` 자체는 최종관리자에게만 보이며 직원에게 권한으로 부여할 수 없습니다.
+
+서로 종속되는 권한은 저장 시 안전하게 자동 보정됩니다. 예를 들어 `분납관리`를 허용하면 계약 조회/금액 조회가 같이 켜지고, `상담일지 수정`을 허용하면 상담일지 조회도 같이 켜집니다.
+
+## 7. 데이터 범위
+
+일반 직원은 기본적으로 **본인 담당 데이터**만 조회합니다. `전체 담당자 DB 조회`, `전체 담당자 계약 조회`, `전체 정산`, `전사 데이터집계` 같은 권한은 별도로 켜야 합니다.
+
+최종관리자는 전체 데이터를 봅니다.
+
+대시보드의 개인/전체 기준도 권한에 따라 동작합니다. 직원의 기본 상단 KPI는 본인 담당 실적이고, `전사 상단 실적 조회`를 켜면 전체 실적을 볼 수 있습니다.
+
+## 8. 동적 담당자
+
+담당자 목록은 더 이상 코드의 고정 직원 배열을 기준으로 운영하지 않습니다.
+
+```text
+profiles.is_work_staff = true
+```
+
+인 계정을 Realtime으로 불러와 다음에 자동 반영합니다.
+
+- DB관리 담당자 필터 버튼
+- 신규 DB 담당자 선택
+- 기존 DB 담당자 변경
+- 계약 등록 담당자 선택
+- 정산설정 담당자 목록
+
+직원명을 바꾸면 기존 `assignedStaff` 데이터도 서버 RPC로 함께 변경됩니다.
+
+## 9. 로컬 실행
 
 ```powershell
 npm install
@@ -91,72 +157,22 @@ npm run build
 npm run dev
 ```
 
-브라우저에서 `http://localhost:3000`으로 접속하면 `/login`으로 이동합니다.
+## 10. 외부 API가 별도로 필요한 기능
 
-## 5. Vercel 배포
+다음 기능은 화면/권한은 준비되어 있지만 실제 외부 발송에는 각 서비스 API가 필요합니다.
 
-Vercel 프로젝트의 Environment Variables에도 동일하게 등록합니다.
-
-```text
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-```
-
-환경변수 등록 후 다시 배포합니다.
-
-## 데이터 저장 방식
-
-기존 프론트 TypeScript 타입을 그대로 유지하면서 실사용 전환하기 위해 주요 업무 엔티티는 Supabase에서 다음 형태로 저장합니다.
-
-```text
-id   text primary key
-data jsonb
-created_by
-created_at
-updated_at
-```
-
-즉 기존 UI 기능을 대규모로 다시 만들지 않고도 모든 상담/계약/분납 데이터를 실제 DB에 영구 저장합니다. 향후 데이터가 많이 쌓이면 검색/통계에 자주 쓰는 값부터 일반 컬럼으로 분리하면 됩니다.
-
-## 인증/보안
-
-- 로그인하지 않은 사용자는 middleware에서 `/login`으로 이동합니다.
-- Supabase RLS가 켜져 있습니다.
-- 활성화된 계정만 업무 테이블을 읽고 수정할 수 있습니다.
-- 현재는 직원별 세부 권한을 아직 나누지 않았으므로 **최종관리자 계정만 활성화해서 사용하는 상태**가 권장됩니다.
-- 직원계정/권한 기능을 만들 때 `profiles.role`, `profiles.staff_name`, `profiles.is_active`를 기반으로 정책을 확장하면 됩니다.
-
-## 현재 별도 외부 연동이 필요한 기능
-
-아래 기능은 Supabase 전환과 별개로 외부 서비스의 API 계정/키가 있어야 실제 전송이 가능합니다.
-
-1. 전자계약서 실제 전송 — 현재 계약정보 미리보기까지 동작
-2. 카카오 알림톡/SMS 서류안내문 실제 발송 — 현재 미리보기까지 동작
-
-Credit4U 파일은 브라우저에서 실제로 파싱하고 **추출된 채무정보와 파일 메타정보는 Supabase에 저장**됩니다. 다만 원본 HTML/XLSX 파일 자체는 현재 Supabase Storage에 보관하지 않습니다.
-
-## 직원계정 기능을 나중에 붙일 때
-
-현재 DB 구조는 이미 준비되어 있습니다.
-
-```text
-profiles.role       admin / staff
-profiles.staff_name 박형원 / 강이삭 / 신홍규 / 이중호
-profiles.is_active  true / false
-```
-
-다음 단계에서 직원 생성 UI, 메뉴별 권한, 담당자별 데이터 범위, 관리자 승인 기능만 추가하면 됩니다.
+- 전자계약서 실제 전송
+- 카카오 알림톡/SMS 서류안내문 실제 발송
 
 ## 주요 파일
 
 ```text
-lib/store.tsx                        Supabase 실DB store
-lib/supabase/client.ts               브라우저 Supabase client
-lib/supabase/server.ts               서버 Supabase client
-middleware.ts                        로그인 세션 보호
-app/login/page.tsx                   실제 로그인 화면
-supabase/migrations/001_initial.sql  초기 DB/RLS/Realtime SQL
-.env.example                         환경변수 예시
+app/staff-accounts/page.tsx                     직원계정관리 UI
+app/api/admin/users/route.ts                    최종관리자 계정관리 서버 API
+lib/permissions.ts                              권한 정의/프리셋/종속관계
+lib/store.tsx                                   로그인 프로필/동적 담당자/권한 적용
+lib/supabase/admin.ts                           service role 서버 클라이언트
+supabase/migrations/001_initial.sql             v25 초기 DB
+supabase/migrations/002_staff_accounts_permissions.sql  v26 권한/RLS
+.env.example                                    환경변수 예시
 ```
-
-`PROJECT_HISTORY.md`에는 v24 이전 프로젝트 인계/변경 기록을 보존해두었습니다.

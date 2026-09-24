@@ -9,7 +9,7 @@ import { fmtWon } from "@/lib/format";
 import { Card, Label, NumberInput, PageHeader } from "@/components/ui/Primitives";
 
 export default function MinLivingCostPage() {
-  const { minLivingCostTable, setMinLivingCostForSize } = useStore();
+  const { minLivingCostTable, setMinLivingCostForSize, can } = useStore();
   const [previewSize, setPreviewSize] = useState<number>(1);
 
   const previewValue = useMemo(
@@ -37,6 +37,7 @@ export default function MinLivingCostPage() {
                 <NumberInput
                   className="max-w-[220px]"
                   value={value}
+                  disabled={!can("living.edit")}
                   onChange={(v) => setMinLivingCostForSize(size, v)}
                 />
                 <div className="text-xs text-slate-400">{fmtWon(value)}</div>

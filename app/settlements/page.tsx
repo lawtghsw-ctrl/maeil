@@ -42,15 +42,21 @@ function downloadCsv(rows: Array<Record<string, string>>, filename: string) {
 }
 
 export default function SettlementsPage() {
-  const { cases, clients, installments, settlementRates } = useStore();
+  const { cases, clients, installments, settlementRates, can, currentStaff } = useStore();
   const init = monthRange();
   const [rangeStart, setRangeStart] = useState(init.start);
   const [rangeEnd, setRangeEnd] = useState(init.end);
   const [page, setPage] = useState(1);
+  const scopedCases = useMemo(
+    () => can("settlements.view_all") ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff),
+    [can, cases, currentStaff]
+  );
+  const scopedCaseIds = useMemo(() => new Set(scopedCases.map((record) => record.id)), [scopedCases]);
 
   const paidRows = useMemo(
     () =>
       installments
+        .filter((i) => scopedCaseIds.has(i.caseId))
         .filter((i) => i.status === "완료" && i.paidDate && inRange(i.paidDate, rangeStart, rangeEnd))
         .map((i) => {
           const c = cases.find((x) => x.id === i.caseId);
@@ -58,30 +64,30 @@ export default function SettlementsPage() {
           return { installment: i, case: c, client };
         })
         .sort((a, b) => (a.installment.paidDate! < b.installment.paidDate! ? 1 : -1)),
-    [installments, cases, clients, rangeStart, rangeEnd]
+    [installments, scopedCaseIds, cases, clients, rangeStart, rangeEnd]
   );
 
   const kpi = useMemo(() => {
-    const contractSales = cases.filter((c) => inRange(c.contractDate, rangeStart, rangeEnd)).reduce((a, c) => a + c.contractAmount, 0);
+    const contractSales = scopedCases.filter((c) => inRange(c.contractDate, rangeStart, rangeEnd)).reduce((a, c) => a + c.contractAmount, 0);
     const realSales = paidRows.reduce((a, r) => a + r.installment.amount, 0);
-    const receivable = cases.reduce((a, c) => a + Math.max(0, c.contractAmount - c.paidAmount), 0);
+    const receivable = scopedCases.reduce((a, c) => a + Math.max(0, c.contractAmount - c.paidAmount), 0);
     return { contractSales, realSales, receivable };
-  }, [cases, paidRows, rangeStart, rangeEnd]);
+  }, [scopedCases, paidRows, rangeStart, rangeEnd]);
 
-  const staffRows = useMemo(() => getStaffPerformance(cases, rangeStart, rangeEnd), [cases, rangeStart, rangeEnd]);
+  const staffRows = useMemo(() => getStaffPerformance(scopedCases, rangeStart, rangeEnd), [scopedCases, rangeStart, rangeEnd]);
 
   // ---- 담당자별 예상 정산액 — 정산설정 메뉴에서 설정한 담당자×결제수단 요율을, 고객관리에서
   // 실제 선택된 결제방식(case.paymentMethod)에 곱해 자동 계산합니다. 정산설정에서 요율을
   // 바꾸거나 고객관리에서 결제방식을 바꾸면 이 화면에 즉시 반영됩니다.
   const expectedSettlementByStaff = useMemo(() => {
     const map = new Map<string, number>();
-    for (const c of cases) {
+    for (const c of scopedCases) {
       if (!inRange(c.contractDate, rangeStart, rangeEnd)) continue;
       const rate = settlementRates[c.assignedStaff as StaffName]?.[c.paymentMethod] ?? 0;
       map.set(c.assignedStaff, (map.get(c.assignedStaff) ?? 0) + Math.round((c.contractAmount * rate) / 100));
     }
     return map;
-  }, [cases, settlementRates, rangeStart, rangeEnd]);
+  }, [scopedCases, settlementRates, rangeStart, rangeEnd]);
   const expectedSettlementTotal = useMemo(
     () => Array.from(expectedSettlementByStaff.values()).reduce((a, v) => a + v, 0),
     [expectedSettlementByStaff]
@@ -128,13 +134,13 @@ export default function SettlementsPage() {
       <Card className="mt-4 overflow-hidden">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div className="text-sm font-semibold text-slate-900">담당자별 정산 요약</div>
-          <Link
+          {can("settlement_settings.view") && <Link
             href="/settlement-settings"
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Percent size={13} />
             정산요율 설정
-          </Link>
+          </Link>}
         </div>
         <div className="overflow-x-auto">
           <table className="admin-responsive-table w-full min-w-[760px] text-sm">
@@ -174,7 +180,7 @@ export default function SettlementsPage() {
           <div className="text-sm font-semibold text-slate-900">결제완료 내역 ({paidRows.length}건)</div>
           <button
             onClick={exportCsv}
-            disabled={paidRows.length === 0}
+            disabled={!can("settlements.export") || paidRows.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
           >
             <Download size={13} />
