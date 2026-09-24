@@ -17,12 +17,13 @@ import {
   LogOut,
   UsersRound,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/lib/store";
 import type { PermissionKey } from "@/lib/permissions";
 
-type MenuItem = readonly [string, string, React.ComponentType<{ size?: number }>, PermissionKey | "admin"];
+type MenuItem = readonly [string, string, LucideIcon, PermissionKey | "admin"];
 
 export const menu: MenuItem[] = [
   ["대시보드", "/", LayoutDashboard, "dashboard.view"],
