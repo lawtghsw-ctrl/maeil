@@ -29,6 +29,7 @@ export const PERMISSION_GROUPS = [
       ["db.change_assignee", "DB 담당자 변경", "DB 담당자를 다른 실무 담당자로 재배정"],
       ["db.manage_reservation", "예약일정 등록/수정", "고객 목록과 상담일지에서 예약 O/X 및 날짜·시간 변경"],
       ["db.convert", "고객/계약관리 전환", "필수 상담일지 완료 DB를 계약관리용 고객으로 전환"],
+      ["db.delete", "DB 고객정보 삭제", "DB관리 고객정보를 영구 삭제. 삭제 전 확인 팝업을 거치며 기본 직원 권한에는 포함되지 않음"],
     ],
   },
   {
@@ -101,6 +102,7 @@ const PERMISSION_DEPENDENCIES: Partial<Record<PermissionKey, PermissionKey[]>> =
   "db.change_assignee": ["db.view", "db.view_all"],
   "db.manage_reservation": ["db.view", "db.change_stage"],
   "db.convert": ["db.view", "db.view_consultation"],
+  "db.delete": ["db.view"],
   "cases.view_all": ["cases.view"],
   "cases.view_finance": ["cases.view"],
   "cases.create": ["cases.view"],
@@ -215,7 +217,7 @@ export const PERMISSION_PRESETS: Array<{ id: string; label: string; description:
     label: "실무 전체권한",
     description: "직원계정관리와 운영기준/정산요율 수정만 제외한 전사 실무 권한",
     permissions: keysMap(
-      ALL_PERMISSION_KEYS.filter((key) => key !== "settlement_settings.edit" && key !== "living.edit")
+      ALL_PERMISSION_KEYS.filter((key) => key !== "settlement_settings.edit" && key !== "living.edit" && key !== "db.delete")
     ),
   },
   {

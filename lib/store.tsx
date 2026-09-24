@@ -120,6 +120,7 @@ interface AppStoreValue {
   updateClient: (id: string, patch: Partial<Client>) => void;
   deleteClient: (id: string) => void;
   updateLead: (id: string, patch: Partial<DbLead>) => void;
+  deleteLead: (id: string) => void;
   convertLeadToClient: (leadId: string) => string | undefined;
   toggleDocument: (caseId: string, itemId: string) => void;
   addCase: (draft: Omit<CaseRecord, "id">) => string;
@@ -490,6 +491,26 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [canPatchLead, leads, logChange, queueWrite, saveEntity]
   );
 
+  const deleteLead = useCallback(
+    (id: string) => {
+      if (!can("db.delete")) return;
+      const target = leads.find((lead) => lead.id === id);
+      if (!target) return;
+
+      setLeads((prev) => prev.filter((lead) => lead.id !== id));
+      queueWrite(deleteEntity("app_leads", id));
+      logChange(
+        "DB관리",
+        "삭제",
+        target.name,
+        target.convertedClientId
+          ? "DB 고객정보 삭제 (계약관리로 전환된 고객·계약 데이터는 유지)"
+          : "DB 고객정보 및 상담일지·메모·예약정보 삭제"
+      );
+    },
+    [can, deleteEntity, leads, logChange, queueWrite]
+  );
+
   const convertLeadToClient = useCallback(
     (leadId: string): string | undefined => {
       if (!can("db.convert")) return undefined;
@@ -710,6 +731,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       updateClient,
       deleteClient,
       updateLead,
+      deleteLead,
       convertLeadToClient,
       toggleDocument,
       addCase,
@@ -748,6 +770,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       updateClient,
       deleteClient,
       updateLead,
+      deleteLead,
       convertLeadToClient,
       toggleDocument,
       addCase,

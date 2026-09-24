@@ -27,8 +27,9 @@ import { checkCallWarning, checkConsultationRequired, kstDateStr } from "@/lib/c
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows, useClickOutside } from "@/components/ui/Primitives";
 import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEditor";
+import { ConfirmDelete } from "@/components/ui/ConfirmDelete";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
-import { ClipboardList, Plus, ShieldAlert } from "lucide-react";
+import { ClipboardList, Plus, ShieldAlert, Trash2 } from "lucide-react";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -489,7 +490,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 export default function DbManagementPage() {
-  const { leads, cases, updateLead, convertLeadToClient, workStaffNames, currentStaff, can } = useStore();
+  const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, can } = useStore();
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<DbDetailStage | "전체">("전체");
@@ -501,6 +502,7 @@ export default function DbManagementPage() {
   const [justConverted, setJustConverted] = useState<string | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string[] | null>(null);
   const [consultTarget, setConsultTarget] = useState<DbLead | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DbLead | null>(null);
 
   const canViewAllDb = can("db.view_all");
   const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
@@ -888,6 +890,12 @@ export default function DbManagementPage() {
                     고객 전환
                   </Button> : null
                 )}
+                {can("db.delete") && (
+                  <Button variant="danger" className="px-2.5 py-1.5" onClick={() => setDeleteTarget(lead)}>
+                    <Trash2 size={14} />
+                    삭제
+                  </Button>
+                )}
               </div>
             </div>
           ))}
@@ -1009,6 +1017,12 @@ export default function DbManagementPage() {
                             고객 전환
                           </Button> : null
                         )}
+                        {can("db.delete") && (
+                          <Button variant="danger" className="px-2.5 py-1.5" onClick={() => setDeleteTarget(lead)}>
+                            <Trash2 size={14} />
+                            삭제
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -1068,6 +1082,25 @@ export default function DbManagementPage() {
           onClose={() => setConsultTarget(null)}
         />
       )}
+
+      <ConfirmDelete
+        open={!!deleteTarget}
+        name={deleteTarget?.name ?? ""}
+        label="DB 고객정보"
+        description={
+          deleteTarget?.convertedClientId
+            ? "DB관리의 리드 정보만 삭제됩니다. 이미 계약관리로 전환된 고객·계약 데이터는 유지되며, 삭제한 DB 정보는 복구할 수 없습니다."
+            : "상담일지·메모·예약정보를 포함한 해당 DB 고객정보가 영구 삭제되며 복구할 수 없습니다."
+        }
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          deleteLead(deleteTarget.id);
+          if (consultTarget?.id === deleteTarget.id) setConsultTarget(null);
+          setBlockedNotice(null);
+          setJustConverted((id) => (id === deleteTarget.id ? null : id));
+        }}
+      />
     </>
   );
 }

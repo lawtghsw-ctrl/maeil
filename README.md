@@ -226,3 +226,6 @@ integrations/google-sheets/SETUP.md              연동 설정 가이드
 ```
 
 `배정 순서` 숫자가 작은 직원부터 순환합니다. 현재 운영 기준은 강이삭 `10`, 박형원 `20`입니다.
+
+### v27.3 추가 적용
+기존 001~003 migration을 적용한 운영 DB에서는 `supabase/migrations/004_db_lead_delete_permission.sql`을 Supabase SQL Editor에서 1회 실행하세요. DB관리의 삭제 버튼은 최종관리자에게 즉시 보이며, 직원에게는 직원계정관리에서 `DB 고객정보 삭제` 권한을 직접 체크한 경우에만 노출됩니다.
