@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, KeyRound, Plus, RefreshCw, Search, ShieldCheck, UserCog, UserRoundCheck, UsersRound } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -300,15 +301,15 @@ export default function StaffAccountsPage() {
       {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["전체 계정", summary.total, UsersRound],
-          ["활성 계정", summary.active, UserRoundCheck],
-          ["최종관리자", summary.admins, ShieldCheck],
-          ["실무 담당자", summary.workStaff, UserCog],
-        ].map(([label, value, Icon]) => (
-          <Card key={String(label)} className="flex items-center gap-3 p-4">
+        {([
+          { label: "전체 계정", value: summary.total, Icon: UsersRound },
+          { label: "활성 계정", value: summary.active, Icon: UserRoundCheck },
+          { label: "최종관리자", value: summary.admins, Icon: ShieldCheck },
+          { label: "실무 담당자", value: summary.workStaff, Icon: UserCog },
+        ] satisfies Array<{ label: string; value: number; Icon: LucideIcon }>).map(({ label, value, Icon }) => (
+          <Card key={label} className="flex items-center gap-3 p-4">
             <div className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><Icon size={18} /></div>
-            <div><div className="text-xs font-semibold text-slate-500">{String(label)}</div><div className="mt-0.5 text-xl font-black text-slate-900">{String(value)}</div></div>
+            <div><div className="text-xs font-semibold text-slate-500">{label}</div><div className="mt-0.5 text-xl font-black text-slate-900">{value}</div></div>
           </Card>
         ))}
       </div>
