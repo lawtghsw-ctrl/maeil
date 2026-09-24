@@ -1,8 +1,24 @@
-# 로파워(LawPower) Admin — v26 직원계정/세부권한
+# 로파워(LawPower) Admin — v27 Google Sheet 신규 DB 자동연동
 
-v25의 **Supabase Auth + Postgres + Realtime 실사용 구조**에 최종관리자 전용 직원계정관리와 기능별 세부 권한을 추가한 버전입니다.
+v26의 **Supabase 실사용 + 직원계정/세부권한 구조**에 Google Sheet `DB가공` 신규 DB 자동수집과 실무담당자 라운드로빈 자동배정을 추가한 버전입니다.
 
-## v26 핵심
+
+## v27 추가 핵심
+
+- Google Sheet 시트명 `DB가공` 자동연동
+- 열 순서: `인입 시기 / 광고명 / 성함 / 휴대폰 / 이메일 / 채무규모 / 월소득 / 상담희망시간`
+- 최초 설정 시점 이전의 기존 행은 가져오지 않고 **그 이후 새로 들어오는 행만 수집**
+- 1분 간격 Apps Script 전송
+- 동일 행 중복수집 방지
+- 신규 DB를 `활성 + 실무담당 + DB자동배정 참여` 직원에게 라운드로빈으로 균등 배정
+- 현재 기본 순서: **강이삭 → 박형원 → 강이삭 → 박형원...**
+- 직원계정관리에서 `신규 DB 자동배정 참여`와 `배정 순서`를 직접 수정
+- 홍성원은 최종관리자 권한을 유지하지만 `실무 담당 OFF`이므로 자동배정 제외
+- 최종관리자는 기존처럼 DB관리에서 담당자를 언제든 수동 변경 가능
+
+자세한 Google Sheet 설정은 `integrations/google-sheets/SETUP.md`를 확인하세요.
+
+## 기존 v26 핵심
 
 - 최종관리자 전용 `직원계정관리` 메뉴
 - 어드민 화면에서 직원/최종관리자 계정 직접 생성
@@ -32,9 +48,10 @@ v25의 **Supabase Auth + Postgres + Realtime 실사용 구조**에 최종관리�
 ```text
 supabase/migrations/001_initial.sql
 supabase/migrations/002_staff_accounts_permissions.sql
+supabase/migrations/003_google_sheet_leads_round_robin.sql
 ```
 
-이미 v25의 `001_initial.sql`을 실행한 프로젝트라면 **002만 추가 실행**하면 됩니다.
+이미 v26까지 적용된 프로젝트라면 **003만 추가 실행**하면 됩니다.
 
 `002_staff_accounts_permissions.sql`은 다음을 추가합니다.
 
@@ -60,6 +77,8 @@ Copy-Item .env.example .env.local
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
+GOOGLE_SHEETS_WEBHOOK_SECRET=충분히_긴_랜덤_문자열
+GOOGLE_SHEETS_SHEET_NAME=DB가공
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY`는 **직원계정 생성/수정/삭제 API에서만 서버 측으로 사용**합니다. 절대 `NEXT_PUBLIC_`을 붙이지 말고 브라우저 코드, 메신저, GitHub 저장소에 노출하지 마세요.
@@ -78,6 +97,8 @@ Vercel > Project > Settings > Environment Variables에 아래 3개를 등록하�
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY
+GOOGLE_SHEETS_WEBHOOK_SECRET
+GOOGLE_SHEETS_SHEET_NAME
 ```
 
 Service role key는 Vercel의 서버 환경변수로만 저장됩니다.
@@ -102,6 +123,8 @@ Service role key는 Vercel의 서버 환경변수로만 저장됩니다.
 - 계정 구분: 직원 / 최종관리자
 - 계정 활성화
 - 실무 담당자로 사용
+- 신규 DB 자동배정 참여
+- DB 자동배정 순서
 - 직원일 경우 세부 권한
 
 계정만 먼저 만들어두려면 **계정 활성화 OFF**로 생성하면 됩니다. `실무 담당자로 사용`을 ON으로 두면 비활성 상태여도 DB관리의 담당자 버튼/선택목록에 바로 나타나 사전 배정이 가능합니다.
@@ -174,5 +197,32 @@ lib/store.tsx                                   로그인 프로필/동적 담�
 lib/supabase/admin.ts                           service role 서버 클라이언트
 supabase/migrations/001_initial.sql             v25 초기 DB
 supabase/migrations/002_staff_accounts_permissions.sql  v26 권한/RLS
+supabase/migrations/003_google_sheet_leads_round_robin.sql  v27 시트연동/라운드로빈
+app/api/integrations/google-sheets/leads/route.ts  Google Sheet webhook
+integrations/google-sheets/Code.gs              Google Apps Script
+integrations/google-sheets/SETUP.md              연동 설정 가이드
 .env.example                                    환경변수 예시
 ```
+
+
+## 11. Google Sheet 신규 DB 자동연동
+
+현재 시트 구조는 아래 8열을 사용합니다.
+
+```text
+인입 시기 | 광고명 | 성함 | 휴대폰 | 이메일 | 채무규모 | 월소득 | 상담희망시간
+```
+
+시트명은 `DB가공`입니다. `integrations/google-sheets/Code.gs`를 해당 스프레드시트의 Apps Script에 붙여넣고 스크립트 속성 2개를 설정한 뒤 `setupLawPowerSync()`를 1회 실행합니다.
+
+중요: `setupLawPowerSync()`는 **실행 당시 마지막 행을 기준점으로 저장**하기 때문에 기존 DB는 가져오지 않습니다. 그 다음 추가되는 행부터 자동수집합니다.
+
+자동배정 대상은 직원계정관리에서 다음 3조건을 모두 만족해야 합니다.
+
+```text
+계정 활성화 ON
+실무 담당자로 사용 ON
+신규 DB 자동배정 참여 ON
+```
+
+`배정 순서` 숫자가 작은 직원부터 순환합니다. 현재 운영 기준은 강이삭 `10`, 박형원 `20`입니다.

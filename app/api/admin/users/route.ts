@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     const { admin } = await requireAdmin(request);
     const [{ data: listed, error: listError }, { data: profiles, error: profileError }] = await Promise.all([
       admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
-      admin.from("profiles").select("id,email,display_name,role,staff_name,is_active,is_work_staff,permissions,created_at,updated_at").order("created_at"),
+      admin.from("profiles").select("id,email,display_name,role,staff_name,is_active,is_work_staff,auto_assign_leads,lead_assignment_order,permissions,created_at,updated_at").order("created_at"),
     ]);
     if (listError) throw listError;
     if (profileError) throw profileError;
@@ -55,6 +55,8 @@ export async function GET(request: NextRequest) {
         staffName: profile.staff_name || profile.display_name || "",
         isActive: profile.is_active === true,
         isWorkStaff: profile.is_work_staff !== false,
+        autoAssignLeads: profile.auto_assign_leads === true,
+        leadAssignmentOrder: Number(profile.lead_assignment_order ?? 1000),
         permissions: (profile.permissions ?? {}) as PermissionMap,
         createdAt: authUser?.created_at ?? profile.created_at,
         lastSignInAt: authUser?.last_sign_in_at ?? null,
@@ -76,6 +78,8 @@ export async function POST(request: NextRequest) {
     const role = body.role === "admin" ? "admin" : "staff";
     const isActive = body.isActive === true;
     const isWorkStaff = body.isWorkStaff !== false;
+    const autoAssignLeads = isWorkStaff && body.autoAssignLeads !== false;
+    const leadAssignmentOrder = Math.max(1, Math.min(9999, Number(body.leadAssignmentOrder) || 1000));
     const permissions = normalizePermissions((body.permissions ?? {}) as PermissionMap);
     if (!email || !email.includes("@")) throw new Error("올바른 이메일을 입력해주세요.");
     if (password.length < 8) throw new Error("임시 비밀번호는 8자 이상 입력해주세요.");
@@ -104,6 +108,8 @@ export async function POST(request: NextRequest) {
       role,
       is_active: isActive,
       is_work_staff: isWorkStaff,
+      auto_assign_leads: autoAssignLeads,
+      lead_assignment_order: leadAssignmentOrder,
       permissions,
       updated_at: new Date().toISOString(),
     });
@@ -111,7 +117,7 @@ export async function POST(request: NextRequest) {
       await admin.auth.admin.deleteUser(data.user.id);
       throw updateError;
     }
-    await logAccountChange(admin, actorName, displayName, "등록", `직원계정 생성 · ${role === "admin" ? "최종관리자" : "직원"} · ${isActive ? "활성" : "비활성"} · 실무담당 ${isWorkStaff ? "사용" : "제외"}`);
+    await logAccountChange(admin, actorName, displayName, "등록", `직원계정 생성 · ${role === "admin" ? "최종관리자" : "직원"} · ${isActive ? "활성" : "비활성"} · 실무담당 ${isWorkStaff ? "사용" : "제외"} · DB자동배정 ${autoAssignLeads ? `참여(${leadAssignmentOrder})` : "제외"}`);
     return NextResponse.json({ ok: true, id: data.user.id });
   } catch (err) {
     return fail(err);
@@ -176,6 +182,8 @@ export async function PATCH(request: NextRequest) {
       role: nextRole,
       is_active: nextActive,
       is_work_staff: body.isWorkStaff !== false,
+      auto_assign_leads: body.isWorkStaff !== false && body.autoAssignLeads === true,
+      lead_assignment_order: Math.max(1, Math.min(9999, Number(body.leadAssignmentOrder) || 1000)),
       permissions: normalizePermissions((body.permissions ?? {}) as PermissionMap),
       updated_at: new Date().toISOString(),
     }).eq("id", id);
@@ -187,7 +195,7 @@ export async function PATCH(request: NextRequest) {
       if (renameError) throw renameError;
     }
 
-    await logAccountChange(admin, actorName, displayName, "수정", `직원계정 설정 변경 · ${nextRole === "admin" ? "최종관리자" : "직원"} · ${nextActive ? "활성" : "비활성"} · 실무담당 ${body.isWorkStaff !== false ? "사용" : "제외"}`);
+    await logAccountChange(admin, actorName, displayName, "수정", `직원계정 설정 변경 · ${nextRole === "admin" ? "최종관리자" : "직원"} · ${nextActive ? "활성" : "비활성"} · 실무담당 ${body.isWorkStaff !== false ? "사용" : "제외"} · DB자동배정 ${body.isWorkStaff !== false && body.autoAssignLeads === true ? `참여(${Math.max(1, Math.min(9999, Number(body.leadAssignmentOrder) || 1000))})` : "제외"}`);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return fail(err);

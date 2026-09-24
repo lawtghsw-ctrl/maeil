@@ -2,6 +2,14 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // 외부 시스템 webhook은 브라우저 로그인 세션이 없으므로 인증 middleware에서 제외합니다.
+  // 실제 요청 인증은 각 API route의 전용 secret(header)으로 검증합니다.
+  if (pathname === "/api/integrations/google-sheets/leads") {
+    return NextResponse.next({ request });
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
@@ -24,7 +32,6 @@ export async function middleware(request: NextRequest) {
 
   const { data } = await supabase.auth.getUser();
   const user = data.user;
-  const pathname = request.nextUrl.pathname;
   const isLogin = pathname === "/login";
 
   if (!user && !isLogin) {

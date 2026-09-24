@@ -306,6 +306,14 @@ export interface DbLead {
   status: DbLeadStatus;
   assignedStaff: StaffName;
   source?: LeadSource; // 유입경로
+  email?: string; // 광고/구글시트에서 수집된 이메일
+  adName?: string; // 광고명(구글시트 DB가공 열)
+  debtRaw?: string; // 정규 옵션과 일치하지 않는 원본 채무규모 문자열
+  incomeRaw?: string; // 정규 옵션과 일치하지 않는 원본 월소득 문자열
+  consultTimeRaw?: string; // 정규 옵션과 일치하지 않는 원본 상담희망시간 문자열
+  sourceSheet?: string; // 외부연동 원본 시트명
+  sourceRow?: number; // 외부연동 원본 행번호
+  sourceExternalKey?: string; // 외부연동 중복방지 키
   memo?: string; // 상담원이 남기는 기초정보 메모(간단 요약용 — 상세 이력은 상담일지 메모 게시판 참고)
   detailStage?: DbDetailStage; // DB관리 통합 진행단계(기존 필드명은 호환을 위해 유지)
   reservationAt?: string; // 예약 단계 상담 예정시각 — datetime-local(YYYY-MM-DDTHH:mm)

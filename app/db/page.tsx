@@ -33,14 +33,19 @@ import { ClipboardList, Plus, ShieldAlert } from "lucide-react";
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
 function LeadTags({ lead }: { lead: DbLead }) {
-  if (!lead.debtRange && !lead.incomeRange && !lead.consultTime) {
-    return <span className="text-[11px] text-slate-300">인스턴트 양식 응답 없음</span>;
+  const debt = lead.debtRange ?? lead.debtRaw;
+  const income = lead.incomeRange ?? lead.incomeRaw;
+  const consultTime = lead.consultTime ?? lead.consultTimeRaw;
+  if (!debt && !income && !consultTime && !lead.adName && !lead.email) {
+    return <span className="text-[11px] text-slate-300">광고/양식 응답 없음</span>;
   }
   return (
     <div className="space-y-0.5 text-[11px] text-slate-600">
-      {lead.debtRange && <div>채무 총금액 · {lead.debtRange}</div>}
-      {lead.incomeRange && <div>실 월소득 · {lead.incomeRange}</div>}
-      {lead.consultTime && <div>상담가능시간 · {lead.consultTime}</div>}
+      {lead.adName && <div>광고명 · {lead.adName}</div>}
+      {lead.email && <div>이메일 · {lead.email}</div>}
+      {debt && <div>채무 총금액 · {debt}</div>}
+      {income && <div>실 월소득 · {income}</div>}
+      {consultTime && <div>상담가능시간 · {consultTime}</div>}
     </div>
   );
 }
@@ -548,6 +553,11 @@ export default function DbManagementPage() {
         const searchable = [
           l.name,
           l.phone,
+          l.email ?? "",
+          l.adName ?? "",
+          l.debtRaw ?? "",
+          l.incomeRaw ?? "",
+          l.consultTimeRaw ?? "",
           l.memo ?? "",
           l.consultation?.memo ?? "",
           memoLogText,
@@ -688,7 +698,7 @@ export default function DbManagementPage() {
             setQuery("");
             setPage(1);
           }}
-          placeholder="고객명 · 메모 · 연락처 · 사건번호 검색"
+          placeholder="고객명 · 연락처 · 이메일 · 광고명 · 메모 · 사건번호 검색"
         />
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs font-semibold text-slate-500">담당자</span>
