@@ -3,8 +3,8 @@
 // 도원 Admin(tg_m) components/header.tsx와 동일한 구조(검색 + 알림벨 + 새로고침)로 이식 —
 // 검색 대상은 고객(의뢰인), 알림은 연체·실패 분납 + 오늘까지의 기일·제출기한, 신규 DB
 // 뱃지는 DB관리의 미확인(신규접수) 리드 건수로 매핑.
-import { Bell, CalendarClock, ChevronDown, ChevronUp, Clock3, Inbox, PhoneCall, RefreshCcw, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { Bell, CalendarClock, ChevronDown, ChevronUp, Clock3, GripVertical, Inbox, PhoneCall, RefreshCcw, Search, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -38,6 +38,80 @@ function formatReservationClock(value: string): string {
   return time.slice(0, 5);
 }
 
+type FloatingPosition = { left: number; top: number };
+
+function clampFloatingPosition(position: FloatingPosition, width = 360): FloatingPosition {
+  if (typeof window === "undefined") return position;
+  const maxLeft = Math.max(8, window.innerWidth - width - 8);
+  const maxTop = Math.max(8, window.innerHeight - 72);
+  return {
+    left: Math.min(Math.max(8, position.left), maxLeft),
+    top: Math.min(Math.max(8, position.top), maxTop),
+  };
+}
+
+function useDraggableFloatingPosition(storageKey: string, defaultTop: number, width = 360) {
+  const [position, setPosition] = useState<FloatingPosition | null>(null);
+
+  useEffect(() => {
+    const defaultPosition = clampFloatingPosition({ left: window.innerWidth - width - 16, top: defaultTop }, width);
+    let initial = defaultPosition;
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as FloatingPosition;
+        if (Number.isFinite(parsed?.left) && Number.isFinite(parsed?.top)) {
+          initial = clampFloatingPosition(parsed, width);
+        }
+      }
+    } catch {
+      // localStorage를 사용할 수 없는 브라우저에서는 기본 위치만 사용합니다.
+    }
+    setPosition(initial);
+
+    const onResize = () => {
+      setPosition((current) => (current ? clampFloatingPosition(current, width) : current));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [defaultTop, storageKey, width]);
+
+  function startDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    const current = position ?? clampFloatingPosition({ left: window.innerWidth - width - 16, top: defaultTop }, width);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let latest = current;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      latest = clampFloatingPosition(
+        {
+          left: current.left + (moveEvent.clientX - startX),
+          top: current.top + (moveEvent.clientY - startY),
+        },
+        width
+      );
+      setPosition(latest);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(latest));
+      } catch {
+        // 위치 저장 실패 시 현재 세션 위치만 유지합니다.
+      }
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    event.preventDefault();
+  }
+
+  return { position, startDrag };
+}
+
 export function Header() {
   const { clients, installments, cases, scheduleItems, leads, isAdmin, currentStaff, profile, can } = useStore();
   const router = useRouter();
@@ -46,6 +120,8 @@ export function Header() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [reservationCallOpen, setReservationCallOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const noticeFloating = useDraggableFloatingPosition("lawpower-notice-popup-position", 72);
+  const reservationFloating = useDraggableFloatingPosition("lawpower-reservation-popup-position", 72);
   const todayIso = kstDateKey(new Date(nowMs));
   const canViewAllLeads = isAdmin || can("db.view_all") || can("dashboard.company_metrics") || can("dashboard.company_todo");
 
@@ -234,18 +310,30 @@ export function Header() {
             )}
           </button>
           {noticeOpen && (
-            <div className="absolute right-0 top-11 z-50 w-[calc(100vw-24px)] max-w-[360px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div
+              className="fixed z-50 w-[calc(100vw-24px)] max-w-[360px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+              style={noticeFloating.position ? { left: noticeFloating.position.left, top: noticeFloating.position.top } : { right: 16, top: 72 }}
+            >
+              <div
+                className="flex cursor-move select-none items-center justify-between border-b border-slate-100 px-4 py-3"
+                onPointerDown={noticeFloating.startDrag}
+                title="드래그해서 원하는 위치로 이동"
+              >
                 <div>
                   <div className="text-sm font-bold">업무 알림</div>
                   <div className="text-[11px] text-slate-400">확인할 업무 알림 {alertCount}건</div>
                 </div>
-                <button
-                  onClick={() => setNoticeOpen(false)}
-                  className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100"
-                >
-                  <X size={15} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <GripVertical size={15} className="text-slate-300" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => setNoticeOpen(false)}
+                    className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
               </div>
               <div className="max-h-96 overflow-y-auto">
                 {alertCount === 0 ? (
@@ -309,7 +397,10 @@ export function Header() {
       </div>
     </header>
 
-    <div className="fixed right-4 top-[72px] z-40 hidden w-[360px] max-w-[calc(100vw-24px)] sm:block">
+    <div
+      className="fixed z-40 hidden w-[360px] max-w-[calc(100vw-24px)] sm:block"
+      style={reservationFloating.position ? { left: reservationFloating.position.left, top: reservationFloating.position.top } : { right: 16, top: 72 }}
+    >
       <button
         type="button"
         onClick={() => setReservationCallOpen((v) => !v)}
@@ -341,14 +432,26 @@ export function Header() {
 
       {reservationCallOpen && (
         <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+          <div
+            className="flex cursor-move select-none items-center justify-between border-b border-slate-100 px-3 py-2"
+            onPointerDown={reservationFloating.startDrag}
+            title="드래그해서 원하는 위치로 이동"
+          >
             <div>
               <div className="text-sm font-bold text-slate-900">오늘 예약콜</div>
               <div className="text-[11px] text-slate-400">{reservationOwnerLabel} · 예약시간 순</div>
             </div>
-            <button type="button" onClick={() => setReservationCallOpen(false)} className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100">
-              <X size={14} />
-            </button>
+            <div className="flex items-center gap-1">
+              <GripVertical size={15} className="text-slate-300" aria-hidden="true" />
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => setReservationCallOpen(false)}
+                className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100"
+              >
+                <X size={14} />
+              </button>
+            </div>
           </div>
           <div className="max-h-72 overflow-y-auto">
             {todayReservationCalls.length === 0 ? (

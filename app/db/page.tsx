@@ -576,7 +576,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 export default function DbManagementPage() {
-  const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, can } = useStore();
+  const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, isAdmin, can } = useStore();
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<LeadSource | "전체">("전체");
@@ -766,14 +766,7 @@ export default function DbManagementPage() {
 
   return (
     <>
-      <PageHeader
-        title="DB관리"
-        action={can("db.create") ? (
-          <Button onClick={() => setNewLeadOpen(true)}>
-            <Plus size={15} /> 추가
-          </Button>
-        ) : undefined}
-      />
+      <PageHeader title="DB관리" />
 
       {can("db.view_finance") && <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
@@ -899,6 +892,19 @@ export default function DbManagementPage() {
       </Card>
 
       <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3">
+          <div>
+            <div className="text-sm font-bold text-slate-900">고객리스트</div>
+            <div className="mt-0.5 text-[11px] text-slate-400">현재 조건 {rows.length}건</div>
+          </div>
+          {(isAdmin || can("db.create")) && (
+            <Button onClick={() => setNewLeadOpen(true)} className="shrink-0">
+              <Plus size={15} />
+              추가
+            </Button>
+          )}
+        </div>
+
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
