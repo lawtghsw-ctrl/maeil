@@ -664,7 +664,7 @@ export const leads: DbLead[] = Array.from({ length: LEAD_COUNT }, (_, i) => {
     // 유입경로 — 메타 광고 인스턴트 양식이 있는 리드는 실제로도 대부분 메타 광고 유입이라,
     // hasInstantForm인 경우 "메타(페이스북/인스타그램) 광고"로 편향되게 뽑고, 그 외에는
     // 나머지 채널 중에서 고르게 뽑아 유입경로별 분포가 현실적으로 보이도록 했습니다.
-    source: hasInstantForm ? (chance(0.75) ? "메타(페이스북/인스타그램) 광고" : pick(LEAD_SOURCE_OPTIONS)) : pick(LEAD_SOURCE_OPTIONS),
+    source: hasInstantForm ? (chance(0.75) ? "메타" : pick(LEAD_SOURCE_OPTIONS)) : pick(LEAD_SOURCE_OPTIONS),
     debtRange: hasInstantForm ? pick(DEBT_RANGE_OPTIONS) : undefined,
     incomeRange: hasInstantForm ? pick(INCOME_RANGE_OPTIONS) : undefined,
     consultTime: hasInstantForm ? pick(CONSULT_TIME_OPTIONS) : undefined,
