@@ -4,7 +4,7 @@
 // 검색 대상은 고객(의뢰인), 알림은 연체·실패 분납 + 오늘까지의 기일·제출기한, 신규 DB
 // 뱃지는 DB관리의 미확인(신규접수) 리드 건수로 매핑.
 import { Bell, CalendarClock, ChevronDown, ChevronUp, Clock3, GripVertical, Inbox, PhoneCall, RefreshCcw, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -52,6 +52,7 @@ function clampFloatingPosition(position: FloatingPosition, width = 360): Floatin
 
 function useDraggableFloatingPosition(storageKey: string, defaultTop: number, width = 360) {
   const [position, setPosition] = useState<FloatingPosition | null>(null);
+  const didDragRef = useRef(false);
 
   useEffect(() => {
     const defaultPosition = clampFloatingPosition({ left: window.innerWidth - width - 16, top: defaultTop }, width);
@@ -82,12 +83,21 @@ function useDraggableFloatingPosition(storageKey: string, defaultTop: number, wi
     const startX = event.clientX;
     const startY = event.clientY;
     let latest = current;
+    let moved = false;
+    didDragRef.current = false;
 
     const onMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+
+      // 짧은 클릭은 기존처럼 팝업 열기/닫기로 사용하고, 4px 이상 움직였을 때만 드래그로 판정합니다.
+      if (!moved && Math.hypot(deltaX, deltaY) < 4) return;
+      moved = true;
+      didDragRef.current = true;
       latest = clampFloatingPosition(
         {
-          left: current.left + (moveEvent.clientX - startX),
-          top: current.top + (moveEvent.clientY - startY),
+          left: current.left + deltaX,
+          top: current.top + deltaY,
         },
         width
       );
@@ -97,6 +107,7 @@ function useDraggableFloatingPosition(storageKey: string, defaultTop: number, wi
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      if (!moved) return;
       try {
         window.localStorage.setItem(storageKey, JSON.stringify(latest));
       } catch {
@@ -106,10 +117,15 @@ function useDraggableFloatingPosition(storageKey: string, defaultTop: number, wi
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp, { once: true });
-    event.preventDefault();
   }
 
-  return { position, startDrag };
+  function consumeDragClick() {
+    if (!didDragRef.current) return false;
+    didDragRef.current = false;
+    return true;
+  }
+
+  return { position, startDrag, consumeDragClick };
 }
 
 export function Header() {
@@ -403,13 +419,20 @@ export function Header() {
     >
       <button
         type="button"
-        onClick={() => setReservationCallOpen((v) => !v)}
-        className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left shadow-md transition ${
+        onPointerDown={reservationFloating.startDrag}
+        onClick={(event) => {
+          if (reservationFloating.consumeDragClick()) {
+            event.preventDefault();
+            return;
+          }
+          setReservationCallOpen((v) => !v);
+        }}
+        className={`flex w-full touch-none select-none items-center gap-2 rounded-xl border px-3 py-2 text-left shadow-md transition cursor-grab active:cursor-grabbing ${
           hasUrgentReservation
             ? "border-red-400 bg-red-50 text-red-900 ring-2 ring-red-100"
             : "border-amber-300 bg-amber-50 text-amber-950"
         }`}
-        title="오늘 예약콜 보기"
+        title="클릭하면 예약콜을 열고, 노란색 바를 드래그하면 위치를 이동할 수 있습니다."
       >
         <span className={`grid size-8 shrink-0 place-items-center rounded-full ${hasUrgentReservation ? "bg-red-600 text-white" : "bg-amber-500 text-white"}`}>
           <PhoneCall size={16} />
