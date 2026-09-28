@@ -178,14 +178,13 @@ export const CONSULT_TIME_COLOR: Record<ConsultTimeSlot, string> = {
 // 고객 DB 유입경로 — 광고 채널별 반응률·전환율을 구분해서 볼 수 있도록 세분화.
 // 목록은 언제든 필요에 맞게 값만 바꾸면 되도록 별도 상수로 뒀습니다.
 export const LEAD_SOURCE_OPTIONS = [
-  "메타(페이스북/인스타그램) 광고",
-  "네이버 검색광고",
-  "네이버 블로그/카페",
-  "유튜브 광고",
-  "당근마켓",
+  "메타",
+  "네이버",
+  "구글",
+  "유튜브",
+  "인스타그램",
+  "쓰레드",
   "지인소개",
-  "재방문(기존 상담고객)",
-  "제휴사 연계",
   "기타",
 ] as const;
 export type LeadSource = (typeof LEAD_SOURCE_OPTIONS)[number];

@@ -102,6 +102,73 @@ function effectiveStage(lead: DbLead): DbDetailStage {
   return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
 }
 
+// DB 유입경로 상단 필터는 현재 운영에 필요한 8개 분류만 사용합니다.
+// 기존 데이터에 저장된 예전 세부 명칭도 새 분류로 자동 묶어서 과거 DB가 필터에서 누락되지 않게 합니다.
+function leadSourceCategory(lead: DbLead): LeadSource {
+  const raw = String(lead.source ?? "").trim().toLowerCase();
+
+  if (raw) {
+    if (raw === "메타" || raw.includes("메타") || raw.includes("facebook") || raw.includes("페이스북")) return "메타";
+    if (raw === "네이버" || raw.includes("네이버")) return "네이버";
+    if (raw === "구글" || raw.includes("google") || raw.includes("구글")) return "구글";
+    if (raw === "유튜브" || raw.includes("youtube") || raw.includes("유튜브")) return "유튜브";
+    if (raw === "인스타그램" || raw.includes("instagram") || raw.includes("인스타")) return "인스타그램";
+    if (raw === "쓰레드" || raw.includes("threads") || raw.includes("thread") || raw.includes("쓰레드")) return "쓰레드";
+    if (raw === "지인소개" || raw.includes("지인") || raw.includes("소개")) return "지인소개";
+    return "기타";
+  }
+
+  // 현재 Google Sheet 'DB 가공' 자동연동은 Meta 인스턴트양식 DB 파이프라인입니다.
+  // v27.5 이전에 source 없이 저장된 자동연동 DB도 메타로 집계합니다.
+  if (String(lead.sourceSheet ?? "").replace(/\s/g, "").trim() === "DB가공") return "메타";
+
+  return "기타";
+}
+
+function LeadSourceFilterBar({
+  counts,
+  total,
+  active,
+  onSelect,
+}: {
+  counts: Partial<Record<LeadSource, number>>;
+  total: number;
+  active: LeadSource | "전체";
+  onSelect: (source: LeadSource | "전체") => void;
+}) {
+  return (
+    <Card className="mb-3 overflow-x-auto p-2.5">
+      <div className="flex min-w-max items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onSelect("전체")}
+          className={`h-8 rounded-md border px-3 text-xs font-bold transition ${
+            active === "전체"
+              ? "border-blue-600 bg-blue-600 text-white"
+              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          전체 {total}건
+        </button>
+        {LEAD_SOURCE_OPTIONS.map((source) => (
+          <button
+            key={source}
+            type="button"
+            onClick={() => onSelect(active === source ? "전체" : source)}
+            className={`h-8 rounded-md border px-3 text-xs font-bold transition ${
+              active === source
+                ? "border-blue-600 bg-blue-600 text-white"
+                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            {source} {counts[source] ?? 0}건
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // 콜 관리 경고는 "부재" / "착수금 안내" 단계에서만 운영합니다.
 // 상단 진행보드의 느낌표와 고객 행의 상세 경고가 서로 다른 조건을 쓰지 않도록
 // 하나의 Set으로 공유합니다. 날짜별 판정은 checkCallWarning()이 KST 기준 오늘 기록만
@@ -395,6 +462,8 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
   const { addLead, workStaffNames, currentStaff, can } = useStore();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [adName, setAdName] = useState("");
+  const [email, setEmail] = useState("");
   const [assignedStaff, setAssignedStaff] = useState<StaffName>((currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
   const [source, setSource] = useState<LeadSource | "">("");
   const [debtRange, setDebtRange] = useState<DebtRange | "">("");
@@ -402,11 +471,18 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
   const [consultTime, setConsultTime] = useState<ConsultTimeSlot | "">("");
   const [memo, setMemo] = useState("");
 
+  useEffect(() => {
+    if (!open || assignedStaff || workStaffNames.length === 0) return;
+    setAssignedStaff((currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
+  }, [open, assignedStaff, currentStaff, workStaffNames]);
+
   function save() {
     if (!name.trim() || !phone.trim()) return;
     addLead({
       name: name.trim(),
       phone: phone.trim(),
+      adName: adName.trim() || undefined,
+      email: email.trim() || undefined,
       status: "신규접수",
       assignedStaff,
       detailStage: "신규디비",
@@ -418,6 +494,8 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
     });
     setName("");
     setPhone("");
+    setAdName("");
+    setEmail("");
     setSource("");
     setDebtRange("");
     setIncomeRange("");
@@ -427,7 +505,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
   }
 
   return (
-    <Modal open={open} title="신규 DB 등록" onClose={onClose} size="md">
+    <Modal open={open} title="DB 수기 추가" onClose={onClose} size="md">
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold text-slate-600">
           이름 *
@@ -436,6 +514,14 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
         <label className="text-xs font-semibold text-slate-600">
           연락처 *
           <Input className="mt-1" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="010-0000-0000" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          광고명
+          <Input className="mt-1" value={adName} onChange={(e) => setAdName(e.target.value)} placeholder="광고명" />
+        </label>
+        <label className="text-xs font-semibold text-slate-600">
+          이메일
+          <Input className="mt-1" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@email.com" />
         </label>
         <label className="text-xs font-semibold text-slate-600">
           담당자
@@ -483,7 +569,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>취소</Button>
-        <Button onClick={save} disabled={!name.trim() || !phone.trim()}>등록</Button>
+        <Button onClick={save} disabled={!name.trim() || !phone.trim()}>추가</Button>
       </div>
     </Modal>
   );
@@ -493,6 +579,7 @@ export default function DbManagementPage() {
   const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, can } = useStore();
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<LeadSource | "전체">("전체");
   const [stageFilter, setStageFilter] = useState<DbDetailStage | "전체">("전체");
   const [staffFilter, setStaffFilter] = useState<StaffName | "전체">("전체");
   const [timeFilter, setTimeFilter] = useState<ConsultTimeSlot | "전체">("전체");
@@ -527,9 +614,9 @@ export default function DbManagementPage() {
     setJustConverted(lead.id);
   }
 
-  // 검색어·담당자까지 적용한 전체 집합에서 진행단계 건수를 먼저 계산하고, 상단 보드에서
-  // 선택한 단계만 baseRows로 내려보냅니다. 따라서 다른 광고 피벗과 조합해서 사용할 수 있습니다.
-  const stageUniverse = useMemo(() => {
+  // 검색어·담당자까지 적용한 집합에서 유입경로 건수를 먼저 계산합니다.
+  // 유입경로 버튼을 선택하면 진행단계 보드와 아래 고객리스트가 함께 해당 경로로 필터됩니다.
+  const sourceUniverse = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const compactNeedle = needle.replace(/[\s\-().]/g, "");
 
@@ -575,6 +662,20 @@ export default function DbManagementPage() {
         return searchable.replace(/[\s\-().]/g, "").includes(compactNeedle);
       });
   }, [leads, cases, staffFilter, query]);
+
+  const sourceCounts = useMemo(() => {
+    const map: Partial<Record<LeadSource, number>> = {};
+    for (const lead of sourceUniverse) {
+      const source = leadSourceCategory(lead);
+      map[source] = (map[source] ?? 0) + 1;
+    }
+    return map;
+  }, [sourceUniverse]);
+
+  const stageUniverse = useMemo(
+    () => sourceUniverse.filter((lead) => sourceFilter === "전체" || leadSourceCategory(lead) === sourceFilter),
+    [sourceUniverse, sourceFilter]
+  );
 
   const stageCounts = useMemo(() => {
     const map: Partial<Record<DbDetailStage, number>> = {};
@@ -669,7 +770,7 @@ export default function DbManagementPage() {
         title="DB관리"
         action={can("db.create") ? (
           <Button onClick={() => setNewLeadOpen(true)}>
-            <Plus size={15} /> 신규 DB 등록
+            <Plus size={15} /> 추가
           </Button>
         ) : undefined}
       />
@@ -738,6 +839,17 @@ export default function DbManagementPage() {
           ))}
         </div>
       </Card>
+
+      <LeadSourceFilterBar
+        counts={sourceCounts}
+        total={sourceUniverse.length}
+        active={sourceFilter}
+        onSelect={(source) => {
+          setSourceFilter(source);
+          setStageFilter("전체");
+          setPage(1);
+        }}
+      />
 
       <StageBoard
         counts={stageCounts}

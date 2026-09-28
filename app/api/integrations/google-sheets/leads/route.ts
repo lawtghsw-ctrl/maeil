@@ -131,6 +131,9 @@ export async function POST(request: NextRequest) {
       receivedAt: parseReceivedAt(rawRow.intakeAt),
       status: "신규접수",
       detailStage: "신규디비",
+      // 현재 DB 가공 시트는 Meta 인스턴트양식 원본에서 가공되는 회생 광고 DB이므로
+      // 신규 유입경로 필터에서 즉시 집계될 수 있게 메타로 저장합니다.
+      source: "메타",
       email: text(rawRow.email) || undefined,
       adName: text(rawRow.adName) || undefined,
       debtRange,
