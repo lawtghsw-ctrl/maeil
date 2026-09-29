@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
   let skipped = 0;
 
   // 순서를 보장하기 위해 시트 행번호 순서대로 한 건씩 처리합니다.
-  // 실제 담당자 선택은 DB 함수에서 advisory lock을 잡고 처리하므로 동시 webhook에도 안전합니다.
+  // 실제 최초 담당자 선택은 DB 함수에서 처리합니다. 현재 운영 기준은 박형원을 신규 DB 총괄 담당자로 두고, 이후 박형원이 담당자를 재배정합니다.
   for (const rawRow of body.rows as IncomingSheetRow[]) {
     if (!rawRow || typeof rawRow !== "object") {
       skipped += 1;

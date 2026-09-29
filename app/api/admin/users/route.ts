@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
     const role = body.role === "admin" ? "admin" : "staff";
     const isActive = body.isActive === true;
     const isWorkStaff = body.isWorkStaff !== false;
-    const autoAssignLeads = isWorkStaff && body.autoAssignLeads !== false;
+    const autoAssignLeads = isWorkStaff && body.autoAssignLeads === true;
     const leadAssignmentOrder = Math.max(1, Math.min(9999, Number(body.leadAssignmentOrder) || 1000));
     const permissions = normalizePermissions((body.permissions ?? {}) as PermissionMap);
     if (!email || !email.includes("@")) throw new Error("올바른 이메일을 입력해주세요.");
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
       await admin.auth.admin.deleteUser(data.user.id);
       throw updateError;
     }
-    await logAccountChange(admin, actorName, displayName, "등록", `직원계정 생성 · ${role === "admin" ? "최종관리자" : "직원"} · ${isActive ? "활성" : "비활성"} · 실무담당 ${isWorkStaff ? "사용" : "제외"} · DB자동배정 ${autoAssignLeads ? `참여(${leadAssignmentOrder})` : "제외"}`);
+    await logAccountChange(admin, actorName, displayName, "등록", `직원계정 생성 · ${role === "admin" ? "최종관리자" : "직원"} · ${isActive ? "활성" : "비활성"} · 실무담당 ${isWorkStaff ? "사용" : "제외"} · DB자동유입 ${autoAssignLeads ? `참여(${leadAssignmentOrder})` : "제외"}`);
     return NextResponse.json({ ok: true, id: data.user.id });
   } catch (err) {
     return fail(err);
@@ -195,7 +195,7 @@ export async function PATCH(request: NextRequest) {
       if (renameError) throw renameError;
     }
 
-    await logAccountChange(admin, actorName, displayName, "수정", `직원계정 설정 변경 · ${nextRole === "admin" ? "최종관리자" : "직원"} · ${nextActive ? "활성" : "비활성"} · 실무담당 ${body.isWorkStaff !== false ? "사용" : "제외"} · DB자동배정 ${body.isWorkStaff !== false && body.autoAssignLeads === true ? `참여(${Math.max(1, Math.min(9999, Number(body.leadAssignmentOrder) || 1000))})` : "제외"}`);
+    await logAccountChange(admin, actorName, displayName, "수정", `직원계정 설정 변경 · ${nextRole === "admin" ? "최종관리자" : "직원"} · ${nextActive ? "활성" : "비활성"} · 실무담당 ${body.isWorkStaff !== false ? "사용" : "제외"} · DB자동유입 ${body.isWorkStaff !== false && body.autoAssignLeads === true ? `참여(${Math.max(1, Math.min(9999, Number(body.leadAssignmentOrder) || 1000))})` : "제외"}`);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return fail(err);

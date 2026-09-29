@@ -27,7 +27,7 @@ import type {
   ScheduleItem,
   StaffName,
 } from "./types";
-import { STAFF_LIST } from "./types";
+import { DB_INTAKE_OWNER, STAFF_LIST } from "./types";
 import { checkConsultationRequired, defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
@@ -425,7 +425,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!can("db.create")) return "";
       const lead: DbLead = {
         ...draft,
-        assignedStaff: can("db.change_assignee") ? draft.assignedStaff : (currentStaff || draft.assignedStaff),
+        assignedStaff: workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : (currentStaff || draft.assignedStaff),
         id: makeId("DB"),
         receivedAt: draft.receivedAt ?? new Date().toISOString(),
       };
@@ -434,7 +434,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "등록", lead.name, "신규 DB 등록");
       return lead.id;
     },
-    [can, currentStaff, logChange, queueWrite, saveEntity]
+    [can, currentStaff, logChange, queueWrite, saveEntity, workStaffNames]
   );
 
   const updateClient = useCallback(

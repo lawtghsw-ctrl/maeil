@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useStore } from "@/lib/store";
 import {
   CONSULT_DIRECTIONS,
+  DB_INTAKE_OWNER,
   CONSULT_TIME_OPTIONS,
   DB_DETAIL_STAGE_GROUPS,
   DB_DETAIL_STAGE_TRACK_COLOR,
@@ -459,12 +460,12 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
 
 
 function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { addLead, workStaffNames, currentStaff, can } = useStore();
+  const { addLead, workStaffNames, currentStaff } = useStore();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [adName, setAdName] = useState("");
   const [email, setEmail] = useState("");
-  const [assignedStaff, setAssignedStaff] = useState<StaffName>((currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
+  const [assignedStaff, setAssignedStaff] = useState<StaffName>((workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
   const [source, setSource] = useState<LeadSource | "">("");
   const [debtRange, setDebtRange] = useState<DebtRange | "">("");
   const [incomeRange, setIncomeRange] = useState<IncomeRange | "">("");
@@ -473,7 +474,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 
   useEffect(() => {
     if (!open || assignedStaff || workStaffNames.length === 0) return;
-    setAssignedStaff((currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
+    setAssignedStaff((workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
   }, [open, assignedStaff, currentStaff, workStaffNames]);
 
   function save() {
@@ -525,9 +526,10 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
         </label>
         <label className="text-xs font-semibold text-slate-600">
           담당자
-          <Select className="mt-1 w-full" value={assignedStaff} disabled={!can("db.change_assignee") && !!currentStaff} onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
+          <Select className="mt-1 w-full" value={assignedStaff} disabled onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
             {workStaffNames.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
           </Select>
+          <span className="mt-1 block text-[10px] font-normal text-slate-400">신규 DB는 먼저 {DB_INTAKE_OWNER}에게 배정되고, 이후 DB관리에서 실제 담당자를 지정합니다.</span>
         </label>
         <label className="text-xs font-semibold text-slate-600">
           유입경로

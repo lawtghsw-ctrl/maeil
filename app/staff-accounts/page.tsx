@@ -50,7 +50,7 @@ const emptyDraft = (): AccountDraft => ({
   role: "staff",
   isActive: false,
   isWorkStaff: true,
-  autoAssignLeads: true,
+  autoAssignLeads: false,
   leadAssignmentOrder: 1000,
   permissions: { ...DEFAULT_STAFF_PERMISSIONS },
 });
@@ -300,7 +300,7 @@ export default function StaffAccountsPage() {
             <UserRoundCheck size={18} className="mt-0.5 shrink-0 text-emerald-700" />
             <div>
               <div className="text-sm font-black text-emerald-900">담당자 버튼 + 신규 DB 자동배정</div>
-              <p className="mt-1 text-xs leading-5 text-emerald-700">‘실무 담당자로 사용’을 켜면 DB관리 담당자 버튼에 자동 추가됩니다. 활성 계정에서 ‘신규 DB 자동배정 참여’까지 켜면 Google Sheet 신규 DB가 배정 순서대로 1건씩 균등 분배됩니다.</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-700">‘실무 담당자로 사용’을 켜면 DB관리 담당자 버튼에 자동 추가됩니다. ‘신규 DB 자동유입 담당’을 켠 직원 중 배정 순서 숫자가 가장 낮은 1명이 Google Sheet 신규 DB를 모두 먼저 받습니다. 현재 운영 담당자는 박형원입니다.</p>
             </div>
           </div>
         </Card>
@@ -354,7 +354,7 @@ export default function StaffAccountsPage() {
           {filtered.map((row) => (
             <div key={row.id} className="p-4">
               <div className="flex items-start justify-between gap-3"><div><div className="font-bold">{row.displayName}</div><div className="text-xs text-slate-400">{row.email}</div></div><Button variant="secondary" onClick={() => { setEditing({ ...row, permissions: { ...row.permissions } }); setEditPassword(""); }}>설정</Button></div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.role === "admin" ? "최종관리자" : "직원"}</span><span className={`rounded px-2 py-1 ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-700">실무담당 {row.isWorkStaff ? "사용" : "제외"}</span><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">DB자동배정 {row.isActive && row.isWorkStaff && row.autoAssignLeads ? `참여(${row.leadAssignmentOrder})` : "제외"}</span></div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.role === "admin" ? "최종관리자" : "직원"}</span><span className={`rounded px-2 py-1 ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-700">실무담당 {row.isWorkStaff ? "사용" : "제외"}</span><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">DB자동유입 {row.isActive && row.isWorkStaff && row.autoAssignLeads ? `참여(${row.leadAssignmentOrder})` : "제외"}</span></div>
             </div>
           ))}
         </div>
@@ -371,7 +371,7 @@ export default function StaffAccountsPage() {
           <div className="grid gap-3 lg:grid-cols-3">
             <ToggleRow label="계정 활성화" description="활성화 즉시 로그인할 수 있습니다. 계정만 먼저 만들려면 해제 상태로 두세요." checked={draft.isActive} onChange={(isActive) => setDraft((v) => ({ ...v, isActive }))} />
             <ToggleRow label="실무 담당자로 사용" description="DB관리 담당자 버튼/담당자 선택 및 정산설정 목록에 자동 반영됩니다." checked={draft.isWorkStaff} onChange={(isWorkStaff) => setDraft((v) => ({ ...v, isWorkStaff, autoAssignLeads: isWorkStaff ? v.autoAssignLeads : false }))} />
-            <ToggleRow label="신규 DB 자동배정 참여" description="활성 + 실무담당 계정만 Google Sheet 신규 DB 라운드로빈 자동배정에 참여합니다." checked={draft.autoAssignLeads} disabled={!draft.isWorkStaff} onChange={(autoAssignLeads) => setDraft((v) => ({ ...v, autoAssignLeads }))} />
+            <ToggleRow label="신규 DB 자동유입 담당" description="활성 + 실무담당 계정 중 이 설정이 켜진 직원에게 Google Sheet 신규 DB를 우선 배정합니다. 여러 명이면 배정 순서 숫자가 가장 낮은 1명에게 모두 배정됩니다." checked={draft.autoAssignLeads} disabled={!draft.isWorkStaff} onChange={(autoAssignLeads) => setDraft((v) => ({ ...v, autoAssignLeads }))} />
           </div>
           <label className="block max-w-xs text-xs font-bold text-slate-600">DB 자동배정 순서
             <Input className="mt-1" type="number" min={1} max={9999} value={draft.leadAssignmentOrder} disabled={!draft.isWorkStaff || !draft.autoAssignLeads} onChange={(e) => setDraft((v) => ({ ...v, leadAssignmentOrder: Math.max(1, Number(e.target.value) || 1) }))} />
@@ -396,7 +396,7 @@ export default function StaffAccountsPage() {
           <div className="grid gap-3 lg:grid-cols-3">
             <ToggleRow label="계정 활성화" description="끄면 즉시 로그인 불가 상태가 됩니다. 현재 로그인한 본인 관리자 계정은 비활성화할 수 없습니다." checked={editing.isActive} onChange={(isActive) => setEditing((v) => v ? { ...v, isActive } : v)} disabled={editing.id === currentUser?.id} />
             <ToggleRow label="실무 담당자로 사용" description="켜면 DB관리 담당자 버튼/선택목록/정산설정에 자동 노출됩니다. 홍성원 개발자 계정은 끄고, 강이삭·박형원처럼 실무를 보는 계정은 켜두면 됩니다." checked={editing.isWorkStaff} onChange={(isWorkStaff) => setEditing((v) => v ? { ...v, isWorkStaff, autoAssignLeads: isWorkStaff ? v.autoAssignLeads : false } : v)} />
-            <ToggleRow label="신규 DB 자동배정 참여" description="활성 + 실무담당 계정만 Google Sheet 신규 DB 라운드로빈 자동배정에 참여합니다." checked={editing.autoAssignLeads} disabled={!editing.isWorkStaff} onChange={(autoAssignLeads) => setEditing((v) => v ? { ...v, autoAssignLeads } : v)} />
+            <ToggleRow label="신규 DB 자동유입 담당" description="활성 + 실무담당 계정 중 이 설정이 켜진 직원에게 Google Sheet 신규 DB를 우선 배정합니다. 여러 명이면 배정 순서 숫자가 가장 낮은 1명에게 모두 배정됩니다." checked={editing.autoAssignLeads} disabled={!editing.isWorkStaff} onChange={(autoAssignLeads) => setEditing((v) => v ? { ...v, autoAssignLeads } : v)} />
           </div>
           <label className="block max-w-xs text-xs font-bold text-slate-600">DB 자동배정 순서
             <Input className="mt-1" type="number" min={1} max={9999} value={editing.leadAssignmentOrder} disabled={!editing.isWorkStaff || !editing.autoAssignLeads} onChange={(e) => setEditing((v) => v ? { ...v, leadAssignmentOrder: Math.max(1, Number(e.target.value) || 1) } : v)} />

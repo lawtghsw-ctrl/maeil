@@ -69,6 +69,7 @@ export type CaseStatus = "진행중" | "보류" | "취하" | "종결";
 // 현재 실무 기준은 강이삭·박형원이며, 아래 목록은 프로필을 아직 불러오기 전의 안전한 fallback 값입니다.
 // 홍성원 개발자 계정은 최종관리자 권한을 가지되 실무 담당자 목록에서는 제외합니다.
 export const STAFF_LIST = ["강이삭", "박형원"] as const;
+export const DB_INTAKE_OWNER = "박형원" as const;
 export type StaffName = string;
 
 // 상담 후 진행 방향 — 예전에는 DB 접수 시점에 "신청분류"로 미리 지정했지만, 실제로는

@@ -1,6 +1,6 @@
-# 로파워(LawPower) Admin — v27 Google Sheet 신규 DB 자동연동
+# 로파워(LawPower) Admin — v27.7 신규 DB 총괄 배정
 
-v26의 **Supabase 실사용 + 직원계정/세부권한 구조**에 Google Sheet `DB가공` 신규 DB 자동수집과 실무담당자 라운드로빈 자동배정을 추가한 버전입니다.
+Supabase 실사용 구조에서 Google Sheet 신규 DB를 먼저 박형원에게 모으고, 박형원이 전체 DB를 확인해 실제 담당자를 다시 지정하는 운영 버전입니다.
 
 
 ## v27 추가 핵심
@@ -10,11 +10,11 @@ v26의 **Supabase 실사용 + 직원계정/세부권한 구조**에 Google Sheet
 - 최초 설정 시점 이전의 기존 행은 가져오지 않고 **그 이후 새로 들어오는 행만 수집**
 - 1분 간격 Apps Script 전송
 - 동일 행 중복수집 방지
-- 신규 DB를 `활성 + 실무담당 + DB자동배정 참여` 직원에게 라운드로빈으로 균등 배정
-- 현재 기본 순서: **강이삭 → 박형원 → 강이삭 → 박형원...**
-- 직원계정관리에서 `신규 DB 자동배정 참여`와 `배정 순서`를 직접 수정
-- 홍성원은 최종관리자 권한을 유지하지만 `실무 담당 OFF`이므로 자동배정 제외
-- 최종관리자는 기존처럼 DB관리에서 담당자를 언제든 수동 변경 가능
+- Google Sheet 및 수기등록 신규 DB의 최초 담당자는 **박형원**
+- 박형원은 `전체 담당자 DB 조회` + `DB 담당자 변경` 권한으로 모든 DB를 관리
+- 상담 진행 후 박형원이 고객별 실제 담당자를 직접 재지정
+- 직원계정관리의 `신규 DB 자동유입 담당`은 여러 명이 켜져 있어도 배정 순서 숫자가 가장 낮은 1명에게 우선 배정
+- 신규 직원은 자동유입 담당이 기본 OFF
 
 자세한 Google Sheet 설정은 `integrations/google-sheets/SETUP.md`를 확인하세요.
 
@@ -49,9 +49,11 @@ v26의 **Supabase 실사용 + 직원계정/세부권한 구조**에 Google Sheet
 supabase/migrations/001_initial.sql
 supabase/migrations/002_staff_accounts_permissions.sql
 supabase/migrations/003_google_sheet_leads_round_robin.sql
+supabase/migrations/004_db_lead_delete_permission.sql
+supabase/migrations/005_db_intake_owner_park.sql
 ```
 
-이미 v26까지 적용된 프로젝트라면 **003만 추가 실행**하면 됩니다.
+이미 v27.6.2까지 적용된 프로젝트라면 **005만 추가 실행**하면 됩니다.
 
 `002_staff_accounts_permissions.sql`은 다음을 추가합니다.
 
@@ -233,3 +235,10 @@ integrations/google-sheets/SETUP.md              연동 설정 가이드
 
 ## v27.6.2
 - DB관리 상담 단계에 `미상담` 추가. 진행단계 드롭다운에서도 선택 가능.
+
+
+### v27.7 — 신규 DB 박형원 총괄 배정
+- Google Sheet 자동유입 신규 DB는 박형원에게 우선 배정
+- 박형원은 전체 DB 조회/관리 및 담당자 재지정 가능
+- 수기 DB 추가 팝업도 박형원을 기본 담당자로 우선 선택
+- 라운드로빈 대신 자동유입 담당 1명 우선 방식으로 변경
