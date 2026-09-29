@@ -516,31 +516,102 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!can("db.convert")) return undefined;
       const lead = leads.find((l) => l.id === leadId);
       if (!lead) return undefined;
-      if (lead.convertedClientId) return lead.convertedClientId;
+
+      // v27.11 보정: v27.10에서 이미 고객만 생성되고 계약이 생성되지 않은 리드는
+      // 고객전환 버튼을 다시 누르면 기존 Client를 유지한 채 미접수 계약만 생성합니다.
+      if (lead.convertedClientId) {
+        if (lead.convertedCaseId) return lead.convertedClientId;
+        const existingClient = clients.find((client) => client.id === lead.convertedClientId);
+        if (!existingClient) return lead.convertedClientId;
+
+        const today = todayIsoStr();
+        const caseRecord: CaseRecord = {
+          id: makeId("CASE"),
+          caseNumber: `미접수-${Date.now().toString().slice(-6)}`,
+          clientId: existingClient.id,
+          caseType: lead.applicationType === "개인파산" ? "개인파산" : "개인회생",
+          court: "미지정",
+          stage: "상담접수",
+          stageUpdatedAt: today,
+          status: "진행중",
+          assignedStaff: lead.assignedStaff,
+          totalDebt: 0,
+          contractAmount: 0,
+          contractDate: today,
+          paidAmount: 0,
+          paymentMethod: "단순분납",
+          memo: lead.memo,
+          fromLeadId: lead.id,
+        };
+        const nextLead: DbLead = { ...lead, convertedCaseId: caseRecord.id };
+
+        setCases((prev) => [caseRecord, ...prev]);
+        setLeads((prev) => prev.map((item) => (item.id === leadId ? nextLead : item)));
+        queueWrite(Promise.all([saveEntity("app_cases", caseRecord), saveEntity("app_leads", nextLead)]));
+        logChange("DB관리", "수정", lead.name, "기존 전환 고객의 누락 계약 생성");
+        return existingClient.id;
+      }
 
       // v27.10 임시 운영: 상담일지 필수항목이 미작성이어도 고객 전환을 허용합니다.
       // 상담일지 데이터가 있으면 그대로 승계하고, 비어 있으면 미작성 상태로 고객을 생성합니다.
 
+      const today = todayIsoStr();
       const client: Client = {
         id: makeId("CL"),
         name: lead.name,
         phone: lead.phone,
-        registeredAt: todayIsoStr(),
+        registeredAt: today,
         assignedStaff: lead.assignedStaff,
         memo: lead.memo,
         fromLeadId: lead.id,
         applicationType: lead.applicationType,
         consultation: lead.consultation,
       };
-      const nextLead: DbLead = { ...lead, status: "수임전환", convertedClientId: client.id };
+
+      // v27.11: DB의 "고객 전환"은 고객 레코드만 만드는 것이 아니라
+      // 계약관리에서 바로 이어서 처리할 수 있는 미접수 계약 레코드까지 함께 생성합니다.
+      // 계약금액/법원/결제수단 등은 계약관리 상세에서 이후 보완하면 됩니다.
+      const caseType = lead.applicationType === "개인파산" ? "개인파산" : "개인회생";
+      const caseRecord: CaseRecord = {
+        id: makeId("CASE"),
+        caseNumber: `미접수-${Date.now().toString().slice(-6)}`,
+        clientId: client.id,
+        caseType,
+        court: "미지정",
+        stage: "상담접수",
+        stageUpdatedAt: today,
+        status: "진행중",
+        assignedStaff: lead.assignedStaff,
+        totalDebt: 0,
+        contractAmount: 0,
+        contractDate: today,
+        paidAmount: 0,
+        paymentMethod: "단순분납",
+        memo: lead.memo,
+        fromLeadId: lead.id,
+      };
+
+      const nextLead: DbLead = {
+        ...lead,
+        status: "수임전환",
+        convertedClientId: client.id,
+        convertedCaseId: caseRecord.id,
+      };
 
       setClients((prev) => [...prev, client]);
+      setCases((prev) => [caseRecord, ...prev]);
       setLeads((prev) => prev.map((l) => (l.id === leadId ? nextLead : l)));
-      queueWrite(Promise.all([saveEntity("app_clients", client), saveEntity("app_leads", nextLead)]));
-      logChange("DB관리", "수정", lead.name, "계약관리 전환용 고객 생성");
+      queueWrite(
+        Promise.all([
+          saveEntity("app_clients", client),
+          saveEntity("app_cases", caseRecord),
+          saveEntity("app_leads", nextLead),
+        ])
+      );
+      logChange("DB관리", "수정", lead.name, "고객 및 계약관리 미접수 계약 생성");
       return client.id;
     },
-    [can, leads, logChange, queueWrite, saveEntity]
+    [can, clients, leads, logChange, queueWrite, saveEntity]
   );
 
   const toggleDocument = useCallback(

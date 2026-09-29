@@ -1010,10 +1010,14 @@ export default function DbManagementPage() {
                   <ClipboardList size={14} />
                   {can("db.edit_consultation") ? "상담일지 작성" : "상담일지 조회"}
                 </Button>
-                {lead.convertedClientId ? (
-                  <Link href={lead.convertedCaseId ? `/cases/${lead.convertedCaseId}` : "/cases"} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                {lead.convertedClientId && lead.convertedCaseId ? (
+                  <Link href={`/cases/${lead.convertedCaseId}`} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
                     계약관리로 이동
                   </Link>
+                ) : lead.convertedClientId ? (
+                  can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
+                    계약 생성
+                  </Button> : null
                 ) : (
                   can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
                     고객 전환
@@ -1137,10 +1141,14 @@ export default function DbManagementPage() {
                           <ClipboardList size={14} />
                           상담일지
                         </Button>
-                        {lead.convertedClientId ? (
-                          <Link href={lead.convertedCaseId ? `/cases/${lead.convertedCaseId}` : "/cases"} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                        {lead.convertedClientId && lead.convertedCaseId ? (
+                          <Link href={`/cases/${lead.convertedCaseId}`} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
                             계약관리로 이동
                           </Link>
+                        ) : lead.convertedClientId ? (
+                          can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
+                            계약 생성
+                          </Button> : null
                         ) : (
                           can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
                             고객 전환
