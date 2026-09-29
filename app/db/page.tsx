@@ -196,7 +196,7 @@ function msUntilNextKstMidnight(now = new Date()): number {
 // 기존 status는 전환/콜경고 등 내부 호환에 계속 쓰므로, 사용자가 통합 진행단계를 바꾸면
 // 가장 가까운 기존 status도 함께 갱신합니다. 화면의 실질 관리값은 detailStage입니다.
 function legacyStatusForStage(stage: DbDetailStage, current: DbLeadStatus): DbLeadStatus {
-  if (stage === "신규디비") return "신규접수";
+  if (stage === "미상담" || stage === "신규디비") return "신규접수";
   if (stage === "예약") return "상담예정";
   if (stage === "상담") return "상담완료";
   if (stage === "부재") return "부재중";
