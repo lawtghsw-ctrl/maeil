@@ -28,7 +28,7 @@ import type {
   StaffName,
 } from "./types";
 import { DB_INTAKE_OWNER, STAFF_LIST } from "./types";
-import { checkConsultationRequired, defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
+import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
 
@@ -518,8 +518,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!lead) return undefined;
       if (lead.convertedClientId) return lead.convertedClientId;
 
-      const completeness = checkConsultationRequired(lead.applicationType, lead.consultation);
-      if (!completeness.ok) return undefined;
+      // v27.10 임시 운영: 상담일지 필수항목이 미작성이어도 고객 전환을 허용합니다.
+      // 상담일지 데이터가 있으면 그대로 승계하고, 비어 있으면 미작성 상태로 고객을 생성합니다.
 
       const client: Client = {
         id: makeId("CL"),

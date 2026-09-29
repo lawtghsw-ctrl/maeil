@@ -617,17 +617,12 @@ export default function DbManagementPage() {
     }
   }, [canViewAllDb, currentStaff]);
 
-  // "실제 계약(=완결된 상담기록지)을 하지 않는 이상 고객관리로 넘기지 않도록" 요청 반영 —
-  // 필수 항목이 다 채워졌는지 여기서 먼저 확인한 뒤에만 실제 전환을 실행합니다.
+  // v27.10 임시 운영: 필수 상담항목이 비어 있어도 고객 전환을 허용합니다.
+  // 필수항목 체크 표시는 계속 보여주되, 전환 자체를 막지는 않습니다.
   function tryConvert(lead: DbLead) {
-    const completeness = checkConsultationRequired(lead.applicationType, lead.consultation);
-    if (!completeness.ok) {
-      setBlockedNotice(completeness.missing);
-      setConsultTarget(lead);
-      return;
-    }
-    convertLeadToClient(lead.id);
-    setJustConverted(lead.id);
+    setBlockedNotice(null);
+    const clientId = convertLeadToClient(lead.id);
+    if (clientId) setJustConverted(lead.id);
   }
 
   // 검색어·담당자까지 적용한 집합에서 유입경로 건수를 먼저 계산합니다.
@@ -999,7 +994,7 @@ export default function DbManagementPage() {
               {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
                 <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700">
                   <ShieldAlert size={13} className="shrink-0" />
-                  상담일지 필수 항목 미입력 — 고객 전환 불가
+                  상담일지 필수 항목 미입력 — 임시 전환 허용
                 </div>
               )}
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1126,7 +1121,7 @@ export default function DbManagementPage() {
                       {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
                         <span className="flex items-center gap-1 whitespace-normal rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
                           <ShieldAlert size={11} className="shrink-0" />
-                          필수항목 미입력
+                          필수항목 미입력 · 전환가능
                         </span>
                       )}
                       <div className="flex items-center justify-end gap-1.5">
@@ -1190,14 +1185,14 @@ export default function DbManagementPage() {
             <div>
               <div className="flex items-center gap-1.5 font-semibold">
                 <ShieldAlert size={15} />
-                상담일지 필수 항목이 비어있어 고객 전환할 수 없습니다.
+                상담일지 필수 항목이 비어있습니다. 현재는 임시로 고객 전환이 허용됩니다.
               </div>
               <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs font-normal">
                 {blockedNotice.map((m) => (
                   <li key={m}>{m}</li>
                 ))}
               </ul>
-              <div className="mt-1.5 text-xs font-normal">아래 상담일지 팝업에서 하늘색으로 표시된 항목을 입력한 뒤 저장하고 다시 시도하세요.</div>
+              <div className="mt-1.5 text-xs font-normal">가능하면 아래 상담일지 팝업에서 하늘색 필수 항목을 보완해 주세요.</div>
             </div>
             <button type="button" onClick={() => setBlockedNotice(null)} className="shrink-0 text-sky-400 hover:text-sky-700">
               ✕
