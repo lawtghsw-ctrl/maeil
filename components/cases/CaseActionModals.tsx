@@ -81,46 +81,110 @@ function CaseInstallmentModal({
 }) {
   const { installments, setCaseInstallments } = useStore();
 
-  const makeRows = (): InstallmentDraft[] => {
-    const rows = installments
+  const makeRows = (): InstallmentDraft[] =>
+    installments
       .filter((i) => i.caseId === caseRecord.id)
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+      .sort((a, b) => a.seq - b.seq)
       .map(({ id, dueDate, amount, status, paidDate }) => ({ id, dueDate, amount, status, paidDate }));
-    return rows.length ? rows : [{ dueDate: "", amount: 0, status: "예정" as InstallmentStatus, paidDate: "" }];
-  };
 
   const [rows, setRows] = useState<InstallmentDraft[]>(makeRows);
+  const [contractAmount, setContractAmount] = useState(caseRecord.contractAmount);
+  const [paidAmount, setPaidAmount] = useState(caseRecord.paidAmount);
+  const [installmentCount, setInstallmentCount] = useState(caseRecord.installmentCount ?? makeRows().length);
 
   useEffect(() => {
-    if (open) setRows(makeRows());
-    // 현재 사건의 분납만 편집하므로 사건이 바뀌거나 팝업을 다시 열 때 원본으로 재설정합니다.
+    if (!open) return;
+    const nextRows = makeRows();
+    const nextCount = Math.max(0, caseRecord.installmentCount ?? nextRows.length);
+    const filledRows = [...nextRows];
+    while (filledRows.length < nextCount) {
+      filledRows.push({ dueDate: "", amount: 0, status: "예정", paidDate: "" });
+    }
+    setRows(filledRows.slice(0, nextCount));
+    setContractAmount(caseRecord.contractAmount);
+    setPaidAmount(caseRecord.paidAmount);
+    setInstallmentCount(nextCount);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, caseRecord.id]);
+  }, [open, caseRecord.id, caseRecord.contractAmount, caseRecord.paidAmount, caseRecord.installmentCount]);
 
   function update(index: number, patch: Partial<InstallmentDraft>) {
     setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
+  function changeInstallmentCount(value: number) {
+    const nextCount = Math.max(0, Math.min(60, Math.trunc(value || 0)));
+    setInstallmentCount(nextCount);
+    setRows((prev) => {
+      const next = [...prev];
+      while (next.length < nextCount) next.push({ dueDate: "", amount: 0, status: "예정", paidDate: "" });
+      return next.slice(0, nextCount);
+    });
+  }
+
+  function removeRow(index: number) {
+    setRows((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      setInstallmentCount(next.length);
+      return next;
+    });
+  }
+
+  function addRow() {
+    setRows((prev) => {
+      const next = [...prev, { dueDate: "", amount: 0, status: "예정" as InstallmentStatus, paidDate: "" }];
+      setInstallmentCount(next.length);
+      return next;
+    });
+  }
+
   function save() {
-    setCaseInstallments(caseRecord.id, rows.filter((r) => r.dueDate));
+    setCaseInstallments(caseRecord.id, rows.filter((row) => row.dueDate), {
+      contractAmount,
+      paidAmount,
+      installmentCount,
+    });
     onClose();
   }
 
+  const receivable = Math.max(0, contractAmount - paidAmount);
+
   return (
     <Modal open={open} title={`${client.name} · 분납관리`} onClose={onClose} size="lg">
-      <div className="mb-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        {caseRecord.caseNumber} · {caseRecord.caseType} · 계약금액 {fmtWon(caseRecord.contractAmount)}
+      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+        <div className="mb-3 text-xs font-semibold text-blue-700">
+          {caseRecord.caseNumber} · {caseRecord.caseType}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Label text="총 수임료">
+            <NumberInput value={contractAmount} onChange={setContractAmount} />
+          </Label>
+          <Label text="납부금액">
+            <NumberInput value={paidAmount} onChange={setPaidAmount} />
+          </Label>
+          <Label text="납부회차">
+            <Input
+              type="number"
+              min={0}
+              max={60}
+              value={installmentCount}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => changeInstallmentCount(Number(e.target.value))}
+            />
+          </Label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-600">
+          <span>미수금 <b className={receivable > 0 ? "text-red-600" : "text-slate-900"}>{fmtWon(receivable)}</b></span>
+          <span>등록된 일정 <b className="text-slate-900">{rows.length}회</b></span>
+        </div>
       </div>
+
       <div className="space-y-3">
         {rows.map((row, index) => (
           <div key={row.id ?? index} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
             <div className="mb-3 flex items-center justify-between">
-              <b className="text-sm">납부 일정 {index + 1}</b>
-              {rows.length > 1 && (
-                <Button variant="danger" onClick={() => setRows((prev) => prev.filter((_, i) => i !== index))}>
-                  삭제
-                </Button>
-              )}
+              <b className="text-sm">{index + 1}회차</b>
+              <Button variant="danger" onClick={() => removeRow(index)}>
+                삭제
+              </Button>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <Label text="납부 예정일">
@@ -131,7 +195,7 @@ function CaseInstallmentModal({
                   onChange={(e: ChangeEvent<HTMLInputElement>) => update(index, { dueDate: e.target.value })}
                 />
               </Label>
-              <Label text="금액">
+              <Label text="회차 금액">
                 <NumberInput value={row.amount} onChange={(value) => update(index, { amount: value })} />
               </Label>
               <Label text="실제 입금일">
@@ -155,18 +219,23 @@ function CaseInstallmentModal({
             </div>
           </div>
         ))}
+        {rows.length === 0 && (
+          <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-400">
+            납부회차가 0회입니다. 회차를 입력하거나 아래 버튼으로 추가하세요.
+          </div>
+        )}
       </div>
       <button
         type="button"
-        onClick={() => setRows((prev) => [...prev, { dueDate: "", amount: 0, status: "예정", paidDate: "" }])}
+        onClick={addRow}
         className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-50"
       >
         <Plus size={15} />
-        납부 일정 추가
+        납부 회차 추가
       </button>
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>취소</Button>
-        <Button onClick={save}>일정 저장</Button>
+        <Button onClick={save}>분납정보 저장</Button>
       </div>
     </Modal>
   );
@@ -207,7 +276,7 @@ function CaseEformModal({
             <Input value={phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)} />
           </Label>
           <Label text="사건유형"><Input value={caseRecord.caseType} readOnly /></Label>
-          <Label text="계약금액"><Input value={fmtWon(caseRecord.contractAmount)} readOnly /></Label>
+          <Label text="총 수임료"><Input value={fmtWon(caseRecord.contractAmount)} readOnly /></Label>
           <Label text="결제수단"><Input value={PAYMENT_METHOD_NOTE[caseRecord.paymentMethod]} readOnly /></Label>
         </div>
         <Label text="전송 메시지">

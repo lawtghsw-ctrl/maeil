@@ -7,6 +7,7 @@ import { PAYMENT_METHOD_NOTE } from "@/lib/types";
 import { CaseTypeBadge, InstallmentStatusBadge, StatusBadge } from "@/components/ui/Badge";
 import { CaseActionPanel } from "@/components/cases/CaseActionModals";
 import { Card } from "@/components/ui/Primitives";
+import { ArrowLeft } from "lucide-react";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 // v22: 고객관리와 계약관리를 계약관리로 통합했습니다. 계약 상세는 고객/계약의 핵심 재무정보와
@@ -35,8 +36,12 @@ export default function CaseDetailPage() {
 
   return (
     <div className="space-y-4">
-      <Link href="/cases" className="text-sm text-slate-500 hover:text-slate-900">
-        ← 계약 목록
+      <Link
+        href="/cases"
+        className="inline-flex w-fit items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+      >
+        <ArrowLeft size={16} />
+        계약목록으로 돌아가기
       </Link>
 
       <Card className="p-5">
@@ -54,11 +59,12 @@ export default function CaseDetailPage() {
           {client && <CaseActionPanel client={client} caseRecord={c} />}
         </div>
 
-        {can("cases.view_finance") && <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {can("cases.view_finance") && <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           {[
             ["총 채무액", fmtWon(c.totalDebt)],
-            ["계약금액", fmtWon(c.contractAmount)],
-            ["납부금", fmtWon(c.paidAmount)],
+            ["총 수임료", fmtWon(c.contractAmount)],
+            ["납부금액", fmtWon(c.paidAmount)],
+            ["납부회차", `${c.installmentCount ?? installs.length}회`],
             ["미수금", fmtWon(receivable)],
             ["결제수단", PAYMENT_METHOD_NOTE[c.paymentMethod]],
           ].map(([label, value]) => (

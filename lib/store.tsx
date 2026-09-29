@@ -125,7 +125,11 @@ interface AppStoreValue {
   toggleDocument: (caseId: string, itemId: string) => void;
   addCase: (draft: Omit<CaseRecord, "id">) => string;
   updateCase: (id: string, patch: Partial<CaseRecord>) => void;
-  setCaseInstallments: (caseId: string, rows: InstallmentDraft[]) => void;
+  setCaseInstallments: (
+    caseId: string,
+    rows: InstallmentDraft[],
+    finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number }
+  ) => void;
   addPost: (draft: Omit<BoardPost, "id">) => void;
   updatePost: (id: string, patch: Partial<BoardPost>) => void;
   deletePost: (id: string) => void;
@@ -194,7 +198,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!keys.length) return false;
       return keys.every((key) => {
         if (key === "assignedStaff") return can("cases.change_assignee");
-        if (key === "paidAmount") return can("cases.manage_installments");
+        if (key === "paidAmount" || key === "contractAmount" || key === "installmentCount") return can("cases.manage_installments");
         if (key === "docsSentAt") return can("cases.send_docs");
         return false;
       });
@@ -670,7 +674,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const setCaseInstallments = useCallback(
-    (caseId: string, rows: InstallmentDraft[]) => {
+    (
+      caseId: string,
+      rows: InstallmentDraft[],
+      finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number }
+    ) => {
       if (!can("cases.manage_installments")) return;
       const oldRows = installments.filter((i) => i.caseId === caseId);
       const updated: Installment[] = rows.map((r, idx) => ({
@@ -684,9 +692,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }));
       const keepIds = new Set(updated.map((i) => i.id));
       const removed = oldRows.filter((i) => !keepIds.has(i.id));
-      const paidAmount = updated.filter((i) => i.status === "완료").reduce((sum, i) => sum + i.amount, 0);
+      const completedAmount = updated.filter((i) => i.status === "완료").reduce((sum, i) => sum + i.amount, 0);
       const caseBefore = cases.find((c) => c.id === caseId);
-      const caseNext = caseBefore ? { ...caseBefore, paidAmount } : undefined;
+      const caseNext = caseBefore
+        ? {
+            ...caseBefore,
+            contractAmount: Math.max(0, finance?.contractAmount ?? caseBefore.contractAmount),
+            paidAmount: Math.max(0, finance?.paidAmount ?? completedAmount),
+            installmentCount: Math.max(0, Math.trunc(finance?.installmentCount ?? updated.length)),
+          }
+        : undefined;
 
       setInstallments((prev) => [...prev.filter((i) => i.caseId !== caseId), ...updated]);
       if (caseNext) setCases((prev) => prev.map((c) => (c.id === caseId ? caseNext : c)));
@@ -698,7 +713,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           ...(caseNext ? [saveEntity("app_cases", caseNext)] : []),
         ])
       );
-      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "분납 일정 저장");
+      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차 및 분납 일정 저장");
     },
     [can, cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
   );

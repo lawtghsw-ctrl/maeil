@@ -98,7 +98,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
           <Input className="mt-1" type="date" value={contractDate} onChange={(e) => setContractDate(e.target.value)} />
         </label>
         <label className="text-xs font-semibold text-slate-600">
-          계약금액(원)
+          총 수임료(원)
           <Input className="mt-1" value={contractAmount} onChange={(e) => setContractAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="예: 3300000" />
         </label>
         <label className="text-xs font-semibold text-slate-600">
@@ -117,7 +117,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 export default function CasesPage() {
-  const { cases, clients, can, currentStaff } = useStore();
+  const { cases, clients, installments, can, currentStaff } = useStore();
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
@@ -210,8 +210,10 @@ export default function CasesPage() {
                   <StatusBadge status={c.status} />
                 </div>
                 <div className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</div>
-                {can("cases.view_finance") && <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-500">계약금액 {fmtWon(c.contractAmount)}</span>
+                {can("cases.view_finance") && <div className="grid grid-cols-2 gap-1 text-sm">
+                  <span className="text-slate-500">총 수임료 {fmtWon(c.contractAmount)}</span>
+                  <span className="text-slate-500">납부금액 {fmtWon(c.paidAmount)}</span>
+                  <span className="text-slate-500">납부회차 {(c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length) || 0}회</span>
                   {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
                 </div>}
               </Link>
@@ -224,7 +226,7 @@ export default function CasesPage() {
           <table className="admin-responsive-table w-full min-w-[960px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["의뢰인", "사건번호", "유형", "담당자", "계약일", "계약금액", "결제금액", "미수금", "상태", ""].map((h) => (
+                {["의뢰인", "사건번호", "유형", "담당자", "계약일", "총 수임료", "납부금액", "납부회차", "미수금", "상태", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -243,6 +245,9 @@ export default function CasesPage() {
                     <td className="px-4 py-3 text-slate-500">{fmtDate(c.contractDate)}</td>
                     <td className="px-4 py-3 text-slate-900">{can("cases.view_finance") ? fmtWon(c.contractAmount) : "권한없음"}</td>
                     <td className="px-4 py-3 text-slate-700">{can("cases.view_finance") ? fmtWon(c.paidAmount) : "-"}</td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {can("cases.view_finance") ? `${c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length}회` : "-"}
+                    </td>
                     <td className="px-4 py-3">
                       {can("cases.view_finance") ? (receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>) : <span className="text-slate-300">-</span>}
                     </td>
@@ -259,7 +264,7 @@ export default function CasesPage() {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 사건이 없습니다.
                   </td>
                 </tr>

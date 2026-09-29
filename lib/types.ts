@@ -343,6 +343,7 @@ export interface CaseRecord {
   contractAmount: number; // 수임료 계약금액
   contractDate: string; // 계약일 (ISO date) — 매출 집계 기준일
   paidAmount: number; // 기납부액
+  installmentCount?: number; // 납부 예정 총 회차(분납관리에서 직접 설정)
   paymentMethod: PaymentMethod;
   docsSentAt?: string; // 서류제출안내문 발송일 (ISO date)
   memo?: string;
