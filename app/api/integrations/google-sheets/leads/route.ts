@@ -84,8 +84,14 @@ export async function POST(request: NextRequest) {
   }
 
   const sheetName = text(body.sheetName);
-  const allowedSheetName = (process.env.GOOGLE_SHEETS_SHEET_NAME || "DB가공").trim();
-  if (sheetName !== allowedSheetName) return fail(`허용된 시트는 '${allowedSheetName}' 입니다.`, 400);
+  const configuredSheetName = process.env.GOOGLE_SHEETS_SHEET_NAME?.trim();
+  // v27.8부터 실제 Meta 원본 시트는 Raw2를 사용합니다.
+  // 기존 Vercel 환경변수가 DB가공으로 남아 있어도 Raw2 전환 직후 연동이 막히지 않도록
+  // Raw2는 항상 허용하고, 환경변수 값이 있으면 호환용으로 함께 허용합니다.
+  const allowedSheetNames = new Set(["Raw2", ...(configuredSheetName ? [configuredSheetName] : [])]);
+  if (!allowedSheetNames.has(sheetName)) {
+    return fail(`허용된 시트는 'Raw2' 입니다. 현재 요청 시트: '${sheetName || "(없음)"}'`, 400);
+  }
 
   if (!Array.isArray(body.rows)) return fail("rows 배열이 없습니다.", 400);
   if (body.rows.length === 0) return NextResponse.json({ ok: true, imported: 0, duplicates: 0, skipped: 0, results: [] });
@@ -131,8 +137,8 @@ export async function POST(request: NextRequest) {
       receivedAt: parseReceivedAt(rawRow.intakeAt),
       status: "신규접수",
       detailStage: "신규디비",
-      // 현재 DB 가공 시트는 Meta 인스턴트양식 원본에서 가공되는 회생 광고 DB이므로
-      // 신규 유입경로 필터에서 즉시 집계될 수 있게 메타로 저장합니다.
+      // Raw2는 Meta 인스턴트양식 CRM 원본 시트이므로 신규 유입경로를 메타로 저장합니다.
+      // ad_id/form_id/campaign_id 등 원본 식별자는 전송받지 않으며 관리자 화면에도 저장하지 않습니다.
       source: "메타",
       email: text(rawRow.email) || undefined,
       adName: text(rawRow.adName) || undefined,
@@ -142,9 +148,6 @@ export async function POST(request: NextRequest) {
       debtRaw: debtRange ? undefined : debtRaw || undefined,
       incomeRaw: incomeRange ? undefined : incomeRaw || undefined,
       consultTimeRaw: consultTime ? undefined : consultTimeRaw || undefined,
-      sourceSheet: sheetName,
-      sourceRow: rowNumber,
-      sourceExternalKey: externalKey,
     };
 
     const { data, error } = await admin.rpc("import_google_sheet_lead", {

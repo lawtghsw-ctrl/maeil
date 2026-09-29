@@ -308,7 +308,7 @@ export interface DbLead {
   assignedStaff: StaffName;
   source?: LeadSource; // 유입경로
   email?: string; // 광고/구글시트에서 수집된 이메일
-  adName?: string; // 광고명(구글시트 DB가공 열)
+  adName?: string; // 광고명(구글시트 Raw2의 ad_name)
   debtRaw?: string; // 정규 옵션과 일치하지 않는 원본 채무규모 문자열
   incomeRaw?: string; // 정규 옵션과 일치하지 않는 원본 월소득 문자열
   consultTimeRaw?: string; // 정규 옵션과 일치하지 않는 원본 상담희망시간 문자열

@@ -9,6 +9,7 @@ import {
   CONSULT_TIME_OPTIONS,
   DB_DETAIL_STAGE_GROUPS,
   DB_DETAIL_STAGE_TRACK_COLOR,
+  DB_DETAIL_STAGE_TRACK_OF,
   DB_DETAIL_STAGE_TRACKS,
   DB_LEAD_DEFAULT_STAGE_BY_STATUS,
   DEBT_RANGE_OPTIONS,
@@ -103,6 +104,18 @@ function effectiveStage(lead: DbLead): DbDetailStage {
   return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
 }
 
+// 고객 DB 리스트 배경은 현재 진행단계가 속한 상단 트랙(상담/착수/서류/법원/워크아웃)의
+// 대표 색상을 그대로 따라갑니다. 행 전체를 진한 색으로 채우면 텍스트 가독성이 떨어지므로
+// 같은 색상에 옅은 투명도를 적용하고, 왼쪽 포인트 선은 원색으로 표시합니다.
+function leadStageRowStyle(lead: DbLead) {
+  const track = DB_DETAIL_STAGE_TRACK_OF[effectiveStage(lead)];
+  const color = DB_DETAIL_STAGE_TRACK_COLOR[track];
+  return {
+    backgroundColor: `${color}14`,
+    boxShadow: `inset 4px 0 0 ${color}`,
+  };
+}
+
 // DB 유입경로 상단 필터는 현재 운영에 필요한 8개 분류만 사용합니다.
 // 기존 데이터에 저장된 예전 세부 명칭도 새 분류로 자동 묶어서 과거 DB가 필터에서 누락되지 않게 합니다.
 function leadSourceCategory(lead: DbLead): LeadSource {
@@ -119,9 +132,10 @@ function leadSourceCategory(lead: DbLead): LeadSource {
     return "기타";
   }
 
-  // 현재 Google Sheet 'DB 가공' 자동연동은 Meta 인스턴트양식 DB 파이프라인입니다.
-  // v27.5 이전에 source 없이 저장된 자동연동 DB도 메타로 집계합니다.
-  if (String(lead.sourceSheet ?? "").replace(/\s/g, "").trim() === "DB가공") return "메타";
+  // Google Sheet 자동연동(DB가공 과거자료 / Raw2 현재자료)은 Meta 인스턴트양식 DB 파이프라인입니다.
+  // source가 비어있는 과거 자동연동 DB도 메타로 집계합니다.
+  const sourceSheet = String(lead.sourceSheet ?? "").replace(/\s/g, "").trim().toLowerCase();
+  if (sourceSheet === "db가공" || sourceSheet === "raw2") return "메타";
 
   return "기타";
 }
@@ -911,7 +925,7 @@ export default function DbManagementPage() {
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
           {pageRows(rows, page, 10).map((lead) => (
-            <div key={lead.id} className="space-y-3 p-4">
+            <div key={lead.id} className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -1035,7 +1049,7 @@ export default function DbManagementPage() {
             </thead>
             <tbody>
               {pageRows(rows, page, 10).map((lead) => (
-                <tr key={lead.id} className="border-t border-slate-100 align-top">
+                <tr key={lead.id} className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(lead.receivedAt)}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-1.5">

@@ -1,12 +1,13 @@
-# 로파워(LawPower) Admin — v27.7 신규 DB 총괄 배정
+# 로파워(LawPower) Admin — v27.8 Raw2 직접연동
 
-Supabase 실사용 구조에서 Google Sheet 신규 DB를 먼저 박형원에게 모으고, 박형원이 전체 DB를 확인해 실제 담당자를 다시 지정하는 운영 버전입니다.
+Meta 인스턴트양식 원본 Google Sheet `Raw2`에서 필요한 고객정보만 파싱해 LawPower DB관리로 자동 수집하고, 신규 DB를 먼저 박형원에게 모아 담당자를 재지정하는 운영 버전입니다.
 
 
 ## v27 추가 핵심
 
-- Google Sheet 시트명 `DB가공` 자동연동
-- 열 순서: `인입 시기 / 광고명 / 성함 / 휴대폰 / 이메일 / 채무규모 / 월소득 / 상담희망시간`
+- Google Sheet 원본 시트 `Raw2` 직접 자동연동
+- 열 위치가 아닌 헤더명 기준 파싱: `created_time / ad_name / full_name / phone / email / 청산_해야하는_총액수 / 월수익 / 빚_청산을_위한_상담_가능_시간대를_알려주세요.`
+- ad_id/adset_id/campaign_id/form_id/id/lead_status 등 관리자 화면에 필요 없는 원본값은 저장하지 않음
 - 최초 설정 시점 이전의 기존 행은 가져오지 않고 **그 이후 새로 들어오는 행만 수집**
 - 1분 간격 Apps Script 전송
 - 동일 행 중복수집 방지
@@ -80,7 +81,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 GOOGLE_SHEETS_WEBHOOK_SECRET=충분히_긴_랜덤_문자열
-GOOGLE_SHEETS_SHEET_NAME=DB가공
+GOOGLE_SHEETS_SHEET_NAME=Raw2
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY`는 **직원계정 생성/수정/삭제 API에서만 서버 측으로 사용**합니다. 절대 `NEXT_PUBLIC_`을 붙이지 말고 브라우저 코드, 메신저, GitHub 저장소에 노출하지 마세요.
@@ -215,7 +216,7 @@ integrations/google-sheets/SETUP.md              연동 설정 가이드
 인입 시기 | 광고명 | 성함 | 휴대폰 | 이메일 | 채무규모 | 월소득 | 상담희망시간
 ```
 
-시트명은 `DB가공`입니다. `integrations/google-sheets/Code.gs`를 해당 스프레드시트의 Apps Script에 붙여넣고 스크립트 속성 2개를 설정한 뒤 `setupLawPowerSync()`를 1회 실행합니다.
+시트명은 `Raw2`입니다. `integrations/google-sheets/Code.gs`를 기존 Telegram 코드와 분리된 LawPower용 `.gs` 파일에 붙여넣고, `showLawPowerRaw2HeaderMap()`으로 헤더를 확인한 뒤 `setupLawPowerSync()`를 1회 실행합니다.
 
 중요: `setupLawPowerSync()`는 **실행 당시 마지막 행을 기준점으로 저장**하기 때문에 기존 DB는 가져오지 않습니다. 그 다음 추가되는 행부터 자동수집합니다.
 
