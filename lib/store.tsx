@@ -128,7 +128,7 @@ interface AppStoreValue {
   setCaseInstallments: (
     caseId: string,
     rows: InstallmentDraft[],
-    finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number }
+    finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
   ) => void;
   addPost: (draft: Omit<BoardPost, "id">) => void;
   updatePost: (id: string, patch: Partial<BoardPost>) => void;
@@ -198,7 +198,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!keys.length) return false;
       return keys.every((key) => {
         if (key === "assignedStaff") return can("cases.change_assignee");
-        if (key === "paidAmount" || key === "contractAmount" || key === "installmentCount") return can("cases.manage_installments");
+        if (key === "paidAmount" || key === "contractAmount" || key === "installmentCount" || key === "paymentMethod") return can("cases.manage_installments");
         if (key === "docsSentAt") return can("cases.send_docs");
         return false;
       });
@@ -677,7 +677,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     (
       caseId: string,
       rows: InstallmentDraft[],
-      finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number }
+      finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
     ) => {
       if (!can("cases.manage_installments")) return;
       const oldRows = installments.filter((i) => i.caseId === caseId);
@@ -700,6 +700,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             contractAmount: Math.max(0, finance?.contractAmount ?? caseBefore.contractAmount),
             paidAmount: Math.max(0, finance?.paidAmount ?? completedAmount),
             installmentCount: Math.max(0, Math.trunc(finance?.installmentCount ?? updated.length)),
+            paymentMethod: finance?.paymentMethod ?? caseBefore.paymentMethod,
           }
         : undefined;
 
@@ -713,7 +714,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           ...(caseNext ? [saveEntity("app_cases", caseNext)] : []),
         ])
       );
-      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차 및 분납 일정 저장");
+      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
     },
     [can, cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
   );

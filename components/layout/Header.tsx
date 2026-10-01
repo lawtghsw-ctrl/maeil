@@ -38,6 +38,19 @@ function formatReservationClock(value: string): string {
   return time.slice(0, 5);
 }
 
+function addIsoDateDays(value: string, days: number): string {
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function formatReservationDateTime(value: string, today: string): string {
+  const date = value.slice(0, 10);
+  const clock = formatReservationClock(value);
+  if (date === today) return `오늘 ${clock}`;
+  return `${date.slice(5).replace("-", "/")} ${clock}`;
+}
+
 type FloatingPosition = { left: number; top: number };
 
 function clampFloatingPosition(position: FloatingPosition, width = 360): FloatingPosition {
@@ -177,12 +190,12 @@ export function Header() {
     [scheduleItems, cases, clients, todayIso]
   );
 
-  // 최종관리자는 전체 예약을 보고, 추후 직원계정에는 본인 담당 예약만 노출합니다.
-  // 예약 24시간 전부터 지난 24시간까지 계속 보여 단계 변경을 놓치지 않게 합니다.
+  // 최종관리자는 전체 예약을 보고, 직원계정에는 본인 담당 예약만 노출합니다.
+  // 예약 3일 전부터 미리 보여주고, 지난 예약은 24시간 동안 남겨 단계 변경을 놓치지 않게 합니다.
   const reservationAlerts = useMemo(() => {
     const now = nowMs;
     const min = now - 24 * 60 * 60 * 1000;
-    const max = now + 24 * 60 * 60 * 1000;
+    const max = now + 3 * 24 * 60 * 60 * 1000;
     return leads
       .filter((lead) => (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) && lead.detailStage === "예약" && !!lead.reservationAt)
       .map((lead) => ({ lead, at: reservationTimeMs(lead.reservationAt as string) }))
@@ -197,17 +210,19 @@ export function Header() {
       }));
   }, [leads, nowMs, canViewAllLeads, currentStaff]);
 
-  // 로그인 담당자의 "오늘 예약콜"은 별도 고정 바에서 항상 확인할 수 있습니다.
-  // 평소에는 노란색, 예약 10분 전부터(예약시간 경과 후 단계가 아직 예약인 경우 포함) 빨간색으로 강조합니다.
-  const todayReservationCalls = useMemo(() => {
+  // 예약콜 고정 팝업은 당일만이 아니라 예약일 3일 전부터 미리 노출합니다.
+  // 오늘 포함 +3일까지의 예약을 보여주고, 당일 예약 중 10분 이내/경과 건은 기존처럼 빨간색으로 강조합니다.
+  const reservationWindowCalls = useMemo(() => {
     const today = kstDateKey(new Date(nowMs));
+    const windowEnd = addIsoDateDays(today, 3);
     return leads
       .filter(
-        (lead) =>
-          (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) &&
-          lead.detailStage === "예약" &&
-          !!lead.reservationAt &&
-          lead.reservationAt.slice(0, 10) === today
+        (lead) => {
+          if (!(canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff))) return false;
+          if (lead.detailStage !== "예약" || !lead.reservationAt) return false;
+          const reservationDate = lead.reservationAt.slice(0, 10);
+          return reservationDate >= today && reservationDate <= windowEnd;
+        }
       )
       .map((lead) => ({
         lead,
@@ -221,13 +236,13 @@ export function Header() {
         phone: lead.phone,
         reservationAt: lead.reservationAt as string,
         at,
-        urgent: at <= nowMs + 10 * 60 * 1000,
+        urgent: lead.reservationAt?.slice(0, 10) === today && at <= nowMs + 10 * 60 * 1000,
         overdue: at < nowMs,
       }));
   }, [leads, nowMs, canViewAllLeads, currentStaff]);
 
-  const hasUrgentReservation = todayReservationCalls.some((item) => item.urgent);
-  const nextReservation = todayReservationCalls.find((item) => item.at >= nowMs) ?? todayReservationCalls[todayReservationCalls.length - 1];
+  const hasUrgentReservation = reservationWindowCalls.some((item) => item.urgent);
+  const nextReservation = reservationWindowCalls.find((item) => item.at >= nowMs) ?? reservationWindowCalls[reservationWindowCalls.length - 1];
 
   const alertCount = overdueAlerts.length + scheduleAlerts.length + reservationAlerts.length;
   const scopedLeads = canViewAllLeads ? leads : leads.filter((l) => !!currentStaff && l.assignedStaff === currentStaff);
@@ -441,13 +456,13 @@ export function Header() {
           <span className="flex items-center gap-2 text-xs font-black">
             예약콜 · {reservationOwnerLabel}
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${hasUrgentReservation ? "bg-red-600 text-white" : "bg-amber-600 text-white"}`}>
-              {todayReservationCalls.length}건
+              {reservationWindowCalls.length}건
             </span>
           </span>
           <span className="mt-0.5 block truncate text-[11px] font-semibold opacity-80">
             {nextReservation
-              ? `${formatReservationClock(nextReservation.reservationAt)} ${nextReservation.name}${nextReservation.urgent ? " · 10분 이내/경과" : ""}`
-              : "오늘 예정된 예약콜이 없습니다."}
+              ? `${formatReservationDateTime(nextReservation.reservationAt, todayIso)} ${nextReservation.name}${nextReservation.urgent ? " · 10분 이내/경과" : ""}`
+              : "3일 이내 예정된 예약콜이 없습니다."}
           </span>
         </span>
         {reservationCallOpen ? <ChevronUp size={16} className="shrink-0" /> : <ChevronDown size={16} className="shrink-0" />}
@@ -461,8 +476,8 @@ export function Header() {
             title="드래그해서 원하는 위치로 이동"
           >
             <div>
-              <div className="text-sm font-bold text-slate-900">오늘 예약콜</div>
-              <div className="text-[11px] text-slate-400">{reservationOwnerLabel} · 예약시간 순</div>
+              <div className="text-sm font-bold text-slate-900">예약콜 · 3일 전부터 표시</div>
+              <div className="text-[11px] text-slate-400">{reservationOwnerLabel} · 오늘~3일 후 · 예약시간 순</div>
             </div>
             <div className="flex items-center gap-1">
               <GripVertical size={15} className="text-slate-300" aria-hidden="true" />
@@ -477,10 +492,10 @@ export function Header() {
             </div>
           </div>
           <div className="max-h-72 overflow-y-auto">
-            {todayReservationCalls.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-slate-400">오늘 예약된 고객이 없습니다.</div>
+            {reservationWindowCalls.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-slate-400">3일 이내 예약된 고객이 없습니다.</div>
             ) : (
-              todayReservationCalls.map((item) => (
+              reservationWindowCalls.map((item) => (
                 <button
                   key={item.id}
                   type="button"
@@ -499,7 +514,7 @@ export function Header() {
                     <span className="flex items-center justify-between gap-2">
                       <b className="truncate text-sm text-slate-900">{item.name}</b>
                       <span className={`shrink-0 text-xs font-black ${item.urgent ? "text-red-700" : "text-amber-700"}`}>
-                        {formatReservationClock(item.reservationAt)}
+                        {formatReservationDateTime(item.reservationAt, todayIso)}
                       </span>
                     </span>
                     <span className="mt-0.5 block text-[11px] text-slate-500">{item.phone}</span>

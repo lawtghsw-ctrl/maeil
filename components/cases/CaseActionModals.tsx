@@ -6,19 +6,20 @@
 // 컴포넌트로 분리했습니다. 실제 외부 API(전자서명/알림톡)는 아직 연결 전이라 기존과
 // 동일하게 미리보기 동작을 유지합니다.
 import { useEffect, useState, type ChangeEvent } from "react";
-import { FileSignature, Plus, RefreshCw, Send, WalletCards } from "lucide-react";
+import { FileSignature, Plus, RefreshCw, Send, Table2, WalletCards } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
-import type { CaseRecord, Client, InstallmentStatus } from "@/lib/types";
+import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
 import { PAYMENT_METHOD_NOTE } from "@/lib/types";
 import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { fmtWon } from "@/lib/format";
 import { Button, Input, Label, Modal, NumberInput, Select } from "@/components/ui/Primitives";
 
 const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
+const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const DOC_GUIDE_CHANNELS = ["카카오톡 알림톡", "SMS"] as const;
 type DocGuideChannel = (typeof DOC_GUIDE_CHANNELS)[number];
 
-type ActionKind = "installment" | "eform" | "docGuide" | null;
+type ActionKind = "installment" | "eform" | "docGuide" | "priorityRepayment" | null;
 
 function todayIsoStr(): string {
   const d = new Date();
@@ -44,6 +45,10 @@ export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRe
           <Send size={15} />
           서류안내문 전송
         </Button>}
+        <Button variant="secondary" onClick={() => setOpen("priorityRepayment")}>
+          <Table2 size={15} />
+          최우선변제 안내표
+        </Button>
       </div>
 
       <CaseInstallmentModal
@@ -64,6 +69,7 @@ export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRe
         caseRecord={caseRecord}
         onClose={() => setOpen(null)}
       />
+      <PriorityRepaymentGuideModal open={open === "priorityRepayment"} onClose={() => setOpen(null)} />
     </>
   );
 }
@@ -91,6 +97,7 @@ function CaseInstallmentModal({
   const [contractAmount, setContractAmount] = useState(caseRecord.contractAmount);
   const [paidAmount, setPaidAmount] = useState(caseRecord.paidAmount);
   const [installmentCount, setInstallmentCount] = useState(caseRecord.installmentCount ?? makeRows().length);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(caseRecord.paymentMethod);
 
   useEffect(() => {
     if (!open) return;
@@ -104,8 +111,9 @@ function CaseInstallmentModal({
     setContractAmount(caseRecord.contractAmount);
     setPaidAmount(caseRecord.paidAmount);
     setInstallmentCount(nextCount);
+    setPaymentMethod(caseRecord.paymentMethod);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, caseRecord.id, caseRecord.contractAmount, caseRecord.paidAmount, caseRecord.installmentCount]);
+  }, [open, caseRecord.id, caseRecord.contractAmount, caseRecord.paidAmount, caseRecord.installmentCount, caseRecord.paymentMethod]);
 
   function update(index: number, patch: Partial<InstallmentDraft>) {
     setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -142,6 +150,7 @@ function CaseInstallmentModal({
       contractAmount,
       paidAmount,
       installmentCount,
+      paymentMethod,
     });
     onClose();
   }
@@ -154,7 +163,7 @@ function CaseInstallmentModal({
         <div className="mb-3 text-xs font-semibold text-blue-700">
           {caseRecord.caseNumber} · {caseRecord.caseType}
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Label text="총 수임료">
             <NumberInput value={contractAmount} onChange={setContractAmount} />
           </Label>
@@ -169,6 +178,13 @@ function CaseInstallmentModal({
               value={installmentCount}
               onChange={(e: ChangeEvent<HTMLInputElement>) => changeInstallmentCount(Number(e.target.value))}
             />
+          </Label>
+          <Label text="결제방법">
+            <Select value={paymentMethod} onChange={(e: ChangeEvent<HTMLSelectElement>) => setPaymentMethod(e.target.value as PaymentMethod)}>
+              {PAYMENT_METHODS.map((method) => (
+                <option key={method} value={method}>{method}</option>
+              ))}
+            </Select>
           </Label>
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-600">
@@ -236,6 +252,51 @@ function CaseInstallmentModal({
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>취소</Button>
         <Button onClick={save}>분납정보 저장</Button>
+      </div>
+    </Modal>
+  );
+}
+
+function PriorityRepaymentGuideModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const rows = [
+    ["서울특별시", "1억 5,000만 원 이하", "1억 6,500만 원 이하", "5,000만 원 이하", "5,500만 원 이하"],
+    ["과밀억제권역, 세종·용인·화성·김포", "1억 3,000만 원 이하", "1억 4,500만 원 이하", "4,300만 원 이하", "4,800만 원 이하"],
+    ["광역시, 안산·광주·파주·이천·평택", "7,000만 원 이하", "8,500만 원 이하", "2,300만 원 이하", "2,800만 원 이하"],
+    ["그 밖의 지역", "6,000만 원 이하", "7,500만 원 이하", "2,000만 원 이하", "2,500만 원 이하"],
+  ];
+
+  return (
+    <Modal open={open} title="최우선변제금액 안내표" onClose={onClose} size="lg">
+      <div className="overflow-x-auto rounded-xl border border-slate-300">
+        <table className="w-full min-w-[760px] border-collapse text-center text-sm">
+          <thead>
+            <tr className="bg-white">
+              <th rowSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">지역</th>
+              <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제 대상 임차인의 보증금액</th>
+              <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제금액</th>
+            </tr>
+            <tr>
+              <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
+              <th className="border border-slate-300 bg-amber-100 px-3 py-2 font-semibold text-slate-700">개정안</th>
+              <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
+              <th className="border border-slate-300 bg-amber-200 px-3 py-2 font-semibold text-slate-700">개정안</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row[0]}>
+                <td className="border border-slate-300 px-3 py-3 font-medium text-slate-700">{row[0]}</td>
+                <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[1]}</td>
+                <td className="border border-slate-300 bg-amber-50 px-3 py-3 font-semibold text-slate-800">{row[2]}</td>
+                <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[3]}</td>
+                <td className="border border-slate-300 bg-amber-100 px-3 py-3 font-semibold text-slate-800">{row[4]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <Button onClick={onClose}>확인</Button>
       </div>
     </Modal>
   );

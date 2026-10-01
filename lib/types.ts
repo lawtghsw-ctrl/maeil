@@ -286,8 +286,9 @@ export const DB_LEAD_DEFAULT_STAGE_BY_STATUS: Record<DbLeadStatus, DbDetailStage
 
 // ---- 상담일지 메모 게시판 ----
 // 자유 텍스트 메모와 [재통화]/[부재중] 콜 태그를 함께 기록하는 누적 로그입니다.
-// 태그가 붙은 항목(재통화/부재중)은 "하루 3회 이상 통화 시도" 경고 판정에도 쓰입니다
-// (lib/consultation.ts의 checkCallWarning 참고).
+// 태그가 붙은 항목(재통화/부재중)은 단계별 컨택 경고 판정에도 쓰입니다.
+// 미상담/부재는 하루 2회, 착수금 안내는 하루 1회, 장기부재는 3일 주기로 관리합니다.
+// (lib/consultation.ts의 checkCallWarning/checkPeriodicContactWarning 참고).
 export type MemoLogTag = "일반" | "재통화" | "부재중";
 
 export interface MemoLogEntry {

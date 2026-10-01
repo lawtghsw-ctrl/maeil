@@ -30,7 +30,7 @@ import {
   STAGE_CHART_COLORS,
 } from "@/lib/dashboard";
 import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, STAGE_GENERIC_LABELS, type DbLead } from "@/lib/types";
-import { checkCallWarning, kstDateStr } from "@/lib/consultation";
+import { checkCallWarning, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
 import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
@@ -87,6 +87,15 @@ function monthBounds(today: string): { start: string; end: string } {
 
 function leadStage(lead: DbLead) {
   return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
+}
+
+function leadNeedsContact(lead: DbLead, today: string): boolean {
+  if (lead.convertedClientId) return false;
+  const stage = leadStage(lead);
+  if (stage === "장기부재") return checkPeriodicContactWarning(lead.consultation?.memoLog, today, 3).active;
+  if (stage === "착수금 안내") return checkCallWarning(lead.consultation?.memoLog, today, 1).active;
+  if (stage === "미상담" || stage === "부재") return checkCallWarning(lead.consultation?.memoLog, today, 2).active;
+  return false;
 }
 
 function greetingCompletedToday(lead: DbLead, today: string): boolean {
@@ -238,12 +247,7 @@ export default function DashboardPage() {
 
   const topDashboard = useMemo(() => {
     const newGreetingDone = topLeads.filter((lead) => greetingCompletedToday(lead, today));
-    const noAnswerNeed = topLeads.filter(
-      (lead) =>
-        (leadStage(lead) === "부재" || leadStage(lead) === "착수금 안내") &&
-        checkCallWarning(lead.consultation?.memoLog, today).active &&
-        !lead.convertedClientId
-    );
+    const noAnswerNeed = topLeads.filter((lead) => leadNeedsContact(lead, today));
     const recall = topLeads
       .filter((lead) => leadStage(lead) === "예약" && !lead.convertedClientId)
       .sort((a, b) => (a.reservationAt ?? a.receivedAt).localeCompare(b.reservationAt ?? b.receivedAt));
@@ -374,7 +378,7 @@ export default function DashboardPage() {
 
   const topCards = [
     { icon: UserPlus, label: "당일신규 DB", value: topDashboard.newGreetingDone.length, sub: "문자인사 완료건", tone: "blue" },
-    { icon: PhoneMissed, label: "부재컨택 필요 DB", value: topDashboard.noAnswerNeed.length, sub: "오늘 콜 관리 대상", tone: "red" },
+    { icon: PhoneMissed, label: "컨택 필요 DB", value: topDashboard.noAnswerNeed.length, sub: "단계별 컨택 관리 대상", tone: "red" },
     { icon: CalendarClock, label: "재통화약속 DB", value: topDashboard.recall.length, sub: "예약 일정 등록", tone: "amber" },
     { icon: PhoneCall, label: "상담중인 DB", value: topDashboard.consulting.length, sub: "현재 상담 단계", tone: "blue" },
     { icon: CheckCircle2, label: "상담완료 DB", value: topDashboard.completed.length, sub: "상담 후속 단계 포함", tone: "emerald" },

@@ -25,7 +25,7 @@ import {
   type LeadSource,
   type StaffName,
 } from "@/lib/types";
-import { checkCallWarning, checkConsultationRequired, kstDateStr } from "@/lib/consultation";
+import { checkCallWarning, checkConsultationRequired, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows, useClickOutside } from "@/components/ui/Primitives";
 import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEditor";
@@ -108,7 +108,14 @@ function effectiveStage(lead: DbLead): DbDetailStage {
 // 대표 색상을 그대로 따라갑니다. 행 전체를 진한 색으로 채우면 텍스트 가독성이 떨어지므로
 // 같은 색상에 옅은 투명도를 적용하고, 왼쪽 포인트 선은 원색으로 표시합니다.
 function leadStageRowStyle(lead: DbLead) {
-  const track = DB_DETAIL_STAGE_TRACK_OF[effectiveStage(lead)];
+  const stage = effectiveStage(lead);
+  if (stage === "불가") {
+    return {
+      backgroundColor: "#fee2e2",
+      boxShadow: "inset 4px 0 0 #dc2626",
+    };
+  }
+  const track = DB_DETAIL_STAGE_TRACK_OF[stage];
   const color = DB_DETAIL_STAGE_TRACK_COLOR[track];
   return {
     backgroundColor: `${color}14`,
@@ -184,11 +191,36 @@ function LeadSourceFilterBar({
   );
 }
 
-// 콜 관리 경고는 "부재" / "착수금 안내" 단계에서만 운영합니다.
-// 상단 진행보드의 느낌표와 고객 행의 상세 경고가 서로 다른 조건을 쓰지 않도록
-// 하나의 Set으로 공유합니다. 날짜별 판정은 checkCallWarning()이 KST 기준 오늘 기록만
-// 집계하므로 전날의 통화완료/부재중 기록은 자동으로 무시되고 매일 00:00에 초기화됩니다.
-const CALL_WARNING_STAGES = new Set<DbDetailStage>(["부재", "착수금 안내"]);
+// 단계별 컨택 관리 주기. 미상담/부재는 하루 2회, 착수금 안내는 하루 1회,
+// 장기부재는 최근 컨택 후 3일이 지나면 다시 알림을 띄웁니다.
+const CALL_WARNING_STAGES = new Set<DbDetailStage>(["미상담", "부재", "착수금 안내", "장기부재"]);
+
+type StageContactWarning = {
+  active: boolean;
+  label: string;
+  title: string;
+};
+
+function getStageContactWarning(lead: DbLead, todayIso: string): StageContactWarning {
+  const stage = effectiveStage(lead);
+  if (stage === "장기부재") {
+    const warning = checkPeriodicContactWarning(lead.consultation?.memoLog, todayIso, 3);
+    const recent = warning.lastContactDate ? ` · 최근 ${warning.lastContactDate}` : " · 최근 컨택 없음";
+    return {
+      active: warning.active,
+      label: `컨택 알림 · 3일 주기${recent}`,
+      title: "장기부재 고객은 3일에 한 번 컨택이 필요합니다.",
+    };
+  }
+
+  const threshold = stage === "착수금 안내" ? 1 : 2;
+  const warning = checkCallWarning(lead.consultation?.memoLog, todayIso, threshold);
+  return {
+    active: warning.active,
+    label: `콜 관리 경고 · 부재중 ${warning.noAnswerCountToday}/${warning.threshold}`,
+    title: stage === "착수금 안내" ? "착수금 안내 고객은 하루 1회 컨택이 필요합니다." : "미상담/부재 고객은 하루 2회 컨택이 필요합니다.",
+  };
+}
 
 // 화면을 밤새 열어둔 경우에도 KST 00:00에 콜 경고를 즉시 새 날짜 기준으로 다시 계산합니다.
 // 다음 한국시간 자정의 실제 epoch를 구해 setTimeout을 한 번 걸고, 실행 뒤 다음 자정을 다시 예약합니다.
@@ -279,7 +311,7 @@ function StageBoard({
                       <span className="truncate">{stage}</span>
                       {CALL_WARNING_STAGES.has(stage) && (warningCounts[stage] ?? 0) > 0 && (
                         <span
-                          title={`오늘 콜 관리가 필요한 DB ${(warningCounts[stage] ?? 0)}건`}
+                          title={`컨택 관리가 필요한 DB ${(warningCounts[stage] ?? 0)}건`}
                           className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${
                             selected ? "bg-white text-red-600" : "bg-red-500 text-white"
                           }`}
@@ -457,17 +489,19 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
 // 거절/부적합/종결 처리된 리드는 표시하지 않고(=더 이상 관리 대상 아님), 오늘 기준으로
 // checkCallWarning이 활성(=아직 오늘 몫의 통화 관리가 안 된 상태)일 때만 렌더링합니다.
 function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }) {
-  const done = !!lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단";
-  if (done) return null;
-  // 영업 콜 경고는 요청대로 진행단계가 "부재" 또는 "착수금 안내"일 때만 고객 행에 노출합니다.
   const stage = effectiveStage(lead);
-  if (!CALL_WARNING_STAGES.has(stage)) return null;
-  const warning = checkCallWarning(lead.consultation?.memoLog, todayIso);
+  const done =
+    !!lead.convertedClientId ||
+    lead.status === "거절" ||
+    lead.status === "부적합" ||
+    (lead.status === "종결_중단" && stage !== "장기부재");
+  if (done || !CALL_WARNING_STAGES.has(stage)) return null;
+  const warning = getStageContactWarning(lead, todayIso);
   if (!warning.active) return null;
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
+    <span title={warning.title} className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
       <ShieldAlert size={11} className="shrink-0" />
-      콜 관리 경고 · 부재중 {warning.noAnswerCountToday}/3
+      {warning.label}
     </span>
   );
 }
@@ -760,16 +794,18 @@ export default function DbManagementPage() {
     };
   }, []);
 
-  // 상단 상담 진행판과 고객 행 모두 "부재" / "착수금 안내" 단계만 콜 관리 대상으로 봅니다.
-  // checkCallWarning은 KST 기준 오늘 로그만 집계하므로 이전 날짜의 통화완료/부재중 기록은
-  // 전부 무시되고 매일 00:00에 다시 경고 판정이 시작됩니다.
+  // 상단 상담 진행판과 고객 행은 동일한 단계별 컨택 주기 규칙을 사용합니다.
   const stageWarningCounts = useMemo(() => {
     const map: Partial<Record<DbDetailStage, number>> = {};
     for (const lead of stageUniverse) {
-      if (lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단") continue;
       const stage = effectiveStage(lead);
-      if (!CALL_WARNING_STAGES.has(stage)) continue;
-      if (!checkCallWarning(lead.consultation?.memoLog, todayIso).active) continue;
+      const done =
+        !!lead.convertedClientId ||
+        lead.status === "거절" ||
+        lead.status === "부적합" ||
+        (lead.status === "종결_중단" && stage !== "장기부재");
+      if (done || !CALL_WARNING_STAGES.has(stage)) continue;
+      if (!getStageContactWarning(lead, todayIso).active) continue;
       map[stage] = (map[stage] ?? 0) + 1;
     }
     return map;

@@ -42,7 +42,7 @@ export const PERMISSION_GROUPS = [
       ["cases.view_finance", "계약 금액정보 조회", "계약금액·납부금·미수금·분납금액 조회"],
       ["cases.create", "계약 등록", "신규 계약 생성"],
       ["cases.change_assignee", "계약 담당자 지정/변경", "계약 등록 시 다른 담당자 선택 및 기존 담당자 변경"],
-      ["cases.manage_installments", "분납관리", "분납 일정 추가·삭제·금액·상태·실입금일 변경"],
+      ["cases.manage_installments", "분납관리", "총 수임료·납부금액·납부회차·결제방법 및 분납 일정 변경"],
       ["cases.econtract", "전자계약서", "전자계약서 화면 조회 및 향후 실제 전송 기능 사용"],
       ["cases.send_docs", "서류안내문 전송", "서류안내문 작성·미제출 서류 확인·전송 기능 사용"],
     ],

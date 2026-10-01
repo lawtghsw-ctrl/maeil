@@ -419,28 +419,65 @@ export function getConsultationCompletionStats(
 }
 
 // ---- 콜 경고 판정 ----
-// "전환되지 않은 디비는 하루에 꼭 3번 이상 통화하도록, 3번 이내 한번이라도 받으면
-// 사라지는 경고표시"를 만들어달라는 요청 반영. 콜횟수 카운터(▲▼) 대신, 상담일지
-// 메모 게시판에서 [재통화]/[부재중] 태그를 붙여 기록한 항목을 오늘 날짜 기준으로 집계해
-// 판정합니다 — 오늘 [재통화] 태그가 하나라도 있으면(=통화 연결 성공) 즉시 해제되고,
-// 없더라도 오늘 [부재중] 태그가 3건 이상 쌓이면 "오늘 몫은 했다"고 보고 역시 해제됩니다.
-// 자정이 지나 날짜가 바뀌면 "오늘" 기준 집계가 자동으로 리셋되어 매일 새로 경고가
-// 뜹니다(이 데모는 브라우저 로컬 시간 기준 — 실서비스 전환 시 서버에서 KST로 고정하세요).
-const DAILY_NO_ANSWER_THRESHOLD = 3;
-
+// 단계별 영업 컨택 주기를 지원합니다. 일일 기준 단계는 오늘 [재통화]가 한 번이라도 있으면
+// 즉시 완료로 보고, 연결되지 않은 경우 [부재중] 태그 횟수가 단계별 목표 횟수에 도달하면
+// 그날 경고를 해제합니다. 장기부재처럼 "N일에 1번" 관리하는 단계는 아래
+// checkPeriodicContactWarning()으로 최근 컨택일을 기준으로 다시 알림을 띄웁니다.
 export interface CallWarningResult {
   active: boolean; // 경고 활성 여부(=오늘 통화 관리가 안 된 상태)
   noAnswerCountToday: number; // 오늘 [부재중] 태그 횟수
   reachedToday: boolean; // 오늘 [재통화] 태그(통화 연결 성공) 존재 여부
+  threshold: number; // 오늘 필요한 최대 부재중 기록 횟수
 }
 
-export function checkCallWarning(memoLog: MemoLogEntry[] | undefined, todayIso?: string): CallWarningResult {
+export function checkCallWarning(
+  memoLog: MemoLogEntry[] | undefined,
+  todayIso?: string,
+  noAnswerThreshold = 2
+): CallWarningResult {
   const today = todayIso ?? kstDateStr();
+  const threshold = Math.max(1, Math.trunc(noAnswerThreshold || 1));
   const todays = (memoLog ?? []).filter((e) => kstDateStr(new Date(e.at)) === today);
   const noAnswerCountToday = todays.filter((e) => e.tag === "부재중").length;
   const reachedToday = todays.some((e) => e.tag === "재통화");
-  const active = !reachedToday && noAnswerCountToday < DAILY_NO_ANSWER_THRESHOLD;
-  return { active, noAnswerCountToday, reachedToday };
+  const active = !reachedToday && noAnswerCountToday < threshold;
+  return { active, noAnswerCountToday, reachedToday, threshold };
+}
+
+export interface PeriodicContactWarningResult {
+  active: boolean;
+  intervalDays: number;
+  lastContactDate?: string;
+  daysSinceLastContact?: number;
+}
+
+function isoDayNumber(isoDate: string): number {
+  const [year, month, day] = isoDate.slice(0, 10).split("-").map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+export function checkPeriodicContactWarning(
+  memoLog: MemoLogEntry[] | undefined,
+  todayIso?: string,
+  intervalDays = 3
+): PeriodicContactWarningResult {
+  const today = todayIso ?? kstDateStr();
+  const interval = Math.max(1, Math.trunc(intervalDays || 1));
+  const contactDates = (memoLog ?? [])
+    .filter((entry) => entry.tag === "재통화" || entry.tag === "부재중")
+    .map((entry) => kstDateStr(new Date(entry.at)))
+    .filter(Boolean)
+    .sort();
+  const lastContactDate = contactDates[contactDates.length - 1];
+  if (!lastContactDate) return { active: true, intervalDays: interval };
+
+  const daysSinceLastContact = Math.max(0, isoDayNumber(today) - isoDayNumber(lastContactDate));
+  return {
+    active: daysSinceLastContact >= interval,
+    intervalDays: interval,
+    lastContactDate,
+    daysSinceLastContact,
+  };
 }
 
 export interface RepaymentDebtOverride {
