@@ -12,29 +12,63 @@ function backoffMinutes(attempts: number) {
 }
 
 async function resolveAccess(request: NextRequest, body?: any) {
-  const configuredSecrets = [process.env.META_QUEUE_SECRET?.trim(), process.env.CRON_SECRET?.trim()].filter(Boolean) as string[];
+  const configuredSecrets = [
+    process.env.META_QUEUE_SECRET?.trim(),
+    process.env.CRON_SECRET?.trim(),
+  ].filter(Boolean) as string[];
+
   const headerSecret = request.headers.get("x-lawpower-meta-queue-secret")?.trim();
   const bearer = request.headers.get("authorization") || "";
   const bearerValue = bearer.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
-  const serviceAuthorized = configuredSecrets.some((secret) => secret === headerSecret || secret === bearerValue);
+  const serviceAuthorized = configuredSecrets.some(
+    (secret) => secret === headerSecret || secret === bearerValue
+  );
+
   if (serviceAuthorized) {
-    return { admin: createAdminClient(), lawFirmId: body?.lawFirmId || request.nextUrl.searchParams.get("lawFirmId") || null, mode: "service" as const };
+    return {
+      admin: createAdminClient(),
+      lawFirmId: body?.lawFirmId || request.nextUrl.searchParams.get("lawFirmId") || null,
+      mode: "service" as const,
+    };
   }
 
-  const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin", "staff"]);
-  const requestedFirm = body?.lawFirmId || request.nextUrl.searchParams.get("lawFirmId") || null;
-  const lawFirmId = profile.platform_role === "super_admin" ? requestedFirm : profile.law_firm_id;
-  if (profile.platform_role === "super_admin" && !lawFirmId) throw new Error("로펌을 선택해주세요.");
+  const { admin, profile } = await requirePlatformUser(request, [
+    "super_admin",
+    "firm_admin",
+    "staff",
+  ]);
+  const requestedFirm =
+    body?.lawFirmId || request.nextUrl.searchParams.get("lawFirmId") || null;
+  const lawFirmId =
+    profile.platform_role === "super_admin" ? requestedFirm : profile.law_firm_id;
+
+  if (profile.platform_role === "super_admin" && !lawFirmId) {
+    throw new Error("로펌을 선택해주세요.");
+  }
+
   return { admin, lawFirmId, mode: "user" as const };
+}
+
+function queueEventTime(item: any) {
+  const raw = item?.event_time || item?.created_at;
+  const time = raw ? new Date(raw).getTime() : NaN;
+  return Number.isFinite(time) ? Math.floor(time / 1000) : Math.floor(Date.now() / 1000);
 }
 
 async function run(request: NextRequest, body?: any) {
   const access = await resolveAccess(request, body);
-  const limit = Math.max(1, Math.min(50, Number(body?.limit || request.nextUrl.searchParams.get("limit")) || 20));
-  const { data: claimed, error: claimError } = await access.admin.rpc("claim_meta_event_queue", {
-    p_law_firm_id: access.lawFirmId || null,
-    p_limit: limit,
-  });
+  const limit = Math.max(
+    1,
+    Math.min(50, Number(body?.limit || request.nextUrl.searchParams.get("limit")) || 20)
+  );
+
+  const { data: claimed, error: claimError } = await access.admin.rpc(
+    "claim_meta_event_queue",
+    {
+      p_law_firm_id: access.lawFirmId || null,
+      p_limit: limit,
+    }
+  );
   if (claimError) throw claimError;
 
   let success = 0;
@@ -43,6 +77,7 @@ async function run(request: NextRequest, body?: any) {
 
   for (const item of claimed ?? []) {
     const logId = crypto.randomUUID();
+
     await access.admin.from("meta_event_logs").insert({
       id: logId,
       law_firm_id: item.law_firm_id,
@@ -61,45 +96,105 @@ async function run(request: NextRequest, body?: any) {
         metaAccountId: item.meta_account_id,
         eventName: item.event_name,
         eventId: item.event_id,
-        eventTime: Math.floor(new Date(item.created_at).getTime() / 1000),
+        // v28.6: queue 생성 당시의 CRM 상태/단계를 그대로 전송합니다.
+        // 전송 대기 중 DB가 다음 단계로 바뀌어도 이전 이벤트의 의미가 변하지 않습니다.
+        eventTime: queueEventTime(item),
+        leadStatus: item.crm_status ?? undefined,
+        leadStage: item.crm_stage ?? undefined,
       });
 
-      await access.admin.from("meta_event_logs").update({
-        status: sent.ok ? "success" : "failed",
-        response_code: sent.status,
-        error_message: sent.ok ? null : sent.responseText.slice(0, 1500),
-        responded_at: new Date().toISOString(),
-      }).eq("id", logId);
+      await access.admin
+        .from("meta_event_logs")
+        .update({
+          status: sent.ok ? "success" : "failed",
+          response_code: sent.status,
+          error_message: sent.ok ? null : sent.responseText.slice(0, 1500),
+          responded_at: new Date().toISOString(),
+        })
+        .eq("id", logId);
 
       if (sent.ok) {
         success += 1;
         await Promise.all([
-          access.admin.from("meta_event_queue").update({ status: "success", last_error: null, updated_at: new Date().toISOString() }).eq("id", item.id),
-          access.admin.from("firm_meta_accounts").update({ last_success_at: new Date().toISOString(), last_error_message: null }).eq("id", item.meta_account_id),
+          access.admin
+            .from("meta_event_queue")
+            .update({
+              status: "success",
+              last_error: null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", item.id),
+          access.admin
+            .from("firm_meta_accounts")
+            .update({
+              last_success_at: new Date().toISOString(),
+              last_error_message: null,
+            })
+            .eq("id", item.meta_account_id),
         ]);
-        results.push({ id: item.id, ok: true, eventId: item.event_id });
+        results.push({
+          id: item.id,
+          ok: true,
+          eventId: item.event_id,
+          crmStatus: item.crm_status ?? null,
+          crmStage: item.crm_stage ?? null,
+        });
       } else {
         throw new Error(`Meta ${sent.status}: ${sent.responseText.slice(0, 500)}`);
       }
     } catch (error) {
       failed += 1;
       const message = error instanceof Error ? error.message : "Meta 전송 실패";
-      const nextAttempt = new Date(Date.now() + backoffMinutes(Number(item.attempts || 1)) * 60_000).toISOString();
+      const nextAttempt = new Date(
+        Date.now() + backoffMinutes(Number(item.attempts || 1)) * 60_000
+      ).toISOString();
+
       await Promise.all([
-        access.admin.from("meta_event_queue").update({
-          status: "failed",
-          last_error: message.slice(0, 1500),
-          next_attempt_at: nextAttempt,
-          updated_at: new Date().toISOString(),
-        }).eq("id", item.id),
-        access.admin.from("meta_event_logs").update({ status: "failed", error_message: message.slice(0, 1500), responded_at: new Date().toISOString() }).eq("id", logId),
-        access.admin.from("firm_meta_accounts").update({ last_error_at: new Date().toISOString(), last_error_message: message.slice(0, 1000) }).eq("id", item.meta_account_id),
+        access.admin
+          .from("meta_event_queue")
+          .update({
+            status: "failed",
+            last_error: message.slice(0, 1500),
+            next_attempt_at: nextAttempt,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", item.id),
+        access.admin
+          .from("meta_event_logs")
+          .update({
+            status: "failed",
+            error_message: message.slice(0, 1500),
+            responded_at: new Date().toISOString(),
+          })
+          .eq("id", logId),
+        access.admin
+          .from("firm_meta_accounts")
+          .update({
+            last_error_at: new Date().toISOString(),
+            last_error_message: message.slice(0, 1000),
+          })
+          .eq("id", item.meta_account_id),
       ]);
-      results.push({ id: item.id, ok: false, eventId: item.event_id, error: message, nextAttemptAt: nextAttempt });
+
+      results.push({
+        id: item.id,
+        ok: false,
+        eventId: item.event_id,
+        error: message,
+        nextAttemptAt: nextAttempt,
+        crmStatus: item.crm_status ?? null,
+        crmStage: item.crm_stage ?? null,
+      });
     }
   }
 
-  return NextResponse.json({ ok: true, claimed: claimed?.length ?? 0, success, failed, results });
+  return NextResponse.json({
+    ok: true,
+    claimed: claimed?.length ?? 0,
+    success,
+    failed,
+    results,
+  });
 }
 
 export async function POST(request: NextRequest) {
