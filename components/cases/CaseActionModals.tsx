@@ -6,7 +6,7 @@
 // 컴포넌트로 분리했습니다. 실제 외부 API(전자서명/알림톡)는 아직 연결 전이라 기존과
 // 동일하게 미리보기 동작을 유지합니다.
 import { useEffect, useState, type ChangeEvent } from "react";
-import { FileSignature, Plus, RefreshCw, Send, Table2, WalletCards } from "lucide-react";
+import { FileSignature, Plus, RefreshCw, Send, WalletCards } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
 import { PAYMENT_METHOD_NOTE } from "@/lib/types";
@@ -19,7 +19,7 @@ const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const DOC_GUIDE_CHANNELS = ["카카오톡 알림톡", "SMS"] as const;
 type DocGuideChannel = (typeof DOC_GUIDE_CHANNELS)[number];
 
-type ActionKind = "installment" | "eform" | "docGuide" | "priorityRepayment" | null;
+type ActionKind = "installment" | "eform" | "docGuide" | null;
 
 function todayIsoStr(): string {
   const d = new Date();
@@ -45,10 +45,6 @@ export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRe
           <Send size={15} />
           서류안내문 전송
         </Button>}
-        <Button variant="secondary" onClick={() => setOpen("priorityRepayment")}>
-          <Table2 size={15} />
-          최우선변제 안내표
-        </Button>
       </div>
 
       <CaseInstallmentModal
@@ -69,7 +65,6 @@ export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRe
         caseRecord={caseRecord}
         onClose={() => setOpen(null)}
       />
-      <PriorityRepaymentGuideModal open={open === "priorityRepayment"} onClose={() => setOpen(null)} />
     </>
   );
 }
@@ -257,7 +252,7 @@ function CaseInstallmentModal({
   );
 }
 
-function PriorityRepaymentGuideModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PriorityRepaymentGuideTable() {
   const rows = [
     ["서울특별시", "1억 5,000만 원 이하", "1억 6,500만 원 이하", "5,000만 원 이하", "5,500만 원 이하"],
     ["과밀억제권역, 세종·용인·화성·김포", "1억 3,000만 원 이하", "1억 4,500만 원 이하", "4,300만 원 이하", "4,800만 원 이하"],
@@ -266,39 +261,34 @@ function PriorityRepaymentGuideModal({ open, onClose }: { open: boolean; onClose
   ];
 
   return (
-    <Modal open={open} title="최우선변제금액 안내표" onClose={onClose} size="lg">
-      <div className="overflow-x-auto rounded-xl border border-slate-300">
-        <table className="w-full min-w-[760px] border-collapse text-center text-sm">
-          <thead>
-            <tr className="bg-white">
-              <th rowSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">지역</th>
-              <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제 대상 임차인의 보증금액</th>
-              <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제금액</th>
+    <div className="overflow-x-auto rounded-xl border border-slate-300">
+      <table className="w-full min-w-[760px] border-collapse text-center text-sm">
+        <thead>
+          <tr className="bg-white">
+            <th rowSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">지역</th>
+            <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제 대상 임차인의 보증금액</th>
+            <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제금액</th>
+          </tr>
+          <tr>
+            <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
+            <th className="border border-slate-300 bg-amber-100 px-3 py-2 font-semibold text-slate-700">개정안</th>
+            <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
+            <th className="border border-slate-300 bg-amber-200 px-3 py-2 font-semibold text-slate-700">개정안</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row[0]}>
+              <td className="border border-slate-300 px-3 py-3 font-medium text-slate-700">{row[0]}</td>
+              <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[1]}</td>
+              <td className="border border-slate-300 bg-amber-50 px-3 py-3 font-semibold text-slate-800">{row[2]}</td>
+              <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[3]}</td>
+              <td className="border border-slate-300 bg-amber-100 px-3 py-3 font-semibold text-slate-800">{row[4]}</td>
             </tr>
-            <tr>
-              <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
-              <th className="border border-slate-300 bg-amber-100 px-3 py-2 font-semibold text-slate-700">개정안</th>
-              <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
-              <th className="border border-slate-300 bg-amber-200 px-3 py-2 font-semibold text-slate-700">개정안</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row[0]}>
-                <td className="border border-slate-300 px-3 py-3 font-medium text-slate-700">{row[0]}</td>
-                <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[1]}</td>
-                <td className="border border-slate-300 bg-amber-50 px-3 py-3 font-semibold text-slate-800">{row[2]}</td>
-                <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[3]}</td>
-                <td className="border border-slate-300 bg-amber-100 px-3 py-3 font-semibold text-slate-800">{row[4]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-4 flex justify-end">
-        <Button onClick={onClose}>확인</Button>
-      </div>
-    </Modal>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -390,7 +380,7 @@ function CaseDocGuideModal({
 
   useEffect(() => {
     if (open) {
-      setChannel("카카오톡 알림톡");
+      setChannel(DOC_GUIDE_CHANNELS[0]);
       setPhone(client.phone);
       setMessage(buildDocGuideMessage(client.name, pending.map((doc) => doc.label)));
     }

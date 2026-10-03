@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { PAYMENT_METHOD_NOTE } from "@/lib/types";
 import { CaseTypeBadge, InstallmentStatusBadge, StatusBadge } from "@/components/ui/Badge";
-import { CaseActionPanel } from "@/components/cases/CaseActionModals";
+import { CaseActionPanel, PriorityRepaymentGuideTable } from "@/components/cases/CaseActionModals";
 import { Card } from "@/components/ui/Primitives";
 import { ArrowLeft } from "lucide-react";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -121,6 +121,16 @@ export default function CaseDetailPage() {
               )}
             </tbody>
           </table>
+        </div>
+      </Card>}
+
+      {can("cases.view_finance") && <Card className="overflow-hidden">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <div className="text-sm font-semibold text-slate-900">최우선변제금액 안내표</div>
+          <div className="mt-0.5 text-xs text-slate-400">현행/개정안 기준을 분납 현황 아래에서 바로 확인합니다.</div>
+        </div>
+        <div className="p-4">
+          <PriorityRepaymentGuideTable />
         </div>
       </Card>}
     </div>
