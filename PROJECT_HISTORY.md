@@ -788,3 +788,13 @@ npm 없이 디자인만 빠르게 보고 싶다면 별도로 전달된 `dashboar
 - DB 공급 원장(lead_supply_ledger), 과금여부/단가 스냅샷 추가
 - 플랫폼에서 24시간 공급/과금 건수 표시
 - 로펌별 중복기간/과금방식/DB단가 설정 추가
+
+## v28.4 - SUPER ADMIN Control Center
+- `/platform`을 로파워 통합 관제센터로 확장: 통합현황/DB 공급관리/연동 모니터링/전체 활동로그.
+- `/platform/firms/[id]` 로펌 상세 관제 페이지 추가.
+- SUPER ADMIN `로펌 어드민 보기` 추가. session scope로 한 로펌만 선택하여 기존 CRM 전체 기능을 최상위 권한으로 직접 관리.
+- SUPER ADMIN scoped mode에서 업무 엔티티 조회/저장/삭제와 firm_settings를 선택 로펌 `law_firm_id`로 고정.
+- 직원계정관리 API/UI를 SUPER ADMIN 선택 로펌 범위에 맞게 보강.
+- 로펌 진입/종료 감사로그 기록.
+- 플랫폼 24h 공급 집계에서 migration backfill 제외.
+- 추가 DB migration 없음(v28.3 006 적용 DB 그대로 사용).

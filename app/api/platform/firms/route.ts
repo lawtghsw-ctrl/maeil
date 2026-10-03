@@ -7,30 +7,34 @@ async function firmCode(admin: any) {
   return String(data);
 }
 
+const since24h = () => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
 export async function GET(request: NextRequest) {
   try {
-    const { admin, profile } = await requirePlatformUser(request, ["super_admin"]);
+    const { admin } = await requirePlatformUser(request, ["super_admin"]);
     const { data: firms, error } = await admin.from("law_firms").select("*").order("created_at", { ascending: false });
     if (error) throw error;
 
     const rows = await Promise.all((firms ?? []).map(async (firm: any) => {
-      const [members, leads, cases, sheets, metaAccounts, duplicateImports, ingestErrors, queuePending, queueFailed, supply24h, billable24h] = await Promise.all([
+      const [members, leads, cases, sheets, metaAccounts, duplicateImports, ingestErrors, queuePending, queueFailed, supply24h, billable24h, activity24h, latestActivity] = await Promise.all([
         admin.from("profiles").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).eq("is_active", true),
         admin.from("app_leads").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id),
         admin.from("app_cases").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id),
         admin.from("firm_sheet_integrations").select("id,last_received_at,active").eq("law_firm_id", firm.id).eq("active", true).order("last_received_at", { ascending: false, nullsFirst: false }).limit(1),
         admin.from("firm_meta_accounts").select("id,last_success_at,last_error_at,last_error_message,active").eq("law_firm_id", firm.id).eq("active", true),
         admin.from("app_lead_imports").select("external_key", { count: "exact", head: true }).eq("law_firm_id", firm.id).in("classification", ["duplicate_external", "duplicate_meta", "duplicate_phone"]),
-        admin.from("integration_ingest_errors").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+        admin.from("integration_ingest_errors").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).gte("created_at", since24h()),
         admin.from("meta_event_queue").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).in("status", ["pending", "processing"]),
         admin.from("meta_event_queue").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).eq("status", "failed"),
-        admin.from("lead_supply_ledger").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).gte("supplied_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
-        admin.from("lead_supply_ledger").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).eq("billable", true).gte("supplied_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+        admin.from("lead_supply_ledger").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).neq("origin", "backfill").gte("supplied_at", since24h()),
+        admin.from("lead_supply_ledger").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).eq("billable", true).neq("origin", "backfill").gte("supplied_at", since24h()),
+        admin.from("app_change_logs").select("id", { count: "exact", head: true }).eq("law_firm_id", firm.id).gte("created_at", since24h()),
+        admin.from("app_change_logs").select("id,data,created_at").eq("law_firm_id", firm.id).order("created_at", { ascending: false }).limit(1),
       ]);
       const activeMeta = metaAccounts.data ?? [];
       const latestMetaSuccess = activeMeta.map((x:any)=>x.last_success_at).filter(Boolean).sort().reverse()[0] ?? null;
       const latestMetaError = activeMeta.map((x:any)=>x.last_error_at).filter(Boolean).sort().reverse()[0] ?? null;
+      const last = latestActivity.data?.[0] ?? null;
       return {
         ...firm,
         memberCount: members.count ?? 0,
@@ -42,17 +46,42 @@ export async function GET(request: NextRequest) {
         metaFailedCount: queueFailed.count ?? 0,
         supply24hCount: supply24h.count ?? 0,
         billable24hCount: billable24h.count ?? 0,
+        activity24hCount: activity24h.count ?? 0,
+        lastActivityAt: last?.created_at ?? null,
+        lastActivityStaff: last?.data?.staff ?? null,
+        lastActivityAction: last ? `${last.data?.category ?? "업무"} · ${last.data?.action ?? "변경"}` : null,
         activeMetaAccountCount: activeMeta.length,
         lastSheetReceivedAt: sheets.data?.[0]?.last_received_at ?? null,
         lastMetaSuccessAt: latestMetaSuccess,
         lastMetaErrorAt: latestMetaError,
       };
     }));
-    const { data: auditLogs, error: auditError } = await admin.from("platform_audit_logs")
-      .select("id,actor_name,actor_role,law_firm_id,action,target_type,target_id,detail,created_at")
-      .order("created_at", { ascending: false }).limit(50);
+
+    const [{ data: auditLogs, error: auditError }, { data: operationalLogs, error: operationError }] = await Promise.all([
+      admin.from("platform_audit_logs")
+        .select("id,actor_name,actor_role,law_firm_id,action,target_type,target_id,detail,created_at")
+        .order("created_at", { ascending: false }).limit(100),
+      admin.from("app_change_logs")
+        .select("id,law_firm_id,data,created_at")
+        .order("created_at", { ascending: false }).limit(100),
+    ]);
     if (auditError) throw auditError;
-    return NextResponse.json({ firms: rows, auditLogs: auditLogs ?? [] });
+    if (operationError) throw operationError;
+
+    const firmNameById = new Map((firms ?? []).map((firm:any)=>[firm.id, firm.name]));
+    const recentActivities = (operationalLogs ?? []).map((row:any)=>({
+      id: row.id,
+      lawFirmId: row.law_firm_id,
+      firmName: firmNameById.get(row.law_firm_id) ?? "알 수 없는 로펌",
+      category: row.data?.category ?? "업무",
+      action: row.data?.action ?? "변경",
+      targetName: row.data?.targetName ?? "-",
+      detail: row.data?.detail ?? "",
+      staff: row.data?.staff ?? "시스템",
+      at: row.data?.at ?? row.created_at,
+    }));
+
+    return NextResponse.json({ firms: rows, auditLogs: auditLogs ?? [], recentActivities });
   } catch (err) {
     const e = platformError(err);
     return NextResponse.json({ error: e.message }, { status: e.status });
@@ -87,36 +116,34 @@ export async function POST(request: NextRequest) {
     if (firmError) throw firmError;
 
     let adminUserId: string | null = null;
-    {
-      const { data: created, error: createError } = await admin.auth.admin.createUser({
-        email: adminEmail,
-        password: adminPassword,
-        email_confirm: true,
-        user_metadata: { display_name: adminName, staff_name: adminName },
-      });
-      if (createError || !created.user) {
-        await admin.from("law_firms").delete().eq("id", firm.id);
-        throw createError || new Error("로펌 관리자 계정 생성에 실패했습니다.");
-      }
-      adminUserId = created.user.id;
-      const { error: profileError } = await admin.from("profiles").update({
-        email: adminEmail,
-        display_name: adminName,
-        staff_name: adminName,
-        role: "admin",
-        platform_role: "firm_admin",
-        law_firm_id: firm.id,
-        is_active: true,
-        is_work_staff: true,
-        auto_assign_leads: true,
-        lead_assignment_order: 10,
-        updated_at: new Date().toISOString(),
-      }).eq("id", created.user.id);
-      if (profileError) {
-        await admin.auth.admin.deleteUser(created.user.id);
-        await admin.from("law_firms").delete().eq("id", firm.id);
-        throw profileError;
-      }
+    const { data: created, error: createError } = await admin.auth.admin.createUser({
+      email: adminEmail,
+      password: adminPassword,
+      email_confirm: true,
+      user_metadata: { display_name: adminName, staff_name: adminName },
+    });
+    if (createError || !created.user) {
+      await admin.from("law_firms").delete().eq("id", firm.id);
+      throw createError || new Error("로펌 관리자 계정 생성에 실패했습니다.");
+    }
+    adminUserId = created.user.id;
+    const { error: profileError } = await admin.from("profiles").update({
+      email: adminEmail,
+      display_name: adminName,
+      staff_name: adminName,
+      role: "admin",
+      platform_role: "firm_admin",
+      law_firm_id: firm.id,
+      is_active: true,
+      is_work_staff: true,
+      auto_assign_leads: true,
+      lead_assignment_order: 10,
+      updated_at: new Date().toISOString(),
+    }).eq("id", created.user.id);
+    if (profileError) {
+      await admin.auth.admin.deleteUser(created.user.id);
+      await admin.from("law_firms").delete().eq("id", firm.id);
+      throw profileError;
     }
 
     await writePlatformAudit(admin, request, profile, { lawFirmId: firm.id, action: "firm.create", targetType: "law_firm", targetId: firm.id, detail: { firmCode: firm.firm_code, name: firm.name, adminUserId, adminEmail, adminName } });

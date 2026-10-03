@@ -282,3 +282,10 @@ integrations/google-sheets/SETUP.md              연동 설정 가이드
 
 ## v28.3 멀티로펌 전환
 최초 멀티로펌 적용은 `V28_SETUP.md`를 기준으로 진행합니다. 이전 v28.x 패키지를 먼저 적용하지 않은 v27.13 운영본에서 `V28_PREFLIGHT.sql` → `V28_BACKUP.sql` → `supabase/migrations/006_multi_tenant_platform.sql` → `V28_POSTCHECK.sql` 순서로 적용합니다.
+
+### v28.4 SUPER ADMIN
+- 로파워 통합 관제센터: 로펌/직원/DB/계약/공급/과금/연동오류/활동 통합 조회
+- 로펌 상세 관제: 직원 최근 로그인, 최근 DB/계약, 업무변경, 공급원장, Sheet/Meta/광고소스 상태
+- SUPER ADMIN 로펌 어드민 직접보기: 선택 로펌 한 곳으로 범위를 고정해 기존 CRM 전체 기능을 최상위 권한으로 직접 관리
+- SUPER ADMIN 직원권한 직접관리 및 로펌 진입/종료 감사로그
+- 24시간 공급 집계에서 migration backfill 제외

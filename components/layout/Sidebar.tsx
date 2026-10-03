@@ -22,41 +22,61 @@ const baseMenu: MenuItem[] = [
 ];
 
 function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
-  const { isAdmin, can, profile } = useStore();
+  const { isAdmin, can, profile, superAdminFirmScope } = useStore();
   const platformRole = profile?.platformRole ?? "staff";
   const visible = useMemo(() => {
-    if (platformRole === "super_admin") return [["로파워 플랫폼", "/platform", Building2, "admin"], ["내 계정", "/account", KeyRound, "admin"]] as MenuItem[];
+    if (platformRole === "super_admin" && !superAdminFirmScope) {
+      return [["로파워 플랫폼", "/platform", Building2, "admin"], ["내 계정", "/account", KeyRound, "admin"]] as MenuItem[];
+    }
     const rows = baseMenu.filter(([, , , permission]) => permission === "admin" ? isAdmin : can(permission));
-    if (platformRole === "firm_admin") rows.push(["로펌 설정/직원초대", "/firm/settings", Link2, "admin"]);
+    if (platformRole === "super_admin" && superAdminFirmScope) {
+      rows.unshift(["로파워 플랫폼", "/platform", Building2, "admin"]);
+      rows.push(["로펌 설정/광고연동", `/firm/settings?lawFirmId=${encodeURIComponent(superAdminFirmScope.id)}`, Link2, "admin"]);
+    } else if (platformRole === "firm_admin") {
+      rows.push(["로펌 설정/직원초대", "/firm/settings", Link2, "admin"]);
+    }
     rows.push(["내 계정", "/account", KeyRound, "admin"]);
     return rows;
-  }, [platformRole, isAdmin, can]);
+  }, [platformRole, superAdminFirmScope, isAdmin, can]);
   const best = visible.reduce<string | null>((current, [, href]) => {
-    const matches = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
-    return matches && (current === null || href.length > current.length) ? href : current;
+    const cleanHref = href.split("?")[0];
+    const matches = cleanHref === "/" ? pathname === "/" : pathname === cleanHref || pathname.startsWith(`${cleanHref}/`);
+    return matches && (current === null || cleanHref.length > current.length) ? cleanHref : current;
   }, null);
   return (
     <nav className="flex-1 overflow-y-auto p-3">
-      {visible.map(([label, href, Icon]) => (
-        <Link key={href} href={href} onClick={onNavigate} className={cn("mb-1 flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition", href === best ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950")}>
-          <Icon size={18} />{label}
-        </Link>
-      ))}
+      {platformRole === "super_admin" && superAdminFirmScope && (
+        <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+          <div className="text-[10px] font-black tracking-wider text-blue-500">SUPER ADMIN VIEW</div>
+          <div className="mt-1 truncate text-xs font-black text-blue-950">{superAdminFirmScope.name}</div>
+          <div className="mt-0.5 font-mono text-[10px] text-blue-600">{superAdminFirmScope.firmCode}</div>
+        </div>
+      )}
+      {visible.map(([label, href, Icon]) => {
+        const cleanHref = href.split("?")[0];
+        return (
+          <Link key={`${label}-${href}`} href={href} onClick={onNavigate} className={cn("mb-1 flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition", cleanHref === best ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950")}>
+            <Icon size={18} />{label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
 
 function ProfileBlock() {
-  const { profile, currentUser, signOut } = useStore();
+  const { profile, currentUser, signOut, superAdminFirmScope } = useStore();
   const name = profile?.displayName || currentUser?.email?.split("@")[0] || "사용자";
   const initial = name.trim().slice(0, 1) || "관";
-  const roleLabel = profile?.platformRole === "super_admin" ? "로파워 최상위" : profile?.platformRole === "firm_admin" ? "로펌 관리자" : profile?.staffName ? `STAFF · ${profile.staffName}` : "STAFF";
+  const roleLabel = profile?.platformRole === "super_admin"
+    ? superAdminFirmScope ? `로파워 최상위 · ${superAdminFirmScope.name}` : "로파워 최상위"
+    : profile?.platformRole === "firm_admin" ? "로펌 관리자" : profile?.staffName ? `STAFF · ${profile.staffName}` : "STAFF";
   return (
     <div className="border-t border-slate-100 p-4">
       <div className="rounded-xl bg-slate-50 p-3">
         <div className="flex items-center gap-3">
           <div className="grid size-9 place-items-center rounded-full bg-slate-800 text-xs font-bold text-white">{initial}</div>
-          <div className="min-w-0 flex-1"><div className="truncate text-sm font-bold">{name}</div><div className="text-xs text-slate-500">{roleLabel}</div></div>
+          <div className="min-w-0 flex-1"><div className="truncate text-sm font-bold">{name}</div><div className="truncate text-xs text-slate-500">{roleLabel}</div></div>
           <button type="button" title="로그아웃" onClick={() => void signOut()} className="grid size-8 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-red-600"><LogOut size={15} /></button>
         </div>
       </div>
@@ -65,10 +85,12 @@ function ProfileBlock() {
 }
 
 function Brand({ close }: { close?: () => void }) {
+  const { superAdminFirmScope, profile } = useStore();
+  const subtitle = profile?.platformRole === "super_admin" && superAdminFirmScope ? superAdminFirmScope.name : "LAWPOWER ADMIN";
   return (
     <div className="flex h-16 items-center gap-3 border-b border-slate-100 px-5">
       <div className="grid size-9 place-items-center rounded-lg bg-blue-600 text-white"><ShieldCheck size={19} /></div>
-      <div className="min-w-0 flex-1"><div className="font-bold text-slate-900">로파워</div><div className="text-[10px] font-semibold tracking-widest text-slate-400">LAWPOWER ADMIN</div></div>
+      <div className="min-w-0 flex-1"><div className="font-bold text-slate-900">로파워</div><div className="truncate text-[10px] font-semibold tracking-widest text-slate-400">{subtitle}</div></div>
       {close && <button onClick={close} className="grid size-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100" aria-label="메뉴 닫기"><X size={20} /></button>}
     </div>
   );

@@ -1,0 +1,22 @@
+LawPower v28.4 SUPER ADMIN overwrite package
+Base: v28.3 FINAL multi-firm
+Additional SQL: none
+
+New:
+- app/platform/firms/[id]/page.tsx
+- app/api/platform/firms/[id]/route.ts
+- app/api/platform/firm-view/route.ts
+- V28_4_NOTE.txt
+- V28_4_MANIFEST.txt
+
+Updated:
+- app/platform/page.tsx
+- app/api/platform/firms/route.ts
+- app/api/admin/users/route.ts
+- app/staff-accounts/page.tsx
+- components/layout/AppShell.tsx
+- components/layout/Sidebar.tsx
+- lib/store.tsx
+- V28_SETUP.md
+- README.md
+- PROJECT_HISTORY.md

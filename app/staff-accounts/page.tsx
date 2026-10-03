@@ -153,7 +153,7 @@ function ToggleRow({ label, description, checked, onChange, disabled = false }: 
 }
 
 export default function StaffAccountsPage() {
-  const { currentUser, isAdmin, reloadData, profile } = useStore();
+  const { currentUser, isAdmin, reloadData, profile, superAdminFirmScope } = useStore();
   const [rows, setRows] = useState<StaffAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -164,7 +164,7 @@ export default function StaffAccountsPage() {
   const [editing, setEditing] = useState<StaffAccountRow | null>(null);
   const [editPassword, setEditPassword] = useState("");
   const platformRole = profile?.platformRole ?? "staff";
-  const canDirectCreate = platformRole === "super_admin";
+  const canDirectCreate = platformRole === "super_admin" && !!superAdminFirmScope;
   const isFirmAdmin = platformRole === "firm_admin";
 
   const api = useCallback(async (method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, queryString = "") => {
@@ -187,14 +187,17 @@ export default function StaffAccountsPage() {
     setLoading(true);
     setError(null);
     try {
-      const json = await api("GET");
+      const queryString = platformRole === "super_admin" && superAdminFirmScope?.id
+        ? `?lawFirmId=${encodeURIComponent(superAdminFirmScope.id)}`
+        : "";
+      const json = await api("GET", undefined, queryString);
       setRows(json.users ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "직원계정을 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [api, isAdmin]);
+  }, [api, isAdmin, platformRole, superAdminFirmScope?.id]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -224,7 +227,11 @@ export default function StaffAccountsPage() {
     setBusy(true);
     setError(null);
     try {
-      await api("POST", { ...draft, permissions: normalizePermissions(draft.permissions) });
+      await api("POST", {
+        ...draft,
+        lawFirmId: superAdminFirmScope?.id,
+        permissions: normalizePermissions(draft.permissions),
+      });
       setCreateOpen(false);
       setDraft(emptyDraft());
       await Promise.all([load(), reloadData()]);
@@ -287,9 +294,19 @@ export default function StaffAccountsPage() {
     <>
       <PageHeader
         title="직원계정관리"
-        description={isFirmAdmin ? "로펌 관리자 전용 · 신규 직원은 24시간 1회용 초대코드로 가입하고, 가입 후 여기서 활성화·권한·자동배정을 관리합니다." : "로파워 운영자 전용 · 로펌 관리자/직원 계정을 관리합니다."}
+        description={isFirmAdmin
+          ? "로펌 관리자 전용 · 신규 직원은 24시간 1회용 초대코드로 가입하고, 가입 후 여기서 활성화·권한·자동배정을 관리합니다."
+          : superAdminFirmScope
+            ? `SUPER ADMIN · ${superAdminFirmScope.name}의 관리자/직원 계정, 권한, 활성화, 자동배정을 직접 관리합니다.`
+            : "로파워 운영자 전용 · 로펌 관리자/직원 계정을 관리합니다."}
         action={<div className="flex gap-2"><Button variant="secondary" onClick={() => void load()}><RefreshCw size={14} /> 새로고침</Button>{canDirectCreate ? <Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 계정 직접 생성</Button> : <Link href="/firm/settings" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"><Plus size={15} /> 직원 초대코드</Link>}</div>}
       />
+
+      {platformRole === "super_admin" && superAdminFirmScope && (
+        <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <b>SUPER ADMIN 직접관리</b> · 현재 <b>{superAdminFirmScope.name}</b> 직원계정만 표시됩니다. 모든 계정의 역할·활성화·세부권한·자동배정을 수정할 수 있습니다.
+        </div>
+      )}
 
       <div className="mb-4 grid gap-3 lg:grid-cols-3">
         <Card className="border-blue-100 bg-blue-50 p-4 lg:col-span-2">

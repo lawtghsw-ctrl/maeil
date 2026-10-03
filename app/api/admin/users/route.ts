@@ -47,7 +47,12 @@ export async function GET(request:NextRequest) {
   try {
     const {admin,profile}=await requireAccountAdmin(request);
     let q=admin.from("profiles").select("id,email,display_name,role,staff_name,is_active,is_work_staff,auto_assign_leads,lead_assignment_order,permissions,created_at,updated_at,law_firm_id,platform_role").order("created_at");
-    if(profile.platform_role!=="super_admin") q=q.eq("law_firm_id",profile.law_firm_id);
+    if(profile.platform_role!=="super_admin") {
+      q=q.eq("law_firm_id",profile.law_firm_id);
+    } else {
+      const scopedFirmId = String(request.nextUrl.searchParams.get("lawFirmId") || "").trim();
+      if (scopedFirmId) q=q.eq("law_firm_id", scopedFirmId);
+    }
     const [{data:listed,error:listError},{data:profiles,error:profileError}]=await Promise.all([admin.auth.admin.listUsers({page:1,perPage:1000}),q]);
     if(listError) throw listError; if(profileError) throw profileError;
     const authMap=new Map((listed?.users??[]).map((u:any)=>[u.id,u]));

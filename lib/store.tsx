@@ -69,6 +69,13 @@ export interface AppUserProfile {
   permissions: PermissionMap;
 }
 
+export interface SuperAdminFirmScope {
+  id: string;
+  firmCode: string;
+  name: string;
+  status: "active" | "suspended";
+}
+
 const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
   단순분납: 100,
   로피분납: 90,
@@ -113,6 +120,9 @@ interface AppStoreValue {
   profile: AppUserProfile | null;
   staffDirectory: AppUserProfile[];
   workStaffNames: StaffName[];
+  superAdminFirmScope: SuperAdminFirmScope | null;
+  enterSuperAdminFirmScope: (firm: SuperAdminFirmScope) => void;
+  exitSuperAdminFirmScope: () => void;
   isAdmin: boolean;
   currentStaff?: StaffName;
   can: (permission: PermissionKey) => boolean;
@@ -159,12 +169,36 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<AppUserProfile | null>(null);
   const [staffDirectory, setStaffDirectory] = useState<AppUserProfile[]>([]);
+  const [superAdminFirmScope, setSuperAdminFirmScope] = useState<SuperAdminFirmScope | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem("lawpower_super_firm_scope");
+      return raw ? (JSON.parse(raw) as SuperAdminFirmScope) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(configured ? null : "Supabase 환경변수가 설정되지 않았습니다.");
 
   const actorName = profile?.displayName || profile?.staffName || currentUser?.email || "시스템";
-  const currentStaff = profile?.staffName;
+  const currentStaff = profile?.platformRole === "super_admin" ? undefined : profile?.staffName;
   const isAdmin = profile?.role === "admin";
+  const effectiveFirmId =
+    profile?.lawFirmId ||
+    (profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : undefined);
+
+  const enterSuperAdminFirmScope = useCallback((firm: SuperAdminFirmScope) => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("lawpower_super_firm_scope", JSON.stringify(firm));
+    }
+    setSuperAdminFirmScope(firm);
+  }, []);
+
+  const exitSuperAdminFirmScope = useCallback(() => {
+    if (typeof window !== "undefined") window.sessionStorage.removeItem("lawpower_super_firm_scope");
+    setSuperAdminFirmScope(null);
+  }, []);
   const can = useCallback(
     (permission: PermissionKey) => Boolean(profile?.isActive && (profile.role === "admin" || profile.permissions?.[permission] === true)),
     [profile]
@@ -209,9 +243,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const fetchEntityTable = useCallback(
-    async <T,>(table: string): Promise<T[]> => {
+    async <T,>(table: string, lawFirmId?: string): Promise<T[]> => {
       if (!supabase) return [];
-      const { data, error } = await supabase.from(table).select("id,data");
+      let query = supabase.from(table).select("id,data");
+      if (lawFirmId) query = query.eq("law_firm_id", lawFirmId);
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []).map((row: { id: string; data: unknown }) => ({ ...(row.data as T), id: row.id } as T));
     },
@@ -287,12 +323,40 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      let targetFirmId = resolvedProfile.lawFirmId;
       if (resolvedProfile.platformRole === "super_admin") {
-        setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
-        setSettlementRates({});
-        setCaseDocuments({});
-        return;
+        if (!superAdminFirmScope?.id) {
+          setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
+          setSettlementRates({});
+          setCaseDocuments({});
+          return;
+        }
+        const { data: scopedFirm, error: scopedFirmError } = await supabase
+          .from("law_firms")
+          .select("id,firm_code,name,status")
+          .eq("id", superAdminFirmScope.id)
+          .maybeSingle();
+        if (scopedFirmError || !scopedFirm) {
+          exitSuperAdminFirmScope();
+          throw scopedFirmError || new Error("선택한 로펌 정보를 찾지 못했습니다.");
+        }
+        const normalizedScope: SuperAdminFirmScope = {
+          id: scopedFirm.id,
+          firmCode: scopedFirm.firm_code,
+          name: scopedFirm.name,
+          status: scopedFirm.status === "suspended" ? "suspended" : "active",
+        };
+        if (
+          normalizedScope.name !== superAdminFirmScope.name ||
+          normalizedScope.firmCode !== superAdminFirmScope.firmCode ||
+          normalizedScope.status !== superAdminFirmScope.status
+        ) {
+          enterSuperAdminFirmScope(normalizedScope);
+        }
+        targetFirmId = scopedFirm.id;
       }
+
+      if (!targetFirmId) throw new Error("소속 로펌을 확인할 수 없습니다.");
 
       const [
         loadedLeads,
@@ -305,15 +369,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         firmSettingsRes,
         directoryRes,
       ] = await Promise.all([
-        fetchEntityTable<DbLead>("app_leads"),
-        fetchEntityTable<Client>("app_clients"),
-        fetchEntityTable<CaseRecord>("app_cases"),
-        fetchEntityTable<Installment>("app_installments"),
-        fetchEntityTable<ScheduleItem>("app_schedule_items"),
-        fetchEntityTable<BoardPost>("app_board_posts"),
-        fetchEntityTable<ChangeLogEntry>("app_change_logs"),
-        supabase.from("firm_settings").select("key,value"),
-        supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name"),
+        fetchEntityTable<DbLead>("app_leads", targetFirmId),
+        fetchEntityTable<Client>("app_clients", targetFirmId),
+        fetchEntityTable<CaseRecord>("app_cases", targetFirmId),
+        fetchEntityTable<Installment>("app_installments", targetFirmId),
+        fetchEntityTable<ScheduleItem>("app_schedule_items", targetFirmId),
+        fetchEntityTable<BoardPost>("app_board_posts", targetFirmId),
+        fetchEntityTable<ChangeLogEntry>("app_change_logs", targetFirmId),
+        supabase.from("firm_settings").select("key,value").eq("law_firm_id", targetFirmId),
+        supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id", targetFirmId).eq("is_work_staff", true).order("display_name"),
       ]);
 
       if (firmSettingsRes.error) throw firmSettingsRes.error;
@@ -353,7 +417,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [fetchEntityTable, supabase]);
+  }, [enterSuperAdminFirmScope, exitSuperAdminFirmScope, fetchEntityTable, supabase, superAdminFirmScope]);
 
   useEffect(() => {
     void reloadData();
@@ -393,7 +457,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const saveEntity = useCallback(
     async (table: string, entity: { id: string }) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
-      const { error } = await supabase.from(table).upsert({ id: entity.id, data: entity }, { onConflict: "id" });
+      if (!effectiveFirmId) throw new Error("작업할 로펌을 선택해주세요.");
+      const { error } = await supabase.from(table).upsert(
+        { id: entity.id, data: entity, law_firm_id: effectiveFirmId },
+        { onConflict: "id" }
+      );
       if (error) throw error;
 
       // Lead 상태 변경 트리거가 Meta 전송 대기열을 만들면 같은 요청 흐름에서 즉시 전송을 시도합니다.
@@ -414,29 +482,31 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [supabase]
+    [effectiveFirmId, supabase]
   );
 
   const deleteEntity = useCallback(
     async (table: string, id: string) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
-      const { error } = await supabase.from(table).delete().eq("id", id);
+      let query = supabase.from(table).delete().eq("id", id);
+      if (effectiveFirmId) query = query.eq("law_firm_id", effectiveFirmId);
+      const { error } = await query;
       if (error) throw error;
     },
-    [supabase]
+    [effectiveFirmId, supabase]
   );
 
   const saveSetting = useCallback(
     async (key: string, value: unknown) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
-      if (!profile?.lawFirmId) throw new Error("소속 로펌이 없는 계정에서는 로펌별 설정을 저장할 수 없습니다.");
+      if (!effectiveFirmId) throw new Error("작업할 로펌을 선택해주세요.");
       const { error } = await supabase.from("firm_settings").upsert(
-        { law_firm_id: profile.lawFirmId, key, value, updated_by: currentUser?.id ?? null },
+        { law_firm_id: effectiveFirmId, key, value, updated_by: currentUser?.id ?? null },
         { onConflict: "law_firm_id,key" }
       );
       if (error) throw error;
     },
-    [currentUser?.id, profile?.lawFirmId, supabase]
+    [currentUser?.id, effectiveFirmId, supabase]
   );
 
   const queueWrite = useCallback(
@@ -829,6 +899,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
+    if (typeof window !== "undefined") window.sessionStorage.removeItem("lawpower_super_firm_scope");
     await supabase.auth.signOut();
     window.location.href = "/login";
   }, [supabase]);
@@ -851,6 +922,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       profile,
       staffDirectory,
       workStaffNames,
+      superAdminFirmScope,
+      enterSuperAdminFirmScope,
+      exitSuperAdminFirmScope,
       isAdmin,
       currentStaff,
       can,
@@ -890,6 +964,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       profile,
       staffDirectory,
       workStaffNames,
+      superAdminFirmScope,
+      enterSuperAdminFirmScope,
+      exitSuperAdminFirmScope,
       isAdmin,
       currentStaff,
       can,
