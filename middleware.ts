@@ -4,24 +4,19 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  // 외부 시스템 webhook은 브라우저 로그인 세션이 없으므로 인증 middleware에서 제외합니다.
-  // 실제 요청 인증은 각 API route의 전용 secret(header)으로 검증합니다.
-  if (pathname === "/api/integrations/google-sheets/leads") {
+  // Browser session is not available for these external/public routes.
+  if (["/join", "/api/join", "/api/integrations/google-sheets/leads", "/api/integrations/meta/flush"].includes(pathname)) {
     return NextResponse.next({ request });
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-
-  // 최초 설치 직후 환경변수 설정 전에는 설정 안내 화면을 볼 수 있도록 통과시킵니다.
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return NextResponse.next({ request });
 
   let response = NextResponse.next({ request });
   const supabase = createServerClient(url, key, {
     cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
+      getAll() { return request.cookies.getAll(); },
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
         response = NextResponse.next({ request });
@@ -40,12 +35,42 @@ export async function middleware(request: NextRequest) {
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
   }
+  if (!user) return response;
 
-  if (user && isLogin) {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_active,platform_role,law_firm_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (isLogin) {
     const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
+    homeUrl.pathname = profile?.platform_role === "super_admin" ? "/platform" : "/";
     homeUrl.search = "";
     return NextResponse.redirect(homeUrl);
+  }
+
+  // Avoid ever rendering a cross-firm operational dashboard to SUPER_ADMIN.
+  if (profile?.platform_role === "super_admin") {
+    const allowed = pathname === "/platform" || pathname.startsWith("/platform/") || pathname === "/firm/settings" || pathname === "/account" || pathname.startsWith("/api/");
+    if (!allowed) {
+      const target = request.nextUrl.clone();
+      target.pathname = "/platform";
+      target.search = "";
+      return NextResponse.redirect(target);
+    }
+  } else if (pathname === "/platform" || pathname.startsWith("/platform/")) {
+    const target = request.nextUrl.clone();
+    target.pathname = "/";
+    target.search = "";
+    return NextResponse.redirect(target);
+  }
+
+  if (pathname === "/firm/settings" && !["super_admin", "firm_admin"].includes(profile?.platform_role || "")) {
+    const target = request.nextUrl.clone();
+    target.pathname = "/";
+    target.search = "";
+    return NextResponse.redirect(target);
   }
 
   return response;

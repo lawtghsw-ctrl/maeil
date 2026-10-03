@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/integrations/meta/flush?limit=50",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

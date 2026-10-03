@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, KeyRound, Plus, RefreshCw, Search, ShieldCheck, UserCog, UserRoundCheck, UsersRound } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -21,6 +22,8 @@ interface StaffAccountRow {
   email: string;
   displayName: string;
   role: "admin" | "staff";
+  platformRole?: "super_admin" | "firm_admin" | "staff";
+  lawFirmId?: string | null;
   staffName: string;
   isActive: boolean;
   isWorkStaff: boolean;
@@ -150,7 +153,7 @@ function ToggleRow({ label, description, checked, onChange, disabled = false }: 
 }
 
 export default function StaffAccountsPage() {
-  const { currentUser, isAdmin, reloadData } = useStore();
+  const { currentUser, isAdmin, reloadData, profile } = useStore();
   const [rows, setRows] = useState<StaffAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -160,6 +163,9 @@ export default function StaffAccountsPage() {
   const [draft, setDraft] = useState<AccountDraft>(() => emptyDraft());
   const [editing, setEditing] = useState<StaffAccountRow | null>(null);
   const [editPassword, setEditPassword] = useState("");
+  const platformRole = profile?.platformRole ?? "staff";
+  const canDirectCreate = platformRole === "super_admin";
+  const isFirmAdmin = platformRole === "firm_admin";
 
   const api = useCallback(async (method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, queryString = "") => {
     const supabase = createClient();
@@ -201,7 +207,7 @@ export default function StaffAccountsPage() {
   const summary = useMemo(() => ({
     total: rows.length,
     active: rows.filter((row) => row.isActive).length,
-    admins: rows.filter((row) => row.role === "admin" && row.isActive).length,
+    admins: rows.filter((row) => row.platformRole === "firm_admin" && row.isActive).length,
     workStaff: rows.filter((row) => row.isWorkStaff).length,
   }), [rows]);
 
@@ -281,8 +287,8 @@ export default function StaffAccountsPage() {
     <>
       <PageHeader
         title="직원계정관리"
-        description="최종관리자 전용 · 계정 생성/활성화/실무 담당자 지정/메뉴·기능별 세부 권한을 즉시 적용합니다."
-        action={<div className="flex gap-2"><Button variant="secondary" onClick={() => void load()}><RefreshCw size={14} /> 새로고침</Button><Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 직원계정 생성</Button></div>}
+        description={isFirmAdmin ? "로펌 관리자 전용 · 신규 직원은 24시간 1회용 초대코드로 가입하고, 가입 후 여기서 활성화·권한·자동배정을 관리합니다." : "로파워 운영자 전용 · 로펌 관리자/직원 계정을 관리합니다."}
+        action={<div className="flex gap-2"><Button variant="secondary" onClick={() => void load()}><RefreshCw size={14} /> 새로고침</Button>{canDirectCreate ? <Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 계정 직접 생성</Button> : <Link href="/firm/settings" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"><Plus size={15} /> 직원 초대코드</Link>}</div>}
       />
 
       <div className="mb-4 grid gap-3 lg:grid-cols-3">
@@ -300,19 +306,20 @@ export default function StaffAccountsPage() {
             <UserRoundCheck size={18} className="mt-0.5 shrink-0 text-emerald-700" />
             <div>
               <div className="text-sm font-black text-emerald-900">담당자 버튼 + 신규 DB 자동배정</div>
-              <p className="mt-1 text-xs leading-5 text-emerald-700">‘실무 담당자로 사용’을 켜면 DB관리 담당자 버튼에 자동 추가됩니다. ‘신규 DB 자동유입 담당’을 켠 직원 중 배정 순서 숫자가 가장 낮은 1명이 Google Sheet 신규 DB를 모두 먼저 받습니다. 현재 운영 담당자는 박형원입니다.</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-700">‘실무 담당자로 사용’을 켜면 DB관리 담당자 버튼에 자동 추가됩니다. ‘신규 DB 자동유입 담당’을 켠 직원들을 배정 순서 숫자 기준으로 순환하며 Google Sheet 신규 DB를 자동 배정합니다.</p>
             </div>
           </div>
         </Card>
       </div>
 
+      {isFirmAdmin && <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><b>신규 직원 가입 방식</b> · 직원계정은 이 화면에서 직접 생성하지 않습니다. <Link href="/firm/settings" className="font-black underline">로펌 설정 → 직원 초대</Link>에서 24시간 1회용 코드를 발급하고 직원이 <code>/join</code>에서 회원가입합니다.</div>}
       {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {([
           { label: "전체 계정", value: summary.total, Icon: UsersRound },
           { label: "활성 계정", value: summary.active, Icon: UserRoundCheck },
-          { label: "최종관리자", value: summary.admins, Icon: ShieldCheck },
+          { label: "로펌 관리자", value: summary.admins, Icon: ShieldCheck },
           { label: "실무 담당자", value: summary.workStaff, Icon: UserCog },
         ] satisfies Array<{ label: string; value: number; Icon: LucideIcon }>).map(({ label, value, Icon }) => (
           <Card key={label} className="flex items-center gap-3 p-4">
@@ -337,11 +344,11 @@ export default function StaffAccountsPage() {
               {filtered.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100">
                   <td className="px-4 py-3"><div className="font-bold text-slate-900">{row.displayName}</div><div className="mt-0.5 text-xs text-slate-400">{row.email}</div></td>
-                  <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.role === "admin" ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{row.role === "admin" ? "최종관리자" : "직원"}</span></td>
+                  <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.role === "admin" ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : "직원"}</span></td>
                   <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span></td>
                   <td className="px-4 py-3">{row.isWorkStaff ? <span className="font-semibold text-blue-700">사용</span> : <span className="text-slate-400">제외</span>}</td>
                   <td className="px-4 py-3">{row.isActive && row.isWorkStaff && row.autoAssignLeads ? <span className="font-semibold text-emerald-700">참여 · {row.leadAssignmentOrder}</span> : <span className="text-slate-400">제외</span>}</td>
-                  <td className="px-4 py-3 text-slate-500">{row.role === "admin" ? "전체 권한" : `${permissionCount(row.permissions)}개`}</td>
+                  <td className="px-4 py-3 text-slate-500">{row.platformRole === "firm_admin" || row.platformRole === "super_admin" ? "관리자 권한" : `${permissionCount(row.permissions)}개`}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(row.lastSignInAt)}</td>
                   <td className="px-4 py-3 text-right"><Button variant="secondary" onClick={() => { setEditing({ ...row, permissions: { ...row.permissions } }); setEditPassword(""); }}>설정</Button></td>
                 </tr>
@@ -354,24 +361,24 @@ export default function StaffAccountsPage() {
           {filtered.map((row) => (
             <div key={row.id} className="p-4">
               <div className="flex items-start justify-between gap-3"><div><div className="font-bold">{row.displayName}</div><div className="text-xs text-slate-400">{row.email}</div></div><Button variant="secondary" onClick={() => { setEditing({ ...row, permissions: { ...row.permissions } }); setEditPassword(""); }}>설정</Button></div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.role === "admin" ? "최종관리자" : "직원"}</span><span className={`rounded px-2 py-1 ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-700">실무담당 {row.isWorkStaff ? "사용" : "제외"}</span><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">DB자동유입 {row.isActive && row.isWorkStaff && row.autoAssignLeads ? `참여(${row.leadAssignmentOrder})` : "제외"}</span></div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : "직원"}</span><span className={`rounded px-2 py-1 ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-700">실무담당 {row.isWorkStaff ? "사용" : "제외"}</span><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">DB자동유입 {row.isActive && row.isWorkStaff && row.autoAssignLeads ? `참여(${row.leadAssignmentOrder})` : "제외"}</span></div>
             </div>
           ))}
         </div>
       </Card>
 
-      <Modal open={createOpen} title="직원계정 생성" onClose={() => !busy && setCreateOpen(false)} size="xl">
+      {canDirectCreate && <Modal open={createOpen} title="계정 직접 생성" onClose={() => !busy && setCreateOpen(false)} size="xl">
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-bold text-slate-600">직원명 *<Input className="mt-1" value={draft.displayName} onChange={(e) => setDraft((v) => ({ ...v, displayName: e.target.value }))} placeholder="예: 박형원" /></label>
             <label className="text-xs font-bold text-slate-600">로그인 이메일 *<Input className="mt-1" type="email" value={draft.email} onChange={(e) => setDraft((v) => ({ ...v, email: e.target.value }))} placeholder="staff@example.com" /></label>
             <label className="text-xs font-bold text-slate-600">임시 비밀번호 *<Input className="mt-1" type="password" value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} placeholder="8자 이상" /></label>
-            <label className="text-xs font-bold text-slate-600">계정 구분<Select className="mt-1 w-full" value={draft.role} onChange={(e) => setDraft((v) => ({ ...v, role: e.target.value as "admin" | "staff" }))}><option value="staff">직원</option><option value="admin">최종관리자</option></Select></label>
+            <label className="text-xs font-bold text-slate-600">계정 구분<Select className="mt-1 w-full" value={draft.role} onChange={(e) => setDraft((v) => ({ ...v, role: e.target.value as "admin" | "staff" }))}><option value="staff">직원</option><option value="admin">로펌 관리자</option></Select></label>
           </div>
           <div className="grid gap-3 lg:grid-cols-3">
             <ToggleRow label="계정 활성화" description="활성화 즉시 로그인할 수 있습니다. 계정만 먼저 만들려면 해제 상태로 두세요." checked={draft.isActive} onChange={(isActive) => setDraft((v) => ({ ...v, isActive }))} />
             <ToggleRow label="실무 담당자로 사용" description="DB관리 담당자 버튼/담당자 선택 및 정산설정 목록에 자동 반영됩니다." checked={draft.isWorkStaff} onChange={(isWorkStaff) => setDraft((v) => ({ ...v, isWorkStaff, autoAssignLeads: isWorkStaff ? v.autoAssignLeads : false }))} />
-            <ToggleRow label="신규 DB 자동유입 담당" description="활성 + 실무담당 계정 중 이 설정이 켜진 직원에게 Google Sheet 신규 DB를 우선 배정합니다. 여러 명이면 배정 순서 숫자가 가장 낮은 1명에게 모두 배정됩니다." checked={draft.autoAssignLeads} disabled={!draft.isWorkStaff} onChange={(autoAssignLeads) => setDraft((v) => ({ ...v, autoAssignLeads }))} />
+            <ToggleRow label="신규 DB 자동유입 담당" description="활성 + 실무담당 계정 중 이 설정이 켜진 직원에게 Google Sheet 신규 DB를 우선 배정합니다. 여러 명이면 배정 순서 숫자 기준으로 순환 배정됩니다." checked={draft.autoAssignLeads} disabled={!draft.isWorkStaff} onChange={(autoAssignLeads) => setDraft((v) => ({ ...v, autoAssignLeads }))} />
           </div>
           <label className="block max-w-xs text-xs font-bold text-slate-600">DB 자동배정 순서
             <Input className="mt-1" type="number" min={1} max={9999} value={draft.leadAssignmentOrder} disabled={!draft.isWorkStaff || !draft.autoAssignLeads} onChange={(e) => setDraft((v) => ({ ...v, leadAssignmentOrder: Math.max(1, Number(e.target.value) || 1) }))} />
@@ -380,23 +387,23 @@ export default function StaffAccountsPage() {
           {draft.role === "staff" ? <>
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-xs font-bold text-blue-800">권한 프리셋</div><div className="mt-2 flex flex-wrap gap-2">{PERMISSION_PRESETS.map((preset) => <button key={preset.id} type="button" title={preset.description} onClick={() => applyPreset(preset.id, (permissions) => setDraft((v) => ({ ...v, permissions })))} className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">{preset.label}</button>)}</div></div>
             <PermissionEditor value={draft.permissions} onChange={(permissions) => setDraft((v) => ({ ...v, permissions }))} />
-          </> : <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-800"><b>최종관리자 계정</b>은 모든 메뉴/기능/전체 담당자 데이터를 자동으로 사용할 수 있습니다. 세부 체크박스보다 관리자 역할이 우선합니다.</div>}
+          </> : <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-800"><b>로펌 관리자 계정</b>은 해당 로펌의 전체 업무 데이터와 관리 기능을 사용할 수 있습니다. 신규 일반 직원은 초대코드 가입을 기본으로 사용합니다.</div>}
           <div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setCreateOpen(false)} disabled={busy}>취소</Button><Button onClick={() => void createAccount()} disabled={busy}>{busy ? "생성 중..." : "계정 생성"}</Button></div>
         </div>
-      </Modal>
+      </Modal>}
 
       <Modal open={!!editing} title={editing ? `${editing.displayName} · 계정/권한 설정` : "직원계정 설정"} onClose={() => !busy && setEditing(null)} size="full">
         {editing && <div className="space-y-4">
           <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="text-xs font-bold text-slate-600">직원명<Input className="mt-1" value={editing.displayName} onChange={(e) => setEditing((v) => v ? { ...v, displayName: e.target.value, staffName: e.target.value } : v)} /></label>
             <label className="text-xs font-bold text-slate-600">로그인 이메일<Input className="mt-1" type="email" value={editing.email} onChange={(e) => setEditing((v) => v ? { ...v, email: e.target.value } : v)} /></label>
-            <label className="text-xs font-bold text-slate-600">계정 구분<Select className="mt-1 w-full" value={editing.role} disabled={editing.id === currentUser?.id} onChange={(e) => setEditing((v) => v ? { ...v, role: e.target.value as "admin" | "staff" } : v)}><option value="staff">직원</option><option value="admin">최종관리자</option></Select></label>
+            <label className="text-xs font-bold text-slate-600">계정 구분<Select className="mt-1 w-full" value={editing.role} disabled={editing.id === currentUser?.id || !canDirectCreate} onChange={(e) => setEditing((v) => v ? { ...v, role: e.target.value as "admin" | "staff" } : v)}><option value="staff">직원</option><option value="admin">로펌 관리자</option></Select></label>
             <label className="text-xs font-bold text-slate-600">새 비밀번호(선택)<div className="relative mt-1"><KeyRound size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><Input type="password" className="pl-9" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} placeholder="변경할 때만 8자 이상" /></div></label>
           </div>
           <div className="grid gap-3 lg:grid-cols-3">
             <ToggleRow label="계정 활성화" description="끄면 즉시 로그인 불가 상태가 됩니다. 현재 로그인한 본인 관리자 계정은 비활성화할 수 없습니다." checked={editing.isActive} onChange={(isActive) => setEditing((v) => v ? { ...v, isActive } : v)} disabled={editing.id === currentUser?.id} />
             <ToggleRow label="실무 담당자로 사용" description="켜면 DB관리 담당자 버튼/선택목록/정산설정에 자동 노출됩니다. 홍성원 개발자 계정은 끄고, 강이삭·박형원처럼 실무를 보는 계정은 켜두면 됩니다." checked={editing.isWorkStaff} onChange={(isWorkStaff) => setEditing((v) => v ? { ...v, isWorkStaff, autoAssignLeads: isWorkStaff ? v.autoAssignLeads : false } : v)} />
-            <ToggleRow label="신규 DB 자동유입 담당" description="활성 + 실무담당 계정 중 이 설정이 켜진 직원에게 Google Sheet 신규 DB를 우선 배정합니다. 여러 명이면 배정 순서 숫자가 가장 낮은 1명에게 모두 배정됩니다." checked={editing.autoAssignLeads} disabled={!editing.isWorkStaff} onChange={(autoAssignLeads) => setEditing((v) => v ? { ...v, autoAssignLeads } : v)} />
+            <ToggleRow label="신규 DB 자동유입 담당" description="활성 + 실무담당 계정 중 이 설정이 켜진 직원에게 Google Sheet 신규 DB를 우선 배정합니다. 여러 명이면 배정 순서 숫자 기준으로 순환 배정됩니다." checked={editing.autoAssignLeads} disabled={!editing.isWorkStaff} onChange={(autoAssignLeads) => setEditing((v) => v ? { ...v, autoAssignLeads } : v)} />
           </div>
           <label className="block max-w-xs text-xs font-bold text-slate-600">DB 자동배정 순서
             <Input className="mt-1" type="number" min={1} max={9999} value={editing.leadAssignmentOrder} disabled={!editing.isWorkStaff || !editing.autoAssignLeads} onChange={(e) => setEditing((v) => v ? { ...v, leadAssignmentOrder: Math.max(1, Number(e.target.value) || 1) } : v)} />

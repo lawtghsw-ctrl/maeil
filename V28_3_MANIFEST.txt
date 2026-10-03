@@ -1,0 +1,29 @@
+LawPower v28.3 overwrite package
+Base: v27.13 commit 385b467 + v28 multi-tenant work
+
+Key v28.3 additions:
+app/account/page.tsx
+app/api/account/password/route.ts
+vercel.json
+V28_BACKUP.sql
+V28_ROLLBACK.md
+V28_3_NOTE.txt
+V28_3_MANIFEST.txt
+
+Updated:
+app/api/join/route.ts
+app/api/platform/firms/route.ts
+app/api/firm/invites/route.ts
+app/api/firm/integrations/route.ts
+app/api/integrations/meta/flush/route.ts
+app/firm/settings/page.tsx
+app/platform/page.tsx
+components/layout/AppShell.tsx
+components/layout/Sidebar.tsx
+lib/platform/server.ts
+middleware.ts
+.env.example
+supabase/migrations/006_multi_tenant_platform.sql
+V28_SETUP.md
+V28_PREFLIGHT.sql
+V28_POSTCHECK.sql

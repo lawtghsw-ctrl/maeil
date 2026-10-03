@@ -1,0 +1,628 @@
+diff --git a/app/db/page.tsx b/app/db/page.tsx
+index 00d0dc8..f52a05d 100644
+--- a/app/db/page.tsx
++++ b/app/db/page.tsx
+@@ -25,7 +25,7 @@ import {
+   type LeadSource,
+   type StaffName,
+ } from "@/lib/types";
+-import { checkCallWarning, checkConsultationRequired, kstDateStr } from "@/lib/consultation";
++import { checkCallWarning, checkConsultationRequired, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
+ import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
+ import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows, useClickOutside } from "@/components/ui/Primitives";
+ import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEditor";
+@@ -108,7 +108,14 @@ function effectiveStage(lead: DbLead): DbDetailStage {
+ // 대표 색상을 그대로 따라갑니다. 행 전체를 진한 색으로 채우면 텍스트 가독성이 떨어지므로
+ // 같은 색상에 옅은 투명도를 적용하고, 왼쪽 포인트 선은 원색으로 표시합니다.
+ function leadStageRowStyle(lead: DbLead) {
+-  const track = DB_DETAIL_STAGE_TRACK_OF[effectiveStage(lead)];
++  const stage = effectiveStage(lead);
++  if (stage === "불가") {
++    return {
++      backgroundColor: "#fee2e2",
++      boxShadow: "inset 4px 0 0 #dc2626",
++    };
++  }
++  const track = DB_DETAIL_STAGE_TRACK_OF[stage];
+   const color = DB_DETAIL_STAGE_TRACK_COLOR[track];
+   return {
+     backgroundColor: `${color}14`,
+@@ -184,11 +191,36 @@ function LeadSourceFilterBar({
+   );
+ }
+ 
+-// 콜 관리 경고는 "부재" / "착수금 안내" 단계에서만 운영합니다.
+-// 상단 진행보드의 느낌표와 고객 행의 상세 경고가 서로 다른 조건을 쓰지 않도록
+-// 하나의 Set으로 공유합니다. 날짜별 판정은 checkCallWarning()이 KST 기준 오늘 기록만
+-// 집계하므로 전날의 통화완료/부재중 기록은 자동으로 무시되고 매일 00:00에 초기화됩니다.
+-const CALL_WARNING_STAGES = new Set<DbDetailStage>(["부재", "착수금 안내"]);
++// 단계별 컨택 관리 주기. 미상담/부재는 하루 2회, 착수금 안내는 하루 1회,
++// 장기부재는 최근 컨택 후 3일이 지나면 다시 알림을 띄웁니다.
++const CALL_WARNING_STAGES = new Set<DbDetailStage>(["미상담", "부재", "착수금 안내", "장기부재"]);
++
++type StageContactWarning = {
++  active: boolean;
++  label: string;
++  title: string;
++};
++
++function getStageContactWarning(lead: DbLead, todayIso: string): StageContactWarning {
++  const stage = effectiveStage(lead);
++  if (stage === "장기부재") {
++    const warning = checkPeriodicContactWarning(lead.consultation?.memoLog, todayIso, 3);
++    const recent = warning.lastContactDate ? ` · 최근 ${warning.lastContactDate}` : " · 최근 컨택 없음";
++    return {
++      active: warning.active,
++      label: `컨택 알림 · 3일 주기${recent}`,
++      title: "장기부재 고객은 3일에 한 번 컨택이 필요합니다.",
++    };
++  }
++
++  const threshold = stage === "착수금 안내" ? 1 : 2;
++  const warning = checkCallWarning(lead.consultation?.memoLog, todayIso, threshold);
++  return {
++    active: warning.active,
++    label: `콜 관리 경고 · 부재중 ${warning.noAnswerCountToday}/${warning.threshold}`,
++    title: stage === "착수금 안내" ? "착수금 안내 고객은 하루 1회 컨택이 필요합니다." : "미상담/부재 고객은 하루 2회 컨택이 필요합니다.",
++  };
++}
+ 
+ // 화면을 밤새 열어둔 경우에도 KST 00:00에 콜 경고를 즉시 새 날짜 기준으로 다시 계산합니다.
+ // 다음 한국시간 자정의 실제 epoch를 구해 setTimeout을 한 번 걸고, 실행 뒤 다음 자정을 다시 예약합니다.
+@@ -279,7 +311,7 @@ function StageBoard({
+                       <span className="truncate">{stage}</span>
+                       {CALL_WARNING_STAGES.has(stage) && (warningCounts[stage] ?? 0) > 0 && (
+                         <span
+-                          title={`오늘 콜 관리가 필요한 DB ${(warningCounts[stage] ?? 0)}건`}
++                          title={`컨택 관리가 필요한 DB ${(warningCounts[stage] ?? 0)}건`}
+                           className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${
+                             selected ? "bg-white text-red-600" : "bg-red-500 text-white"
+                           }`}
+@@ -457,17 +489,19 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
+ // 거절/부적합/종결 처리된 리드는 표시하지 않고(=더 이상 관리 대상 아님), 오늘 기준으로
+ // checkCallWarning이 활성(=아직 오늘 몫의 통화 관리가 안 된 상태)일 때만 렌더링합니다.
+ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }) {
+-  const done = !!lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단";
+-  if (done) return null;
+-  // 영업 콜 경고는 요청대로 진행단계가 "부재" 또는 "착수금 안내"일 때만 고객 행에 노출합니다.
+   const stage = effectiveStage(lead);
+-  if (!CALL_WARNING_STAGES.has(stage)) return null;
+-  const warning = checkCallWarning(lead.consultation?.memoLog, todayIso);
++  const done =
++    !!lead.convertedClientId ||
++    lead.status === "거절" ||
++    lead.status === "부적합" ||
++    (lead.status === "종결_중단" && stage !== "장기부재");
++  if (done || !CALL_WARNING_STAGES.has(stage)) return null;
++  const warning = getStageContactWarning(lead, todayIso);
+   if (!warning.active) return null;
+   return (
+-    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
++    <span title={warning.title} className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
+       <ShieldAlert size={11} className="shrink-0" />
+-      콜 관리 경고 · 부재중 {warning.noAnswerCountToday}/3
++      {warning.label}
+     </span>
+   );
+ }
+@@ -760,16 +794,18 @@ export default function DbManagementPage() {
+     };
+   }, []);
+ 
+-  // 상단 상담 진행판과 고객 행 모두 "부재" / "착수금 안내" 단계만 콜 관리 대상으로 봅니다.
+-  // checkCallWarning은 KST 기준 오늘 로그만 집계하므로 이전 날짜의 통화완료/부재중 기록은
+-  // 전부 무시되고 매일 00:00에 다시 경고 판정이 시작됩니다.
++  // 상단 상담 진행판과 고객 행은 동일한 단계별 컨택 주기 규칙을 사용합니다.
+   const stageWarningCounts = useMemo(() => {
+     const map: Partial<Record<DbDetailStage, number>> = {};
+     for (const lead of stageUniverse) {
+-      if (lead.convertedClientId || lead.status === "거절" || lead.status === "부적합" || lead.status === "종결_중단") continue;
+       const stage = effectiveStage(lead);
+-      if (!CALL_WARNING_STAGES.has(stage)) continue;
+-      if (!checkCallWarning(lead.consultation?.memoLog, todayIso).active) continue;
++      const done =
++        !!lead.convertedClientId ||
++        lead.status === "거절" ||
++        lead.status === "부적합" ||
++        (lead.status === "종결_중단" && stage !== "장기부재");
++      if (done || !CALL_WARNING_STAGES.has(stage)) continue;
++      if (!getStageContactWarning(lead, todayIso).active) continue;
+       map[stage] = (map[stage] ?? 0) + 1;
+     }
+     return map;
+diff --git a/app/page.tsx b/app/page.tsx
+index 75d4f51..7d9a4a6 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -30,7 +30,7 @@ import {
+   STAGE_CHART_COLORS,
+ } from "@/lib/dashboard";
+ import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, STAGE_GENERIC_LABELS, type DbLead } from "@/lib/types";
+-import { checkCallWarning, kstDateStr } from "@/lib/consultation";
++import { checkCallWarning, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
+ import { fmtEokMan, fmtWon } from "@/lib/format";
+ import { Card, PageHeader } from "@/components/ui/Primitives";
+ import { DateRangePicker } from "@/components/ui/DateRangePicker";
+@@ -89,6 +89,15 @@ function leadStage(lead: DbLead) {
+   return lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status];
+ }
+ 
++function leadNeedsContact(lead: DbLead, today: string): boolean {
++  if (lead.convertedClientId) return false;
++  const stage = leadStage(lead);
++  if (stage === "장기부재") return checkPeriodicContactWarning(lead.consultation?.memoLog, today, 3).active;
++  if (stage === "착수금 안내") return checkCallWarning(lead.consultation?.memoLog, today, 1).active;
++  if (stage === "미상담" || stage === "부재") return checkCallWarning(lead.consultation?.memoLog, today, 2).active;
++  return false;
++}
++
+ function greetingCompletedToday(lead: DbLead, today: string): boolean {
+   const received = new Date(lead.receivedAt);
+   if (!Number.isFinite(received.getTime()) || kstDateStr(received) !== today) return false;
+@@ -238,12 +247,7 @@ export default function DashboardPage() {
+ 
+   const topDashboard = useMemo(() => {
+     const newGreetingDone = topLeads.filter((lead) => greetingCompletedToday(lead, today));
+-    const noAnswerNeed = topLeads.filter(
+-      (lead) =>
+-        (leadStage(lead) === "부재" || leadStage(lead) === "착수금 안내") &&
+-        checkCallWarning(lead.consultation?.memoLog, today).active &&
+-        !lead.convertedClientId
+-    );
++    const noAnswerNeed = topLeads.filter((lead) => leadNeedsContact(lead, today));
+     const recall = topLeads
+       .filter((lead) => leadStage(lead) === "예약" && !lead.convertedClientId)
+       .sort((a, b) => (a.reservationAt ?? a.receivedAt).localeCompare(b.reservationAt ?? b.receivedAt));
+@@ -374,7 +378,7 @@ export default function DashboardPage() {
+ 
+   const topCards = [
+     { icon: UserPlus, label: "당일신규 DB", value: topDashboard.newGreetingDone.length, sub: "문자인사 완료건", tone: "blue" },
+-    { icon: PhoneMissed, label: "부재컨택 필요 DB", value: topDashboard.noAnswerNeed.length, sub: "오늘 콜 관리 대상", tone: "red" },
++    { icon: PhoneMissed, label: "컨택 필요 DB", value: topDashboard.noAnswerNeed.length, sub: "단계별 컨택 관리 대상", tone: "red" },
+     { icon: CalendarClock, label: "재통화약속 DB", value: topDashboard.recall.length, sub: "예약 일정 등록", tone: "amber" },
+     { icon: PhoneCall, label: "상담중인 DB", value: topDashboard.consulting.length, sub: "현재 상담 단계", tone: "blue" },
+     { icon: CheckCircle2, label: "상담완료 DB", value: topDashboard.completed.length, sub: "상담 후속 단계 포함", tone: "emerald" },
+diff --git a/components/cases/CaseActionModals.tsx b/components/cases/CaseActionModals.tsx
+index 2d37943..c18510d 100644
+--- a/components/cases/CaseActionModals.tsx
++++ b/components/cases/CaseActionModals.tsx
+@@ -6,19 +6,20 @@
+ // 컴포넌트로 분리했습니다. 실제 외부 API(전자서명/알림톡)는 아직 연결 전이라 기존과
+ // 동일하게 미리보기 동작을 유지합니다.
+ import { useEffect, useState, type ChangeEvent } from "react";
+-import { FileSignature, Plus, RefreshCw, Send, WalletCards } from "lucide-react";
++import { FileSignature, Plus, RefreshCw, Send, Table2, WalletCards } from "lucide-react";
+ import { useStore, type InstallmentDraft } from "@/lib/store";
+-import type { CaseRecord, Client, InstallmentStatus } from "@/lib/types";
++import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
+ import { PAYMENT_METHOD_NOTE } from "@/lib/types";
+ import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
+ import { fmtWon } from "@/lib/format";
+ import { Button, Input, Label, Modal, NumberInput, Select } from "@/components/ui/Primitives";
+ 
+ const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
++const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
+ const DOC_GUIDE_CHANNELS = ["카카오톡 알림톡", "SMS"] as const;
+ type DocGuideChannel = (typeof DOC_GUIDE_CHANNELS)[number];
+ 
+-type ActionKind = "installment" | "eform" | "docGuide" | null;
++type ActionKind = "installment" | "eform" | "docGuide" | "priorityRepayment" | null;
+ 
+ function todayIsoStr(): string {
+   const d = new Date();
+@@ -44,6 +45,10 @@ export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRe
+           <Send size={15} />
+           서류안내문 전송
+         </Button>}
++        <Button variant="secondary" onClick={() => setOpen("priorityRepayment")}>
++          <Table2 size={15} />
++          최우선변제 안내표
++        </Button>
+       </div>
+ 
+       <CaseInstallmentModal
+@@ -64,6 +69,7 @@ export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRe
+         caseRecord={caseRecord}
+         onClose={() => setOpen(null)}
+       />
++      <PriorityRepaymentGuideModal open={open === "priorityRepayment"} onClose={() => setOpen(null)} />
+     </>
+   );
+ }
+@@ -91,6 +97,7 @@ function CaseInstallmentModal({
+   const [contractAmount, setContractAmount] = useState(caseRecord.contractAmount);
+   const [paidAmount, setPaidAmount] = useState(caseRecord.paidAmount);
+   const [installmentCount, setInstallmentCount] = useState(caseRecord.installmentCount ?? makeRows().length);
++  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(caseRecord.paymentMethod);
+ 
+   useEffect(() => {
+     if (!open) return;
+@@ -104,8 +111,9 @@ function CaseInstallmentModal({
+     setContractAmount(caseRecord.contractAmount);
+     setPaidAmount(caseRecord.paidAmount);
+     setInstallmentCount(nextCount);
++    setPaymentMethod(caseRecord.paymentMethod);
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [open, caseRecord.id, caseRecord.contractAmount, caseRecord.paidAmount, caseRecord.installmentCount]);
++  }, [open, caseRecord.id, caseRecord.contractAmount, caseRecord.paidAmount, caseRecord.installmentCount, caseRecord.paymentMethod]);
+ 
+   function update(index: number, patch: Partial<InstallmentDraft>) {
+     setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+@@ -142,6 +150,7 @@ function CaseInstallmentModal({
+       contractAmount,
+       paidAmount,
+       installmentCount,
++      paymentMethod,
+     });
+     onClose();
+   }
+@@ -154,7 +163,7 @@ function CaseInstallmentModal({
+         <div className="mb-3 text-xs font-semibold text-blue-700">
+           {caseRecord.caseNumber} · {caseRecord.caseType}
+         </div>
+-        <div className="grid gap-3 sm:grid-cols-3">
++        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+           <Label text="총 수임료">
+             <NumberInput value={contractAmount} onChange={setContractAmount} />
+           </Label>
+@@ -170,6 +179,13 @@ function CaseInstallmentModal({
+               onChange={(e: ChangeEvent<HTMLInputElement>) => changeInstallmentCount(Number(e.target.value))}
+             />
+           </Label>
++          <Label text="결제방법">
++            <Select value={paymentMethod} onChange={(e: ChangeEvent<HTMLSelectElement>) => setPaymentMethod(e.target.value as PaymentMethod)}>
++              {PAYMENT_METHODS.map((method) => (
++                <option key={method} value={method}>{method}</option>
++              ))}
++            </Select>
++          </Label>
+         </div>
+         <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-600">
+           <span>미수금 <b className={receivable > 0 ? "text-red-600" : "text-slate-900"}>{fmtWon(receivable)}</b></span>
+@@ -241,6 +257,51 @@ function CaseInstallmentModal({
+   );
+ }
+ 
++function PriorityRepaymentGuideModal({ open, onClose }: { open: boolean; onClose: () => void }) {
++  const rows = [
++    ["서울특별시", "1억 5,000만 원 이하", "1억 6,500만 원 이하", "5,000만 원 이하", "5,500만 원 이하"],
++    ["과밀억제권역, 세종·용인·화성·김포", "1억 3,000만 원 이하", "1억 4,500만 원 이하", "4,300만 원 이하", "4,800만 원 이하"],
++    ["광역시, 안산·광주·파주·이천·평택", "7,000만 원 이하", "8,500만 원 이하", "2,300만 원 이하", "2,800만 원 이하"],
++    ["그 밖의 지역", "6,000만 원 이하", "7,500만 원 이하", "2,000만 원 이하", "2,500만 원 이하"],
++  ];
++
++  return (
++    <Modal open={open} title="최우선변제금액 안내표" onClose={onClose} size="lg">
++      <div className="overflow-x-auto rounded-xl border border-slate-300">
++        <table className="w-full min-w-[760px] border-collapse text-center text-sm">
++          <thead>
++            <tr className="bg-white">
++              <th rowSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">지역</th>
++              <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제 대상 임차인의 보증금액</th>
++              <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제금액</th>
++            </tr>
++            <tr>
++              <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
++              <th className="border border-slate-300 bg-amber-100 px-3 py-2 font-semibold text-slate-700">개정안</th>
++              <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
++              <th className="border border-slate-300 bg-amber-200 px-3 py-2 font-semibold text-slate-700">개정안</th>
++            </tr>
++          </thead>
++          <tbody>
++            {rows.map((row) => (
++              <tr key={row[0]}>
++                <td className="border border-slate-300 px-3 py-3 font-medium text-slate-700">{row[0]}</td>
++                <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[1]}</td>
++                <td className="border border-slate-300 bg-amber-50 px-3 py-3 font-semibold text-slate-800">{row[2]}</td>
++                <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[3]}</td>
++                <td className="border border-slate-300 bg-amber-100 px-3 py-3 font-semibold text-slate-800">{row[4]}</td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      </div>
++      <div className="mt-4 flex justify-end">
++        <Button onClick={onClose}>확인</Button>
++      </div>
++    </Modal>
++  );
++}
++
+ function CaseEformModal({
+   open,
+   client,
+diff --git a/components/layout/Header.tsx b/components/layout/Header.tsx
+index 7936e0d..5853fa2 100644
+--- a/components/layout/Header.tsx
++++ b/components/layout/Header.tsx
+@@ -38,6 +38,19 @@ function formatReservationClock(value: string): string {
+   return time.slice(0, 5);
+ }
+ 
++function addIsoDateDays(value: string, days: number): string {
++  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
++  const date = new Date(Date.UTC(year, month - 1, day + days));
++  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
++}
++
++function formatReservationDateTime(value: string, today: string): string {
++  const date = value.slice(0, 10);
++  const clock = formatReservationClock(value);
++  if (date === today) return `오늘 ${clock}`;
++  return `${date.slice(5).replace("-", "/")} ${clock}`;
++}
++
+ type FloatingPosition = { left: number; top: number };
+ 
+ function clampFloatingPosition(position: FloatingPosition, width = 360): FloatingPosition {
+@@ -177,12 +190,12 @@ export function Header() {
+     [scheduleItems, cases, clients, todayIso]
+   );
+ 
+-  // 최종관리자는 전체 예약을 보고, 추후 직원계정에는 본인 담당 예약만 노출합니다.
+-  // 예약 24시간 전부터 지난 24시간까지 계속 보여 단계 변경을 놓치지 않게 합니다.
++  // 최종관리자는 전체 예약을 보고, 직원계정에는 본인 담당 예약만 노출합니다.
++  // 예약 3일 전부터 미리 보여주고, 지난 예약은 24시간 동안 남겨 단계 변경을 놓치지 않게 합니다.
+   const reservationAlerts = useMemo(() => {
+     const now = nowMs;
+     const min = now - 24 * 60 * 60 * 1000;
+-    const max = now + 24 * 60 * 60 * 1000;
++    const max = now + 3 * 24 * 60 * 60 * 1000;
+     return leads
+       .filter((lead) => (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) && lead.detailStage === "예약" && !!lead.reservationAt)
+       .map((lead) => ({ lead, at: reservationTimeMs(lead.reservationAt as string) }))
+@@ -197,17 +210,19 @@ export function Header() {
+       }));
+   }, [leads, nowMs, canViewAllLeads, currentStaff]);
+ 
+-  // 로그인 담당자의 "오늘 예약콜"은 별도 고정 바에서 항상 확인할 수 있습니다.
+-  // 평소에는 노란색, 예약 10분 전부터(예약시간 경과 후 단계가 아직 예약인 경우 포함) 빨간색으로 강조합니다.
+-  const todayReservationCalls = useMemo(() => {
++  // 예약콜 고정 팝업은 당일만이 아니라 예약일 3일 전부터 미리 노출합니다.
++  // 오늘 포함 +3일까지의 예약을 보여주고, 당일 예약 중 10분 이내/경과 건은 기존처럼 빨간색으로 강조합니다.
++  const reservationWindowCalls = useMemo(() => {
+     const today = kstDateKey(new Date(nowMs));
++    const windowEnd = addIsoDateDays(today, 3);
+     return leads
+       .filter(
+-        (lead) =>
+-          (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) &&
+-          lead.detailStage === "예약" &&
+-          !!lead.reservationAt &&
+-          lead.reservationAt.slice(0, 10) === today
++        (lead) => {
++          if (!(canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff))) return false;
++          if (lead.detailStage !== "예약" || !lead.reservationAt) return false;
++          const reservationDate = lead.reservationAt.slice(0, 10);
++          return reservationDate >= today && reservationDate <= windowEnd;
++        }
+       )
+       .map((lead) => ({
+         lead,
+@@ -221,13 +236,13 @@ export function Header() {
+         phone: lead.phone,
+         reservationAt: lead.reservationAt as string,
+         at,
+-        urgent: at <= nowMs + 10 * 60 * 1000,
++        urgent: lead.reservationAt?.slice(0, 10) === today && at <= nowMs + 10 * 60 * 1000,
+         overdue: at < nowMs,
+       }));
+   }, [leads, nowMs, canViewAllLeads, currentStaff]);
+ 
+-  const hasUrgentReservation = todayReservationCalls.some((item) => item.urgent);
+-  const nextReservation = todayReservationCalls.find((item) => item.at >= nowMs) ?? todayReservationCalls[todayReservationCalls.length - 1];
++  const hasUrgentReservation = reservationWindowCalls.some((item) => item.urgent);
++  const nextReservation = reservationWindowCalls.find((item) => item.at >= nowMs) ?? reservationWindowCalls[reservationWindowCalls.length - 1];
+ 
+   const alertCount = overdueAlerts.length + scheduleAlerts.length + reservationAlerts.length;
+   const scopedLeads = canViewAllLeads ? leads : leads.filter((l) => !!currentStaff && l.assignedStaff === currentStaff);
+@@ -441,13 +456,13 @@ export function Header() {
+           <span className="flex items-center gap-2 text-xs font-black">
+             예약콜 · {reservationOwnerLabel}
+             <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${hasUrgentReservation ? "bg-red-600 text-white" : "bg-amber-600 text-white"}`}>
+-              {todayReservationCalls.length}건
++              {reservationWindowCalls.length}건
+             </span>
+           </span>
+           <span className="mt-0.5 block truncate text-[11px] font-semibold opacity-80">
+             {nextReservation
+-              ? `${formatReservationClock(nextReservation.reservationAt)} ${nextReservation.name}${nextReservation.urgent ? " · 10분 이내/경과" : ""}`
+-              : "오늘 예정된 예약콜이 없습니다."}
++              ? `${formatReservationDateTime(nextReservation.reservationAt, todayIso)} ${nextReservation.name}${nextReservation.urgent ? " · 10분 이내/경과" : ""}`
++              : "3일 이내 예정된 예약콜이 없습니다."}
+           </span>
+         </span>
+         {reservationCallOpen ? <ChevronUp size={16} className="shrink-0" /> : <ChevronDown size={16} className="shrink-0" />}
+@@ -461,8 +476,8 @@ export function Header() {
+             title="드래그해서 원하는 위치로 이동"
+           >
+             <div>
+-              <div className="text-sm font-bold text-slate-900">오늘 예약콜</div>
+-              <div className="text-[11px] text-slate-400">{reservationOwnerLabel} · 예약시간 순</div>
++              <div className="text-sm font-bold text-slate-900">예약콜 · 3일 전부터 표시</div>
++              <div className="text-[11px] text-slate-400">{reservationOwnerLabel} · 오늘~3일 후 · 예약시간 순</div>
+             </div>
+             <div className="flex items-center gap-1">
+               <GripVertical size={15} className="text-slate-300" aria-hidden="true" />
+@@ -477,10 +492,10 @@ export function Header() {
+             </div>
+           </div>
+           <div className="max-h-72 overflow-y-auto">
+-            {todayReservationCalls.length === 0 ? (
+-              <div className="px-4 py-8 text-center text-sm text-slate-400">오늘 예약된 고객이 없습니다.</div>
++            {reservationWindowCalls.length === 0 ? (
++              <div className="px-4 py-8 text-center text-sm text-slate-400">3일 이내 예약된 고객이 없습니다.</div>
+             ) : (
+-              todayReservationCalls.map((item) => (
++              reservationWindowCalls.map((item) => (
+                 <button
+                   key={item.id}
+                   type="button"
+@@ -499,7 +514,7 @@ export function Header() {
+                     <span className="flex items-center justify-between gap-2">
+                       <b className="truncate text-sm text-slate-900">{item.name}</b>
+                       <span className={`shrink-0 text-xs font-black ${item.urgent ? "text-red-700" : "text-amber-700"}`}>
+-                        {formatReservationClock(item.reservationAt)}
++                        {formatReservationDateTime(item.reservationAt, todayIso)}
+                       </span>
+                     </span>
+                     <span className="mt-0.5 block text-[11px] text-slate-500">{item.phone}</span>
+diff --git a/lib/consultation.ts b/lib/consultation.ts
+index 039eab5..515b384 100644
+--- a/lib/consultation.ts
++++ b/lib/consultation.ts
+@@ -419,28 +419,65 @@ export function getConsultationCompletionStats(
+ }
+ 
+ // ---- 콜 경고 판정 ----
+-// "전환되지 않은 디비는 하루에 꼭 3번 이상 통화하도록, 3번 이내 한번이라도 받으면
+-// 사라지는 경고표시"를 만들어달라는 요청 반영. 콜횟수 카운터(▲▼) 대신, 상담일지
+-// 메모 게시판에서 [재통화]/[부재중] 태그를 붙여 기록한 항목을 오늘 날짜 기준으로 집계해
+-// 판정합니다 — 오늘 [재통화] 태그가 하나라도 있으면(=통화 연결 성공) 즉시 해제되고,
+-// 없더라도 오늘 [부재중] 태그가 3건 이상 쌓이면 "오늘 몫은 했다"고 보고 역시 해제됩니다.
+-// 자정이 지나 날짜가 바뀌면 "오늘" 기준 집계가 자동으로 리셋되어 매일 새로 경고가
+-// 뜹니다(이 데모는 브라우저 로컬 시간 기준 — 실서비스 전환 시 서버에서 KST로 고정하세요).
+-const DAILY_NO_ANSWER_THRESHOLD = 3;
+-
++// 단계별 영업 컨택 주기를 지원합니다. 일일 기준 단계는 오늘 [재통화]가 한 번이라도 있으면
++// 즉시 완료로 보고, 연결되지 않은 경우 [부재중] 태그 횟수가 단계별 목표 횟수에 도달하면
++// 그날 경고를 해제합니다. 장기부재처럼 "N일에 1번" 관리하는 단계는 아래
++// checkPeriodicContactWarning()으로 최근 컨택일을 기준으로 다시 알림을 띄웁니다.
+ export interface CallWarningResult {
+   active: boolean; // 경고 활성 여부(=오늘 통화 관리가 안 된 상태)
+   noAnswerCountToday: number; // 오늘 [부재중] 태그 횟수
+   reachedToday: boolean; // 오늘 [재통화] 태그(통화 연결 성공) 존재 여부
++  threshold: number; // 오늘 필요한 최대 부재중 기록 횟수
+ }
+ 
+-export function checkCallWarning(memoLog: MemoLogEntry[] | undefined, todayIso?: string): CallWarningResult {
++export function checkCallWarning(
++  memoLog: MemoLogEntry[] | undefined,
++  todayIso?: string,
++  noAnswerThreshold = 2
++): CallWarningResult {
+   const today = todayIso ?? kstDateStr();
++  const threshold = Math.max(1, Math.trunc(noAnswerThreshold || 1));
+   const todays = (memoLog ?? []).filter((e) => kstDateStr(new Date(e.at)) === today);
+   const noAnswerCountToday = todays.filter((e) => e.tag === "부재중").length;
+   const reachedToday = todays.some((e) => e.tag === "재통화");
+-  const active = !reachedToday && noAnswerCountToday < DAILY_NO_ANSWER_THRESHOLD;
+-  return { active, noAnswerCountToday, reachedToday };
++  const active = !reachedToday && noAnswerCountToday < threshold;
++  return { active, noAnswerCountToday, reachedToday, threshold };
++}
++
++export interface PeriodicContactWarningResult {
++  active: boolean;
++  intervalDays: number;
++  lastContactDate?: string;
++  daysSinceLastContact?: number;
++}
++
++function isoDayNumber(isoDate: string): number {
++  const [year, month, day] = isoDate.slice(0, 10).split("-").map(Number);
++  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
++}
++
++export function checkPeriodicContactWarning(
++  memoLog: MemoLogEntry[] | undefined,
++  todayIso?: string,
++  intervalDays = 3
++): PeriodicContactWarningResult {
++  const today = todayIso ?? kstDateStr();
++  const interval = Math.max(1, Math.trunc(intervalDays || 1));
++  const contactDates = (memoLog ?? [])
++    .filter((entry) => entry.tag === "재통화" || entry.tag === "부재중")
++    .map((entry) => kstDateStr(new Date(entry.at)))
++    .filter(Boolean)
++    .sort();
++  const lastContactDate = contactDates[contactDates.length - 1];
++  if (!lastContactDate) return { active: true, intervalDays: interval };
++
++  const daysSinceLastContact = Math.max(0, isoDayNumber(today) - isoDayNumber(lastContactDate));
++  return {
++    active: daysSinceLastContact >= interval,
++    intervalDays: interval,
++    lastContactDate,
++    daysSinceLastContact,
++  };
+ }
+ 
+ export interface RepaymentDebtOverride {
+diff --git a/lib/permissions.ts b/lib/permissions.ts
+index 8a9b40b..cef11d6 100644
+--- a/lib/permissions.ts
++++ b/lib/permissions.ts
+@@ -42,7 +42,7 @@ export const PERMISSION_GROUPS = [
+       ["cases.view_finance", "계약 금액정보 조회", "계약금액·납부금·미수금·분납금액 조회"],
+       ["cases.create", "계약 등록", "신규 계약 생성"],
+       ["cases.change_assignee", "계약 담당자 지정/변경", "계약 등록 시 다른 담당자 선택 및 기존 담당자 변경"],
+-      ["cases.manage_installments", "분납관리", "분납 일정 추가·삭제·금액·상태·실입금일 변경"],
++      ["cases.manage_installments", "분납관리", "총 수임료·납부금액·납부회차·결제방법 및 분납 일정 변경"],
+       ["cases.econtract", "전자계약서", "전자계약서 화면 조회 및 향후 실제 전송 기능 사용"],
+       ["cases.send_docs", "서류안내문 전송", "서류안내문 작성·미제출 서류 확인·전송 기능 사용"],
+     ],
+diff --git a/lib/store.tsx b/lib/store.tsx
+index 4f8b372..7534e31 100644
+--- a/lib/store.tsx
++++ b/lib/store.tsx
+@@ -128,7 +128,7 @@ interface AppStoreValue {
+   setCaseInstallments: (
+     caseId: string,
+     rows: InstallmentDraft[],
+-    finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number }
++    finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
+   ) => void;
+   addPost: (draft: Omit<BoardPost, "id">) => void;
+   updatePost: (id: string, patch: Partial<BoardPost>) => void;
+@@ -198,7 +198,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
+       if (!keys.length) return false;
+       return keys.every((key) => {
+         if (key === "assignedStaff") return can("cases.change_assignee");
+-        if (key === "paidAmount" || key === "contractAmount" || key === "installmentCount") return can("cases.manage_installments");
++        if (key === "paidAmount" || key === "contractAmount" || key === "installmentCount" || key === "paymentMethod") return can("cases.manage_installments");
+         if (key === "docsSentAt") return can("cases.send_docs");
+         return false;
+       });
+@@ -677,7 +677,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
+     (
+       caseId: string,
+       rows: InstallmentDraft[],
+-      finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number }
++      finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
+     ) => {
+       if (!can("cases.manage_installments")) return;
+       const oldRows = installments.filter((i) => i.caseId === caseId);
+@@ -700,6 +700,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
+             contractAmount: Math.max(0, finance?.contractAmount ?? caseBefore.contractAmount),
+             paidAmount: Math.max(0, finance?.paidAmount ?? completedAmount),
+             installmentCount: Math.max(0, Math.trunc(finance?.installmentCount ?? updated.length)),
++            paymentMethod: finance?.paymentMethod ?? caseBefore.paymentMethod,
+           }
+         : undefined;
+ 
+@@ -713,7 +714,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
+           ...(caseNext ? [saveEntity("app_cases", caseNext)] : []),
+         ])
+       );
+-      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차 및 분납 일정 저장");
++      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
+     },
+     [can, cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
+   );
+diff --git a/lib/types.ts b/lib/types.ts
+index cdba585..888cf3c 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -286,8 +286,9 @@ export const DB_LEAD_DEFAULT_STAGE_BY_STATUS: Record<DbLeadStatus, DbDetailStage
+ 
+ // ---- 상담일지 메모 게시판 ----
+ // 자유 텍스트 메모와 [재통화]/[부재중] 콜 태그를 함께 기록하는 누적 로그입니다.
+-// 태그가 붙은 항목(재통화/부재중)은 "하루 3회 이상 통화 시도" 경고 판정에도 쓰입니다
+-// (lib/consultation.ts의 checkCallWarning 참고).
++// 태그가 붙은 항목(재통화/부재중)은 단계별 컨택 경고 판정에도 쓰입니다.
++// 미상담/부재는 하루 2회, 착수금 안내는 하루 1회, 장기부재는 3일 주기로 관리합니다.
++// (lib/consultation.ts의 checkCallWarning/checkPeriodicContactWarning 참고).
+ export type MemoLogTag = "일반" | "재통화" | "부재중";
+ 
+ export interface MemoLogEntry {

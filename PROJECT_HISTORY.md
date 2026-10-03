@@ -1,3 +1,11 @@
+## v27.13 - 분납 결제방법·단계별 컨택알림·3일 예약·최우선변제 안내표
+- 계약 상세의 분납관리에서 결제방법까지 직접 수정·저장합니다.
+- DB '불가' 행을 빨간 배경으로 표시합니다.
+- 미상담/부재 하루 2회, 착수금 안내 하루 1회, 장기부재 3일 주기의 컨택 경고를 적용합니다.
+- 예약콜 팝업과 상담예약 알림을 예약 3일 전부터 표시합니다.
+- 계약 상세에 최우선변제금액 안내표 팝업을 추가합니다.
+- DB 스키마 변경은 없습니다.
+
 ## v27.11 - 고객전환 시 계약관리 자동 생성
 - DB관리의 고객전환 시 Client와 함께 미접수 CaseRecord를 생성해 계약관리 목록에 즉시 표시합니다.
 - 리드에 convertedCaseId를 저장해 전환 후 버튼이 해당 계약 상세로 바로 이동합니다.
@@ -748,3 +756,35 @@ npm 없이 디자인만 빠르게 보고 싶다면 별도로 전달된 `dashboar
 - 계약목록에 납부회차 열 추가.
 - 계약 상세 분납관리에서 총 수임료·납부금액·납부회차를 직접 수정하고 회차별 일정까지 함께 저장.
 - 계약 상세 좌측 상단 계약목록 복귀 링크를 파란색 강조 버튼으로 변경.
+
+---
+
+## v28.2 — 2026-10-03 멀티로펌 / 광고파이프라인 전환
+
+- 로파워 SUPER_ADMIN, 로펌 FIRM_ADMIN, 직원 STAFF 3단계 구조 추가.
+- 기존 매일법률사무소 업무 데이터를 첫 번째 로펌으로 자동 귀속하고 기존 CRM 기능 유지.
+- 로펌 생성 시 내부 UUID와 별도로 랜덤 숫자 10자리 firm_code 자동 생성.
+- 직원 24시간/1회용 초대코드 가입 구조 추가.
+- 로펌별 업무 데이터/정산요율/서류상태/최저생계비 설정을 tenant RLS로 분리.
+- 로펌별 Google Spreadsheet, 복수 Meta 광고계정, 광고소스(Form/Ad/Sheet/Meta Account) 구조 추가.
+- 리드에 유입 당시 ad_source_id/meta_account_id/meta_lead_id를 고정 저장.
+- 동일 로펌 기준 external key/Meta Lead ID/전화번호 중복과 재유입 판정 추가.
+- Spreadsheet ID/Sheet명/Secret/Form/Ad lineage 검증 및 연동 오류 격리 로그 추가.
+- Meta Access Token AES-256-GCM 암호화 저장 및 브라우저 재노출 차단.
+- 상태/진행단계 기반 Meta 이벤트 Queue, 재시도(backoff), 성공/실패 로그 추가. 기본 자동 규칙은 OFF.
+- 이용정지 로펌을 RLS와 service-role API 레이어 모두에서 차단.
+- tenant consistency trigger로 서로 다른 로펌의 Sheet/Meta/광고소스/업무 엔티티 교차연결 방지.
+- SUPER_ADMIN 브라우저 store는 전체 로펌 CRM 원문을 로딩하지 않고 `/platform` 운영화면 중심으로 동작.
+- `V28_PREFLIGHT.sql`, `V28_POSTCHECK.sql` 추가.
+
+
+## v28.3 - 멀티로펌 운영 안정화
+- v28.2 멀티테넌트/광고 파이프라인 구조 유지
+- Meta queue: 로그인된 로펌 사용자의 5분 foreground worker + Vercel daily safety cron
+- 플랫폼 감사로그(platform_audit_logs) 추가
+- 내 계정 비밀번호 변경 추가
+- 직원 초대가입 DB rate-limit 추가
+- migration 전 V28_BACKUP.sql / 복구 가이드 추가
+- DB 공급 원장(lead_supply_ledger), 과금여부/단가 스냅샷 추가
+- 플랫폼에서 24시간 공급/과금 건수 표시
+- 로펌별 중복기간/과금방식/DB단가 설정 추가

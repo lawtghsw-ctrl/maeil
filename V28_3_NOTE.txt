@@ -1,0 +1,14 @@
+LawPower v28.3 FINAL MULTI-FIRM
+
+v28.2 + 운영 안정화 보완:
+- Meta foreground 5분 queue worker + Vercel daily safety cron
+- platform_audit_logs
+- 모든 사용자 내 계정/비밀번호 변경
+- /join DB 기반 rate-limit
+- 적용 전 V28_BACKUP.sql + V28_ROLLBACK.md
+- lead_supply_ledger + billable/unit price snapshot
+- 플랫폼 24시간 공급/과금 건수 표시
+- 로펌 설정에서 중복기간/과금방식/DB단가 관리
+- build cache 제외
+
+최초 적용 시 이전 v28 패키지/SQL을 먼저 적용하지 말고 이 패키지만 사용.

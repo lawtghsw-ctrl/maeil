@@ -61,6 +61,8 @@ export interface AppUserProfile {
   email?: string;
   displayName: string;
   role: "admin" | "staff";
+  platformRole?: "super_admin" | "firm_admin" | "staff";
+  lawFirmId?: string;
   staffName?: StaffName;
   isActive: boolean;
   isWorkStaff: boolean;
@@ -233,6 +235,65 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // Resolve identity before fetching business tables. SUPER_ADMIN must never
+      // download all firms' operational CRM rows into the browser store.
+      const { data: p, error: profileError } = await supabase
+        .from("profiles")
+        .select("id,email,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (profileError) throw profileError;
+
+      if (!p || p.is_active === false) {
+        setProfile(p ? {
+          id: p.id,
+          email: p.email ?? user.email ?? undefined,
+          displayName: p.display_name || user.email || "사용자",
+          role: p.role === "admin" ? "admin" : "staff",
+          platformRole: p.platform_role || "staff",
+          lawFirmId: p.law_firm_id || undefined,
+          staffName: asStaffName(p.staff_name || p.display_name),
+          isActive: false,
+          isWorkStaff: p.is_work_staff !== false,
+          permissions: (p.permissions ?? {}) as PermissionMap,
+        } : null);
+        setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
+        setSyncError(p ? "비활성 계정입니다. 관리자에게 계정 활성화를 요청해주세요." : "사용자 프로필이 없습니다. Supabase 초기 SQL을 확인해주세요.");
+        await supabase.auth.signOut();
+        if (typeof window !== "undefined") window.location.replace("/login");
+        return;
+      }
+
+      const resolvedProfile: AppUserProfile = {
+        id: p.id,
+        email: p.email ?? user.email ?? undefined,
+        displayName: p.display_name || user.email || "사용자",
+        role: p.role === "admin" ? "admin" : "staff",
+        platformRole: p.platform_role || "staff",
+        lawFirmId: p.law_firm_id || undefined,
+        staffName: asStaffName(p.staff_name || p.display_name),
+        isActive: true,
+        isWorkStaff: p.is_work_staff !== false,
+        permissions: (p.permissions ?? {}) as PermissionMap,
+      };
+      setProfile(resolvedProfile);
+
+      const { data: activeUser, error: activeError } = await supabase.rpc("is_active_user");
+      if (activeError || activeUser !== true) {
+        setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
+        setSyncError("소속 로펌이 이용중지 상태이거나 사용할 수 없는 계정입니다.");
+        await supabase.auth.signOut();
+        if (typeof window !== "undefined") window.location.replace("/login");
+        return;
+      }
+
+      if (resolvedProfile.platformRole === "super_admin") {
+        setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
+        setSettlementRates({});
+        setCaseDocuments({});
+        return;
+      }
+
       const [
         loadedLeads,
         loadedClients,
@@ -241,8 +302,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         loadedSchedule,
         loadedPosts,
         loadedChanges,
-        settingsRes,
-        profileRes,
+        firmSettingsRes,
         directoryRes,
       ] = await Promise.all([
         fetchEntityTable<DbLead>("app_leads"),
@@ -252,13 +312,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         fetchEntityTable<ScheduleItem>("app_schedule_items"),
         fetchEntityTable<BoardPost>("app_board_posts"),
         fetchEntityTable<ChangeLogEntry>("app_change_logs"),
-        supabase.from("app_settings").select("key,value"),
-        supabase.from("profiles").select("id,email,display_name,role,staff_name,is_active,is_work_staff,permissions").eq("id", user.id).maybeSingle(),
-        supabase.from("profiles").select("id,display_name,role,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name"),
+        supabase.from("firm_settings").select("key,value"),
+        supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name"),
       ]);
 
-      if (settingsRes.error) throw settingsRes.error;
-      if (profileRes.error) throw profileRes.error;
+      if (firmSettingsRes.error) throw firmSettingsRes.error;
       if (directoryRes.error) throw directoryRes.error;
 
       setLeads(loadedLeads.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)));
@@ -273,6 +331,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         id: row.id,
         displayName: row.display_name || row.staff_name || "사용자",
         role: row.role === "admin" ? "admin" : "staff",
+        platformRole: row.platform_role || "staff",
+        lawFirmId: row.law_firm_id || undefined,
         staffName: asStaffName(row.staff_name || row.display_name),
         isActive: row.is_active !== false,
         isWorkStaff: row.is_work_staff !== false,
@@ -280,55 +340,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }));
       setStaffDirectory(directory);
 
-      const settings = new Map((settingsRes.data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
-      const rates = settings.get("settlement_rates") as SettlementRateMap | undefined;
-      const living = settings.get("min_living_cost") as MinLivingCostTable | undefined;
-      const docs = settings.get("case_documents") as DocumentState | undefined;
+      const firmSettings = new Map((firmSettingsRes.data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
+      const rates = firmSettings.get("settlement_rates") as SettlementRateMap | undefined;
+      const living = firmSettings.get("min_living_cost") as MinLivingCostTable | undefined;
+      const docs = firmSettings.get("case_documents") as DocumentState | undefined;
       const rateDefaults = defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]);
-      if (rates) setSettlementRates({ ...rateDefaults, ...rates });
-      else setSettlementRates(rateDefaults);
+      setSettlementRates(rates ? { ...rateDefaults, ...rates } : rateDefaults);
       if (living) setMinLivingCostTable(living);
       if (docs) setCaseDocuments(docs);
-
-      const p = profileRes.data;
-      if (!p || p.is_active === false) {
-        setProfile(
-          p
-            ? {
-                id: p.id,
-                email: p.email ?? user.email ?? undefined,
-                displayName: p.display_name || user.email || "사용자",
-                role: p.role === "admin" ? "admin" : "staff",
-                staffName: asStaffName(p.staff_name || p.display_name),
-                isActive: false,
-                isWorkStaff: p.is_work_staff !== false,
-                permissions: (p.permissions ?? {}) as PermissionMap,
-              }
-            : null
-        );
-        setLeads([]);
-        setClients([]);
-        setCases([]);
-        setInstallments([]);
-        setScheduleItems([]);
-        setPosts([]);
-        setChangeLog([]);
-        setSyncError(p ? "비활성 계정입니다. 최종관리자에게 계정 활성화를 요청해주세요." : "사용자 프로필이 없습니다. Supabase 초기 SQL을 확인해주세요.");
-        await supabase.auth.signOut();
-        if (typeof window !== "undefined") window.location.replace("/login");
-        return;
-      }
-
-      setProfile({
-        id: p.id,
-        email: p.email ?? user.email ?? undefined,
-        displayName: p.display_name || user.email || "사용자",
-        role: p.role === "admin" ? "admin" : "staff",
-        staffName: asStaffName(p.staff_name || p.display_name),
-        isActive: true,
-        isWorkStaff: p.is_work_staff !== false,
-        permissions: (p.permissions ?? {}) as PermissionMap,
-      });
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : "Supabase 데이터 로딩에 실패했습니다.");
     } finally {
@@ -358,6 +377,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       "app_board_posts",
       "app_change_logs",
       "app_settings",
+      "firm_settings",
       "profiles",
     ]) {
       channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleReload);
@@ -375,6 +395,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
       const { error } = await supabase.from(table).upsert({ id: entity.id, data: entity }, { onConflict: "id" });
       if (error) throw error;
+
+      // Lead 상태 변경 트리거가 Meta 전송 대기열을 만들면 같은 요청 흐름에서 즉시 전송을 시도합니다.
+      // 실패해도 CRM 저장은 성공 상태를 유지하고, queue가 다음 수정/수동 전송/외부 worker에서 재시도합니다.
+      if (table === "app_leads") {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const token = sessionData.session?.access_token;
+          if (token) {
+            await fetch("/api/integrations/meta/flush", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ limit: 10 }),
+            });
+          }
+        } catch {
+          // best-effort only
+        }
+      }
     },
     [supabase]
   );
@@ -391,10 +429,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const saveSetting = useCallback(
     async (key: string, value: unknown) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
-      const { error } = await supabase.from("app_settings").upsert({ key, value }, { onConflict: "key" });
+      if (!profile?.lawFirmId) throw new Error("소속 로펌이 없는 계정에서는 로펌별 설정을 저장할 수 없습니다.");
+      const { error } = await supabase.from("firm_settings").upsert(
+        { law_firm_id: profile.lawFirmId, key, value, updated_by: currentUser?.id ?? null },
+        { onConflict: "law_firm_id,key" }
+      );
       if (error) throw error;
     },
-    [supabase]
+    [currentUser?.id, profile?.lawFirmId, supabase]
   );
 
   const queueWrite = useCallback(
