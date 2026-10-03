@@ -50,16 +50,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(homeUrl);
   }
 
-  // Avoid ever rendering a cross-firm operational dashboard to SUPER_ADMIN.
-  if (profile?.platform_role === "super_admin") {
-    const allowed = pathname === "/platform" || pathname.startsWith("/platform/") || pathname === "/firm/settings" || pathname === "/account" || pathname.startsWith("/api/");
-    if (!allowed) {
-      const target = request.nextUrl.clone();
-      target.pathname = "/platform";
-      target.search = "";
-      return NextResponse.redirect(target);
-    }
-  } else if (pathname === "/platform" || pathname.startsWith("/platform/")) {
+  // SUPER_ADMIN의 "어드민 보기" 대상 로펌은 브라우저 sessionStorage에서 관리합니다.
+  // middleware는 sessionStorage를 읽을 수 없으므로 SUPER_ADMIN의 일반 업무 경로를
+  // /platform 으로 강제 리다이렉트하면 선택한 로펌 어드민에 진입할 수 없습니다.
+  // 실제 접근 차단/로펌 범위 검증은 AppShell + AppStore에서 수행합니다.
+  if (profile?.platform_role !== "super_admin" && (pathname === "/platform" || pathname.startsWith("/platform/"))) {
     const target = request.nextUrl.clone();
     target.pathname = "/";
     target.search = "";
