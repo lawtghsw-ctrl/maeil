@@ -117,7 +117,8 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 export default function CasesPage() {
-  const { cases, clients, installments, can, currentStaff } = useStore();
+  const { cases, clients, installments, can, currentStaff, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
@@ -205,7 +206,7 @@ export default function CasesPage() {
                       <span className="text-base font-bold text-slate-900">{client?.name ?? "-"}</span>
                       <span className="text-xs font-semibold text-slate-500">{c.caseType}</span>
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-500">{c.caseNumber} · 담당 {c.assignedStaff}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">{globalSuperView ? `${c._lawFirmName ?? "-"} · ` : ""}{c.caseNumber} · 담당 {c.assignedStaff}</div>
                   </div>
                   <StatusBadge status={c.status} />
                 </div>
@@ -226,7 +227,7 @@ export default function CasesPage() {
           <table className="admin-responsive-table w-full min-w-[960px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["의뢰인", "사건번호", "유형", "담당자", "계약일", "총 수임료", "납부금액", "납부회차", "미수금", "상태", ""].map((h) => (
+                {[...(globalSuperView ? ["로펌"] : []), "의뢰인", "사건번호", "유형", "담당자", "계약일", "총 수임료", "납부금액", "납부회차", "미수금", "상태", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -238,6 +239,7 @@ export default function CasesPage() {
                 const receivable = Math.max(0, c.contractAmount - c.paidAmount);
                 return (
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
+                    {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{c._lawFirmName ?? "-"}</span></td>}
                     <td className="px-4 py-3 font-semibold text-slate-900">{client?.name ?? "-"}</td>
                     <td className="px-4 py-3 text-slate-500">{c.caseNumber}</td>
                     <td className="px-4 py-3 text-slate-700">{c.caseType}</td>
@@ -264,7 +266,7 @@ export default function CasesPage() {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={globalSuperView ? 12 : 11} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 사건이 없습니다.
                   </td>
                 </tr>

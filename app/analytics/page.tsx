@@ -26,12 +26,24 @@ function monthRange() {
 }
 
 export default function AnalyticsPage() {
-  const { clients, cases, installments, leads, can, currentStaff } = useStore();
+  const { clients, cases, installments, leads, can, currentStaff, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [range] = useState(monthRange());
 
   const dayMap = useMemo(() => buildDayMap(cases, installments, leads), [cases, installments, leads]);
   const stageDist = useMemo(() => getStageDistribution(cases), [cases]);
-  const staffRows = useMemo(() => getStaffPerformance(cases, "2000-01-01", "2999-12-31"), [cases]);
+  const staffRows = useMemo(() => {
+    if (!globalSuperView) return getStaffPerformance(cases, "2000-01-01", "2999-12-31");
+    const grouped = new Map<string, { staff: string; caseCount: number; contractAmount: number; paidAmount: number; paymentRate: number }>();
+    for (const c of cases) {
+      const label = `${c._lawFirmName ?? "알 수 없는 로펌"} · ${c.assignedStaff}`;
+      const key = `${c._lawFirmId ?? "none"}::${c.assignedStaff}`;
+      const row = grouped.get(key) ?? { staff: label, caseCount: 0, contractAmount: 0, paidAmount: 0, paymentRate: 0 };
+      row.caseCount += 1; row.contractAmount += c.contractAmount; row.paidAmount += c.paidAmount;
+      grouped.set(key, row);
+    }
+    return Array.from(grouped.values()).map((row) => ({ ...row, paymentRate: row.contractAmount > 0 ? (row.paidAmount / row.contractAmount) * 100 : 0 }));
+  }, [cases, globalSuperView]);
 
   const caseTypeSplit = useMemo(() => {
     const 개인회생 = cases.filter((c) => c.caseType === "개인회생").length;
@@ -65,7 +77,7 @@ export default function AnalyticsPage() {
 
   return (
     <>
-      <PageHeader title="데이터집계" description={can("analytics.view_all") ? "전사 담당자 실적과 사건/계약 통계를 확인합니다." : `${currentStaff ?? "내"} 담당 업무 기준 통계를 확인합니다.`} />
+      <PageHeader title="데이터집계" description={globalSuperView ? "전체 로펌 통합 실적과 사건/계약 통계를 확인합니다." : can("analytics.view_all") ? "전사 담당자 실적과 사건/계약 통계를 확인합니다." : `${currentStaff ?? "내"} 담당 업무 기준 통계를 확인합니다.`} />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="현재 조회 고객수" value={`${clients.length}명`} />

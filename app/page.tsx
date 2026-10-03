@@ -112,8 +112,10 @@ function greetingCompletedToday(lead: DbLead, today: string): boolean {
 
 function TodoBoard({
   groups,
+  showFirm = false,
 }: {
   groups: Array<{ kind: TodoKind; rows: DbLead[] }>;
+  showFirm?: boolean;
 }) {
   const total = groups.reduce((sum, group) => sum + group.rows.length, 0);
 
@@ -129,6 +131,7 @@ function TodoBoard({
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500">
             <tr>
               <th className="px-4 py-2.5">구분</th>
+              {showFirm && <th className="px-4 py-2.5">로펌</th>}
               <th className="px-4 py-2.5">고객명</th>
               <th className="px-4 py-2.5">연락처</th>
               <th className="px-4 py-2.5">담당자</th>
@@ -154,6 +157,7 @@ function TodoBoard({
                       {kind} DB
                     </span>
                   </td>
+                  {showFirm && <td className="px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
                   <td className="px-4 py-3 font-semibold text-slate-900">{lead.name}</td>
                   <td className="px-4 py-3 text-slate-600">{lead.phone}</td>
                   <td className="px-4 py-3 text-slate-600">{lead.assignedStaff}</td>
@@ -178,7 +182,7 @@ function TodoBoard({
             )}
             {total === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">
+                <td colSpan={showFirm ? 8 : 7} className="px-4 py-10 text-center text-sm text-slate-400">
                   현재 표시할 투두 DB가 없습니다.
                 </td>
               </tr>
@@ -195,7 +199,7 @@ function TodoBoard({
                 <div className="min-w-0">
                   <span className="text-[11px] font-bold text-blue-600">{kind} DB</span>
                   <div className="mt-1 font-semibold text-slate-900">{lead.name}</div>
-                  <div className="mt-0.5 text-xs text-slate-500">{lead.phone} · 담당 {lead.assignedStaff}</div>
+                  <div className="mt-0.5 text-xs text-slate-500">{showFirm ? `${lead._lawFirmName ?? "-"} · ` : ""}{lead.phone} · 담당 {lead.assignedStaff}</div>
                   <div className="mt-1 text-xs text-slate-500">
                     {kind === "재통화약속" && lead.reservationAt
                       ? `예약 ${lead.reservationAt.replace("T", " ")}`
@@ -219,7 +223,8 @@ function TodoBoard({
 }
 
 export default function DashboardPage() {
-  const { clients, cases, installments, scheduleItems, leads, isAdmin, currentStaff, can } = useStore();
+  const { clients, cases, installments, scheduleItems, leads, isAdmin, currentStaff, can, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const today = kstDateStr();
   const initialRange = monthRange();
   const currentMonth = todayLocal().slice(0, 7);
@@ -467,7 +472,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <TodoBoard groups={todoGroups} />
+      <TodoBoard groups={todoGroups} showFirm={globalSuperView} />
 
       {can("dashboard.installment_calendar") && overdue.length > 0 && (
         <Card className="mt-4 flex flex-wrap items-center gap-3 border-red-100 bg-red-50/60 px-4 py-3">

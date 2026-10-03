@@ -9,13 +9,24 @@ import { fmtWon } from "@/lib/format";
 import { Card, Label, NumberInput, PageHeader } from "@/components/ui/Primitives";
 
 export default function MinLivingCostPage() {
-  const { minLivingCostTable, setMinLivingCostForSize, can } = useStore();
+  const { minLivingCostTable, setMinLivingCostForSize, can, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [previewSize, setPreviewSize] = useState<number>(1);
 
   const previewValue = useMemo(
     () => lookupMinLivingCost(previewSize, minLivingCostTable),
     [previewSize, minLivingCostTable]
   );
+
+  if (globalSuperView) {
+    return <>
+      <PageHeader title="최저생계비 계산기" description="최저생계비 기준은 로펌별 설정값으로 관리됩니다." />
+      <Card className="border-violet-200 bg-violet-50 p-6 text-sm text-violet-900">
+        <div className="font-black">전체 로펌 통합보기에서는 로펌별 기준값을 하나로 합치지 않습니다.</div>
+        <div className="mt-2 text-xs leading-5 text-violet-700">좌측 관리 범위에서 대상 로펌을 선택하면 해당 로펌의 최저생계비 기준을 조회·수정할 수 있습니다.</div>
+      </Card>
+    </>;
+  }
 
   return (
     <>

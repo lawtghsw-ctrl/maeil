@@ -1,0 +1,20 @@
+LawPower v28.5 changed files
+
+middleware.ts
+lib/types.ts
+lib/store.tsx
+components/layout/Sidebar.tsx
+components/layout/AppShell.tsx
+app/page.tsx
+app/db/page.tsx
+app/cases/page.tsx
+app/settlements/page.tsx
+app/staff-accounts/page.tsx
+app/changes/page.tsx
+app/settlement-settings/page.tsx
+app/min-living-cost/page.tsx
+app/analytics/page.tsx
+README.md
+V28_5_NOTE.txt
+
+No Supabase migration required.

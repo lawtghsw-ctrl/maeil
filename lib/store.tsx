@@ -47,6 +47,8 @@ export type ChangeAction = "등록" | "수정" | "삭제";
 export type SettlementRateMap = Record<string, Record<PaymentMethod, number>>;
 
 export interface ChangeLogEntry {
+  _lawFirmId?: string;
+  _lawFirmName?: string;
   id: string;
   category: ChangeCategory;
   action: ChangeAction;
@@ -70,6 +72,13 @@ export interface AppUserProfile {
 }
 
 export interface SuperAdminFirmScope {
+  id: string;
+  firmCode: string;
+  name: string;
+  status: "active" | "suspended";
+}
+
+export interface LawFirmSummary {
   id: string;
   firmCode: string;
   name: string;
@@ -120,6 +129,7 @@ interface AppStoreValue {
   profile: AppUserProfile | null;
   staffDirectory: AppUserProfile[];
   workStaffNames: StaffName[];
+  firmDirectory: LawFirmSummary[];
   superAdminFirmScope: SuperAdminFirmScope | null;
   enterSuperAdminFirmScope: (firm: SuperAdminFirmScope) => void;
   exitSuperAdminFirmScope: () => void;
@@ -169,6 +179,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<AppUserProfile | null>(null);
   const [staffDirectory, setStaffDirectory] = useState<AppUserProfile[]>([]);
+  const [firmDirectory, setFirmDirectory] = useState<LawFirmSummary[]>([]);
   const [superAdminFirmScope, setSuperAdminFirmScope] = useState<SuperAdminFirmScope | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -184,9 +195,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const actorName = profile?.displayName || profile?.staffName || currentUser?.email || "시스템";
   const currentStaff = profile?.platformRole === "super_admin" ? undefined : profile?.staffName;
   const isAdmin = profile?.role === "admin";
+  const isGlobalSuperAdmin = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const effectiveFirmId =
     profile?.lawFirmId ||
     (profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : undefined);
+
+  const globalViewPermissions = useMemo(() => new Set<PermissionKey>([
+    "dashboard.view","dashboard.company_metrics","dashboard.company_todo","dashboard.finance","dashboard.installment_calendar","dashboard.schedule_calendar","dashboard.statistics",
+    "db.view","db.view_all","db.view_finance","db.view_consultation",
+    "cases.view","cases.view_all","cases.view_finance",
+    "settlements.view","settlements.view_all","settlement_settings.view",
+    "living.view","changes.view","changes.view_all","analytics.view","analytics.view_all","analytics.finance"
+  ]), []);
 
   const enterSuperAdminFirmScope = useCallback((firm: SuperAdminFirmScope) => {
     if (typeof window !== "undefined") {
@@ -200,8 +220,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSuperAdminFirmScope(null);
   }, []);
   const can = useCallback(
-    (permission: PermissionKey) => Boolean(profile?.isActive && (profile.role === "admin" || profile.permissions?.[permission] === true)),
-    [profile]
+    (permission: PermissionKey) => {
+      if (!profile?.isActive) return false;
+      if (profile.platformRole === "super_admin" && isGlobalSuperAdmin) return globalViewPermissions.has(permission);
+      return profile.role === "admin" || profile.permissions?.[permission] === true;
+    },
+    [globalViewPermissions, isGlobalSuperAdmin, profile]
   );
   const workStaffNames = useMemo(() => {
     const names = staffDirectory
@@ -243,13 +267,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const fetchEntityTable = useCallback(
-    async <T,>(table: string, lawFirmId?: string): Promise<T[]> => {
+    async <T,>(table: string, lawFirmId?: string, firmNames?: Map<string, string>): Promise<T[]> => {
       if (!supabase) return [];
-      let query = supabase.from(table).select("id,data");
+      let query = supabase.from(table).select("id,data,law_firm_id");
       if (lawFirmId) query = query.eq("law_firm_id", lawFirmId);
       const { data, error } = await query;
       if (error) throw error;
-      return (data ?? []).map((row: { id: string; data: unknown }) => ({ ...(row.data as T), id: row.id } as T));
+      return (data ?? []).map((row: { id: string; data: unknown; law_firm_id?: string | null }) => ({
+        ...(row.data as T),
+        id: row.id,
+        _lawFirmId: row.law_firm_id ?? undefined,
+        _lawFirmName: row.law_firm_id ? (firmNames?.get(row.law_firm_id) ?? "알 수 없는 로펌") : undefined,
+      } as T));
     },
     [supabase]
   );
@@ -323,64 +352,49 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      const { data: firmRows, error: firmError } = await supabase
+        .from("law_firms")
+        .select("id,firm_code,name,status")
+        .order("name");
+      if (firmError) throw firmError;
+      const firms: LawFirmSummary[] = (firmRows ?? []).map((firm: any) => ({
+        id: firm.id, firmCode: String(firm.firm_code), name: firm.name, status: firm.status === "suspended" ? "suspended" : "active",
+      }));
+      setFirmDirectory(firms);
+      const firmNames = new Map(firms.map((firm) => [firm.id, firm.name]));
+
       let targetFirmId = resolvedProfile.lawFirmId;
-      if (resolvedProfile.platformRole === "super_admin") {
-        if (!superAdminFirmScope?.id) {
-          setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
-          setSettlementRates({});
-          setCaseDocuments({});
-          return;
-        }
-        const { data: scopedFirm, error: scopedFirmError } = await supabase
-          .from("law_firms")
-          .select("id,firm_code,name,status")
-          .eq("id", superAdminFirmScope.id)
-          .maybeSingle();
-        if (scopedFirmError || !scopedFirm) {
+      if (resolvedProfile.platformRole === "super_admin" && superAdminFirmScope?.id) {
+        const scopedFirm = firms.find((firm) => firm.id === superAdminFirmScope.id);
+        if (!scopedFirm) {
           exitSuperAdminFirmScope();
-          throw scopedFirmError || new Error("선택한 로펌 정보를 찾지 못했습니다.");
+          throw new Error("선택한 로펌 정보를 찾지 못했습니다.");
         }
-        const normalizedScope: SuperAdminFirmScope = {
-          id: scopedFirm.id,
-          firmCode: scopedFirm.firm_code,
-          name: scopedFirm.name,
-          status: scopedFirm.status === "suspended" ? "suspended" : "active",
-        };
         if (
-          normalizedScope.name !== superAdminFirmScope.name ||
-          normalizedScope.firmCode !== superAdminFirmScope.firmCode ||
-          normalizedScope.status !== superAdminFirmScope.status
-        ) {
-          enterSuperAdminFirmScope(normalizedScope);
-        }
+          scopedFirm.name !== superAdminFirmScope.name ||
+          scopedFirm.firmCode !== superAdminFirmScope.firmCode ||
+          scopedFirm.status !== superAdminFirmScope.status
+        ) enterSuperAdminFirmScope(scopedFirm);
         targetFirmId = scopedFirm.id;
       }
 
-      if (!targetFirmId) throw new Error("소속 로펌을 확인할 수 없습니다.");
+      const globalMode = resolvedProfile.platformRole === "super_admin" && !targetFirmId;
+      if (!globalMode && !targetFirmId) throw new Error("소속 로펌을 확인할 수 없습니다.");
 
       const [
-        loadedLeads,
-        loadedClients,
-        loadedCases,
-        loadedInstallments,
-        loadedSchedule,
-        loadedPosts,
-        loadedChanges,
-        firmSettingsRes,
-        directoryRes,
+        loadedLeads, loadedClients, loadedCases, loadedInstallments, loadedSchedule, loadedPosts, loadedChanges, directoryRes,
       ] = await Promise.all([
-        fetchEntityTable<DbLead>("app_leads", targetFirmId),
-        fetchEntityTable<Client>("app_clients", targetFirmId),
-        fetchEntityTable<CaseRecord>("app_cases", targetFirmId),
-        fetchEntityTable<Installment>("app_installments", targetFirmId),
-        fetchEntityTable<ScheduleItem>("app_schedule_items", targetFirmId),
-        fetchEntityTable<BoardPost>("app_board_posts", targetFirmId),
-        fetchEntityTable<ChangeLogEntry>("app_change_logs", targetFirmId),
-        supabase.from("firm_settings").select("key,value").eq("law_firm_id", targetFirmId),
-        supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id", targetFirmId).eq("is_work_staff", true).order("display_name"),
+        fetchEntityTable<DbLead>("app_leads", globalMode ? undefined : targetFirmId, firmNames),
+        fetchEntityTable<Client>("app_clients", globalMode ? undefined : targetFirmId, firmNames),
+        fetchEntityTable<CaseRecord>("app_cases", globalMode ? undefined : targetFirmId, firmNames),
+        fetchEntityTable<Installment>("app_installments", globalMode ? undefined : targetFirmId, firmNames),
+        fetchEntityTable<ScheduleItem>("app_schedule_items", globalMode ? undefined : targetFirmId, firmNames),
+        fetchEntityTable<BoardPost>("app_board_posts", globalMode ? undefined : targetFirmId, firmNames),
+        fetchEntityTable<ChangeLogEntry>("app_change_logs", globalMode ? undefined : targetFirmId, firmNames),
+        globalMode
+          ? supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name")
+          : supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id", targetFirmId!).eq("is_work_staff", true).order("display_name"),
       ]);
-
-      if (firmSettingsRes.error) throw firmSettingsRes.error;
       if (directoryRes.error) throw directoryRes.error;
 
       setLeads(loadedLeads.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)));
@@ -404,14 +418,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }));
       setStaffDirectory(directory);
 
-      const firmSettings = new Map((firmSettingsRes.data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
-      const rates = firmSettings.get("settlement_rates") as SettlementRateMap | undefined;
-      const living = firmSettings.get("min_living_cost") as MinLivingCostTable | undefined;
-      const docs = firmSettings.get("case_documents") as DocumentState | undefined;
-      const rateDefaults = defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]);
-      setSettlementRates(rates ? { ...rateDefaults, ...rates } : rateDefaults);
-      if (living) setMinLivingCostTable(living);
-      if (docs) setCaseDocuments(docs);
+      if (globalMode) {
+        setSettlementRates(defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]));
+        setMinLivingCostTable(defaultMinLivingCostTable());
+        setCaseDocuments({});
+      } else {
+        const { data: firmSettingsData, error: firmSettingsError } = await supabase.from("firm_settings").select("key,value").eq("law_firm_id", targetFirmId!);
+        if (firmSettingsError) throw firmSettingsError;
+        const firmSettings = new Map((firmSettingsData ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
+        const rates = firmSettings.get("settlement_rates") as SettlementRateMap | undefined;
+        const living = firmSettings.get("min_living_cost") as MinLivingCostTable | undefined;
+        const docs = firmSettings.get("case_documents") as DocumentState | undefined;
+        const rateDefaults = defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]);
+        setSettlementRates(rates ? { ...rateDefaults, ...rates } : rateDefaults);
+        setMinLivingCostTable(living ?? defaultMinLivingCostTable());
+        setCaseDocuments(docs ?? {});
+      }
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : "Supabase 데이터 로딩에 실패했습니다.");
     } finally {
@@ -455,11 +477,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [supabase, currentUser, reloadData]);
 
   const saveEntity = useCallback(
-    async (table: string, entity: { id: string }) => {
+    async (table: string, entity: { id: string; _lawFirmId?: string; _lawFirmName?: string }) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
-      if (!effectiveFirmId) throw new Error("작업할 로펌을 선택해주세요.");
+      const rowFirmId = effectiveFirmId || entity._lawFirmId;
+      if (!rowFirmId) throw new Error("전체 로펌 통합보기는 조회 전용입니다. 수정/등록하려면 좌측에서 대상 로펌을 선택해주세요.");
+      const cleanEntity: Record<string, unknown> = { ...entity };
+      delete cleanEntity._lawFirmId; delete cleanEntity._lawFirmName;
       const { error } = await supabase.from(table).upsert(
-        { id: entity.id, data: entity, law_firm_id: effectiveFirmId },
+        { id: entity.id, data: cleanEntity, law_firm_id: rowFirmId },
         { onConflict: "id" }
       );
       if (error) throw error;
@@ -488,18 +513,19 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const deleteEntity = useCallback(
     async (table: string, id: string) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
+      if (isGlobalSuperAdmin) throw new Error("전체 로펌 통합보기는 조회 전용입니다. 대상 로펌을 선택한 뒤 삭제해주세요.");
       let query = supabase.from(table).delete().eq("id", id);
       if (effectiveFirmId) query = query.eq("law_firm_id", effectiveFirmId);
       const { error } = await query;
       if (error) throw error;
     },
-    [effectiveFirmId, supabase]
+    [effectiveFirmId, isGlobalSuperAdmin, supabase]
   );
 
   const saveSetting = useCallback(
     async (key: string, value: unknown) => {
       if (!supabase) throw new Error("Supabase가 연결되지 않았습니다.");
-      if (!effectiveFirmId) throw new Error("작업할 로펌을 선택해주세요.");
+      if (!effectiveFirmId) throw new Error("전체 로펌 통합보기에서는 로펌별 설정을 변경할 수 없습니다. 좌측에서 대상 로펌을 선택해주세요.");
       const { error } = await supabase.from("firm_settings").upsert(
         { law_firm_id: effectiveFirmId, key, value, updated_by: currentUser?.id ?? null },
         { onConflict: "law_firm_id,key" }
@@ -538,7 +564,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const addLead = useCallback(
     (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }): string => {
-      if (!can("db.create")) return "";
+      if (isGlobalSuperAdmin || !can("db.create")) return "";
       const lead: DbLead = {
         ...draft,
         assignedStaff: workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : (currentStaff || draft.assignedStaff),
@@ -550,12 +576,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "등록", lead.name, "신규 DB 등록");
       return lead.id;
     },
-    [can, currentStaff, logChange, queueWrite, saveEntity, workStaffNames]
+    [can, currentStaff, isGlobalSuperAdmin, logChange, queueWrite, saveEntity, workStaffNames]
   );
 
   const updateClient = useCallback(
     (id: string, patch: Partial<Client>) => {
-      if (!isAdmin) return;
+      if (isGlobalSuperAdmin || !isAdmin) return;
       const before = clients.find((c) => c.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -563,12 +589,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_clients", next));
       logChange("계약관리", "수정", before.name, "고객정보 수정");
     },
-    [clients, isAdmin, logChange, queueWrite, saveEntity]
+    [clients, isAdmin, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
   );
 
   const deleteClient = useCallback(
     (id: string) => {
-      if (!isAdmin) return;
+      if (isGlobalSuperAdmin || !isAdmin) return;
       const target = clients.find((c) => c.id === id);
       if (!target) return;
       const linkedCases = cases.filter((c) => c.clientId === id);
@@ -591,12 +617,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       );
       logChange("계약관리", "삭제", target.name, "고객 정보 및 연결된 계약·분납 데이터 삭제");
     },
-    [cases, clients, deleteEntity, installments, isAdmin, logChange, queueWrite, scheduleItems]
+    [cases, clients, deleteEntity, installments, isAdmin, isGlobalSuperAdmin, logChange, queueWrite, scheduleItems]
   );
 
   const updateLead = useCallback(
     (id: string, patch: Partial<DbLead>) => {
-      if (!canPatchLead(patch)) return;
+      if (isGlobalSuperAdmin || !canPatchLead(patch)) return;
       const before = leads.find((l) => l.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -604,12 +630,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_leads", next));
       logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
     },
-    [canPatchLead, leads, logChange, queueWrite, saveEntity]
+    [canPatchLead, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]
   );
 
   const deleteLead = useCallback(
     (id: string) => {
-      if (!can("db.delete")) return;
+      if (isGlobalSuperAdmin || !can("db.delete")) return;
       const target = leads.find((lead) => lead.id === id);
       if (!target) return;
 
@@ -624,12 +650,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           : "DB 고객정보 및 상담일지·메모·예약정보 삭제"
       );
     },
-    [can, deleteEntity, leads, logChange, queueWrite]
+    [can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite]
   );
 
   const convertLeadToClient = useCallback(
     (leadId: string): string | undefined => {
-      if (!can("db.convert")) return undefined;
+      if (isGlobalSuperAdmin || !can("db.convert")) return undefined;
       const lead = leads.find((l) => l.id === leadId);
       if (!lead) return undefined;
 
@@ -727,12 +753,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "수정", lead.name, "고객 및 계약관리 미접수 계약 생성");
       return client.id;
     },
-    [can, clients, leads, logChange, queueWrite, saveEntity]
+    [can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]
   );
 
   const toggleDocument = useCallback(
     (caseId: string, itemId: string) => {
-      if (!can("cases.send_docs")) return;
+      if (isGlobalSuperAdmin || !can("cases.send_docs")) return;
       const next: DocumentState = {
         ...caseDocuments,
         [caseId]: {
@@ -743,12 +769,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setCaseDocuments(next);
       queueWrite(saveSetting("case_documents", next));
     },
-    [can, caseDocuments, queueWrite, saveSetting]
+    [can, caseDocuments, isGlobalSuperAdmin, queueWrite, saveSetting]
   );
 
   const addCase = useCallback(
     (draft: Omit<CaseRecord, "id">): string => {
-      if (!can("cases.create")) return "";
+      if (isGlobalSuperAdmin || !can("cases.create")) return "";
       const record: CaseRecord = {
         ...draft,
         assignedStaff: can("cases.change_assignee") ? draft.assignedStaff : (currentStaff || draft.assignedStaff),
@@ -769,12 +795,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("계약관리", "등록", record.caseNumber, "계약 등록");
       return record.id;
     },
-    [can, clients, currentStaff, leads, logChange, queueWrite, saveEntity]
+    [can, clients, currentStaff, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]
   );
 
   const updateCase = useCallback(
     (id: string, patch: Partial<CaseRecord>) => {
-      if (!canPatchCase(patch)) return;
+      if (isGlobalSuperAdmin || !canPatchCase(patch)) return;
       const before = cases.find((c) => c.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -782,7 +808,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_cases", next));
       logChange("계약관리", "수정", before.caseNumber, "계약 관련 정보 수정");
     },
-    [canPatchCase, cases, logChange, queueWrite, saveEntity]
+    [canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
   );
 
   const setCaseInstallments = useCallback(
@@ -791,7 +817,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       rows: InstallmentDraft[],
       finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
     ) => {
-      if (!can("cases.manage_installments")) return;
+      if (isGlobalSuperAdmin || !can("cases.manage_installments")) return;
       const oldRows = installments.filter((i) => i.caseId === caseId);
       const updated: Installment[] = rows.map((r, idx) => ({
         id: r.id ?? makeId(`${caseId}-INS`),
@@ -828,21 +854,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       );
       if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
     },
-    [can, cases, deleteEntity, installments, logChange, queueWrite, saveEntity]
+    [can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
   );
 
   const addPost = useCallback(
     (draft: Omit<BoardPost, "id">) => {
+      if (isGlobalSuperAdmin) return;
       const post: BoardPost = { ...draft, id: makeId("POST") };
       setPosts((prev) => [...prev, post]);
       queueWrite(saveEntity("app_board_posts", post));
       logChange("게시판", "등록", draft.title, "게시글 등록");
     },
-    [logChange, queueWrite, saveEntity]
+    [isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
   );
 
   const updatePost = useCallback(
     (id: string, patch: Partial<BoardPost>) => {
+      if (isGlobalSuperAdmin) return;
       const before = posts.find((p) => p.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
@@ -850,51 +878,52 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       queueWrite(saveEntity("app_board_posts", next));
       logChange("게시판", "수정", before.title, "게시글 수정");
     },
-    [logChange, posts, queueWrite, saveEntity]
+    [isGlobalSuperAdmin, logChange, posts, queueWrite, saveEntity]
   );
 
   const deletePost = useCallback(
     (id: string) => {
+      if (isGlobalSuperAdmin) return;
       const before = posts.find((p) => p.id === id);
       if (!before) return;
       setPosts((prev) => prev.filter((p) => p.id !== id));
       queueWrite(deleteEntity("app_board_posts", id));
       logChange("게시판", "삭제", before.title, "게시글 삭제");
     },
-    [deleteEntity, logChange, posts, queueWrite]
+    [deleteEntity, isGlobalSuperAdmin, logChange, posts, queueWrite]
   );
 
   const updateSettlementRate = useCallback(
     (staff: StaffName, method: PaymentMethod, rate: number) => {
-      if (!can("settlement_settings.edit")) return;
+      if (isGlobalSuperAdmin || !can("settlement_settings.edit")) return;
       const next = { ...settlementRates, [staff]: { ...settlementRates[staff], [method]: rate } };
       setSettlementRates(next);
       queueWrite(saveSetting("settlement_rates", next));
       logChange("설정", "수정", `${staff} · ${method}`, `정산요율 ${rate}%로 변경`);
     },
-    [can, logChange, queueWrite, saveSetting, settlementRates]
+    [can, isGlobalSuperAdmin, logChange, queueWrite, saveSetting, settlementRates]
   );
 
   const setMinLivingCostForSize = useCallback(
     (size: number, amount: number) => {
-      if (!can("living.edit")) return;
+      if (isGlobalSuperAdmin || !can("living.edit")) return;
       const next = { ...minLivingCostTable, sizes: { ...minLivingCostTable.sizes, [size]: amount } };
       setMinLivingCostTable(next);
       queueWrite(saveSetting("min_living_cost", next));
       logChange("설정", "수정", "최저생계비 계산기", `${size}인가구 최저생계비 ${amount.toLocaleString("ko-KR")}원으로 설정`);
     },
-    [can, logChange, minLivingCostTable, queueWrite, saveSetting]
+    [can, isGlobalSuperAdmin, logChange, minLivingCostTable, queueWrite, saveSetting]
   );
 
   const setMinLivingCostExtraPerPerson = useCallback(
     (amount: number) => {
-      if (!can("living.edit")) return;
+      if (isGlobalSuperAdmin || !can("living.edit")) return;
       const next = { ...minLivingCostTable, extraPerPerson: amount };
       setMinLivingCostTable(next);
       queueWrite(saveSetting("min_living_cost", next));
       logChange("설정", "수정", "최저생계비 계산기", `추가 가구원 기준금액 ${amount.toLocaleString("ko-KR")}원으로 설정`);
     },
-    [can, logChange, minLivingCostTable, queueWrite, saveSetting]
+    [can, isGlobalSuperAdmin, logChange, minLivingCostTable, queueWrite, saveSetting]
   );
 
   const signOut = useCallback(async () => {
@@ -922,6 +951,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       profile,
       staffDirectory,
       workStaffNames,
+      firmDirectory,
       superAdminFirmScope,
       enterSuperAdminFirmScope,
       exitSuperAdminFirmScope,
@@ -964,6 +994,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       profile,
       staffDirectory,
       workStaffNames,
+      firmDirectory,
       superAdminFirmScope,
       enterSuperAdminFirmScope,
       exitSuperAdminFirmScope,

@@ -72,6 +72,13 @@ export const STAFF_LIST = ["강이삭", "박형원"] as const;
 export const DB_INTAKE_OWNER = "박형원" as const;
 export type StaffName = string;
 
+// SUPER_ADMIN 전체 로펌 통합보기에서만 사용하는 런타임 테넌트 표시값입니다.
+// JSON 업무데이터에는 저장하지 않고 store가 DB의 law_firm_id를 읽어 화면에만 주입합니다.
+export interface TenantStamped {
+  _lawFirmId?: string;
+  _lawFirmName?: string;
+}
+
 // 상담 후 진행 방향 — 예전에는 DB 접수 시점에 "신청분류"로 미리 지정했지만, 실제로는
 // 상담을 해봐야 회생/파산/워크아웃 중 어느 방향이 맞는지 알 수 있는 경우가 많아
 // "상담 후 방향"으로 명칭·시점을 바꿨습니다. 법원 사건(계약관리)은 회생/파산만 다루므로
@@ -79,7 +86,7 @@ export type StaffName = string;
 export const CONSULT_DIRECTIONS = ["개인회생", "개인파산", "워크아웃"] as const;
 export type ConsultDirection = (typeof CONSULT_DIRECTIONS)[number];
 
-export interface Client {
+export interface Client extends TenantStamped {
   id: string;
   name: string;
   phone: string;
@@ -299,7 +306,7 @@ export interface MemoLogEntry {
   tag: MemoLogTag;
 }
 
-export interface DbLead {
+export interface DbLead extends TenantStamped {
   id: string;
   name: string;
   phone: string;
@@ -327,7 +334,7 @@ export interface DbLead {
   convertedCaseId?: string;
 }
 
-export interface CaseRecord {
+export interface CaseRecord extends TenantStamped {
   id: string;
   caseNumber: string; // 법원 사건번호, 접수 전에는 임시 내부관리번호
   clientId: string;
@@ -353,7 +360,7 @@ export interface CaseRecord {
 
 export type InstallmentStatus = "완료" | "예정" | "연체" | "실패";
 
-export interface Installment {
+export interface Installment extends TenantStamped {
   id: string;
   caseId: string;
   seq: number; // 회차, 1=계약금
@@ -365,7 +372,7 @@ export interface Installment {
 
 export type ScheduleType = "법원기일" | "서류제출기한" | "상담예약" | "분납안내";
 
-export interface ScheduleItem {
+export interface ScheduleItem extends TenantStamped {
   id: string;
   caseId?: string;
   clientId?: string;
@@ -393,7 +400,7 @@ export interface BoardAttachment {
   size: number; // bytes
 }
 
-export interface BoardPost {
+export interface BoardPost extends TenantStamped {
   id: string;
   title: string;
   body: string;

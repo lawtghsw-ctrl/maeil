@@ -21,7 +21,7 @@ function fmtDateTime(iso: string): string {
   ).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function CategoryCard({ category, rows }: { category: ChangeCategory; rows: ChangeLogEntry[] }) {
+function CategoryCard({ category, rows, showFirm = false }: { category: ChangeCategory; rows: ChangeLogEntry[]; showFirm?: boolean }) {
   const [page, setPage] = useState(1);
   const pageSize = 5;
   return (
@@ -38,6 +38,7 @@ function CategoryCard({ category, rows }: { category: ChangeCategory; rows: Chan
               <div className="flex items-center gap-2">
                 <Badge tone={ACTION_TONE[r.action]}>{r.action}</Badge>
                 <span className="truncate font-semibold text-slate-900">{r.targetName}</span>
+                {showFirm && <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{r._lawFirmName ?? "-"}</span>}
               </div>
               <div className="mt-1 text-xs text-slate-500">{r.detail}</div>
             </div>
@@ -54,7 +55,8 @@ function CategoryCard({ category, rows }: { category: ChangeCategory; rows: Chan
 }
 
 export default function ChangesPage() {
-  const { changeLog, can, profile } = useStore();
+  const { changeLog, can, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [categoryFilter, setCategoryFilter] = useState<ChangeCategory | "전체">("전체");
 
   const byCategory = useMemo(() => {
@@ -95,7 +97,7 @@ export default function ChangesPage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {visibleCategories.map((c) => (
-          <CategoryCard key={c} category={c} rows={byCategory.get(c) ?? []} />
+          <CategoryCard key={c} category={c} rows={byCategory.get(c) ?? []} showFirm={globalSuperView} />
         ))}
       </div>
     </>

@@ -42,7 +42,8 @@ function downloadCsv(rows: Array<Record<string, string>>, filename: string) {
 }
 
 export default function SettlementsPage() {
-  const { cases, clients, installments, settlementRates, can, currentStaff } = useStore();
+  const { cases, clients, installments, settlementRates, can, currentStaff, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const init = monthRange();
   const [rangeStart, setRangeStart] = useState(init.start);
   const [rangeEnd, setRangeEnd] = useState(init.end);
@@ -74,7 +75,18 @@ export default function SettlementsPage() {
     return { contractSales, realSales, receivable };
   }, [scopedCases, paidRows, rangeStart, rangeEnd]);
 
-  const staffRows = useMemo(() => getStaffPerformance(scopedCases, rangeStart, rangeEnd), [scopedCases, rangeStart, rangeEnd]);
+  const staffRows = useMemo(() => {
+    if (!globalSuperView) return getStaffPerformance(scopedCases, rangeStart, rangeEnd);
+    const grouped = new Map<string, { staff: string; caseCount: number; contractAmount: number; paidAmount: number; paymentRate: number }>();
+    for (const c of scopedCases) {
+      if (!inRange(c.contractDate, rangeStart, rangeEnd)) continue;
+      const label = `${c._lawFirmName ?? "알 수 없는 로펌"} · ${c.assignedStaff}`;
+      const key = `${c._lawFirmId ?? "none"}::${c.assignedStaff}`;
+      const row = grouped.get(key) ?? { staff: label, caseCount: 0, contractAmount: 0, paidAmount: 0, paymentRate: 0 };
+      row.caseCount += 1; row.contractAmount += c.contractAmount; row.paidAmount += c.paidAmount; grouped.set(key, row);
+    }
+    return Array.from(grouped.values()).map((row) => ({ ...row, paymentRate: row.contractAmount > 0 ? (row.paidAmount / row.contractAmount) * 100 : 0 }));
+  }, [globalSuperView, scopedCases, rangeStart, rangeEnd]);
 
   // ---- 담당자별 예상 정산액 — 정산설정 메뉴에서 설정한 담당자×결제수단 요율을, 고객관리에서
   // 실제 선택된 결제방식(case.paymentMethod)에 곱해 자동 계산합니다. 정산설정에서 요율을
@@ -110,7 +122,7 @@ export default function SettlementsPage() {
     <>
       <PageHeader
         title="정산"
-        description="선택한 기간의 계약매출·실매출·미수금과 담당자별 정산 현황을 확인합니다."
+        description={globalSuperView ? "전체 로펌 계약·입금·미수금 통합조회 · 로펌별 정산요율 적용값은 대상 로펌 선택 후 확인하세요." : "선택한 기간의 계약매출·실매출·미수금과 담당자별 정산 현황을 확인합니다."}
         action={
           <DateRangePicker
             start={rangeStart}
@@ -128,7 +140,7 @@ export default function SettlementsPage() {
         <KpiCard label="계약매출 (계약일 기준)" value={fmtWon(kpi.contractSales)} />
         <KpiCard label="실매출 (결제완료액)" value={fmtWon(kpi.realSales)} />
         <KpiCard label="현재 전체 미수금" value={fmtWon(kpi.receivable)} />
-        <KpiCard label="예상 정산액 합계 (요율 적용)" value={fmtWon(expectedSettlementTotal)} />
+        <KpiCard label="예상 정산액 합계 (요율 적용)" value={globalSuperView ? "로펌 선택 후" : fmtWon(expectedSettlementTotal)} />
       </div>
 
       <Card className="mt-4 overflow-hidden">
@@ -160,7 +172,7 @@ export default function SettlementsPage() {
                   <td className="px-4 py-3 text-slate-500">{r.caseCount}건</td>
                   <td className="px-4 py-3 text-slate-900">{fmtWon(r.contractAmount)}</td>
                   <td className="px-4 py-3 text-slate-500">{r.paymentRate.toFixed(1)}%</td>
-                  <td className="px-4 py-3 font-semibold text-blue-700">{fmtWon(expectedSettlementByStaff.get(r.staff) ?? 0)}</td>
+                  <td className="px-4 py-3 font-semibold text-blue-700">{globalSuperView ? "-" : fmtWon(expectedSettlementByStaff.get(r.staff) ?? 0)}</td>
                 </tr>
               ))}
               {staffRows.length === 0 && (
@@ -191,7 +203,7 @@ export default function SettlementsPage() {
           <table className="admin-responsive-table w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["입금일시", "의뢰인 성함", "연락처", "구분", "결제금액", "결제 방법", "비고"].map((h) => (
+                {[...(globalSuperView ? ["로펌"] : []), "입금일시", "의뢰인 성함", "연락처", "구분", "결제금액", "결제 방법", "비고"].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -201,6 +213,7 @@ export default function SettlementsPage() {
             <tbody>
               {pageRows(paidRows, page, 10).map((r) => (
                 <tr key={r.installment.id} className="border-t border-slate-100">
+                  {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{r.case?._lawFirmName ?? r.installment._lawFirmName ?? "-"}</span></td>}
                   <td className="px-4 py-3 text-slate-500">{r.installment.paidDate ? fmtDate(r.installment.paidDate) : "-"}</td>
                   <td className="px-4 py-3 font-semibold text-slate-900">{r.client?.name ?? "-"}</td>
                   <td className="px-4 py-3 text-slate-500">{r.client?.phone ?? "-"}</td>
@@ -212,7 +225,7 @@ export default function SettlementsPage() {
               ))}
               {paidRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={globalSuperView ? 8 : 7} className="px-4 py-10 text-center text-slate-400">
                     선택한 기간에 결제완료 내역이 없습니다.
                   </td>
                 </tr>

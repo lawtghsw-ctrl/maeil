@@ -153,7 +153,7 @@ function ToggleRow({ label, description, checked, onChange, disabled = false }: 
 }
 
 export default function StaffAccountsPage() {
-  const { currentUser, isAdmin, reloadData, profile, superAdminFirmScope } = useStore();
+  const { currentUser, isAdmin, reloadData, profile, superAdminFirmScope, firmDirectory } = useStore();
   const [rows, setRows] = useState<StaffAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -165,6 +165,8 @@ export default function StaffAccountsPage() {
   const [editPassword, setEditPassword] = useState("");
   const platformRole = profile?.platformRole ?? "staff";
   const canDirectCreate = platformRole === "super_admin" && !!superAdminFirmScope;
+  const globalSuperView = platformRole === "super_admin" && !superAdminFirmScope;
+  const firmName = (id?: string | null) => id ? (firmDirectory.find((firm) => firm.id === id)?.name ?? "알 수 없는 로펌") : "로파워";
   const isFirmAdmin = platformRole === "firm_admin";
 
   const api = useCallback(async (method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, queryString = "") => {
@@ -299,8 +301,10 @@ export default function StaffAccountsPage() {
           : superAdminFirmScope
             ? `SUPER ADMIN · ${superAdminFirmScope.name}의 관리자/직원 계정, 권한, 활성화, 자동배정을 직접 관리합니다.`
             : "로파워 운영자 전용 · 로펌 관리자/직원 계정을 관리합니다."}
-        action={<div className="flex gap-2"><Button variant="secondary" onClick={() => void load()}><RefreshCw size={14} /> 새로고침</Button>{canDirectCreate ? <Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 계정 직접 생성</Button> : <Link href="/firm/settings" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"><Plus size={15} /> 직원 초대코드</Link>}</div>}
+        action={<div className="flex gap-2"><Button variant="secondary" onClick={() => void load()}><RefreshCw size={14} /> 새로고침</Button>{canDirectCreate ? <Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 계정 직접 생성</Button> : !globalSuperView ? <Link href="/firm/settings" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"><Plus size={15} /> 직원 초대코드</Link> : null}</div>}
       />
+
+      {globalSuperView && <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900"><b>SUPER ADMIN 전체 로펌 통합보기</b> · 모든 로펌 계정을 표시합니다. 계정 생성·권한변경·비활성화는 좌측에서 대상 로펌을 선택한 뒤 진행해주세요.</div>}
 
       {platformRole === "super_admin" && superAdminFirmScope && (
         <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
@@ -356,10 +360,11 @@ export default function StaffAccountsPage() {
       <Card className="overflow-hidden">
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[1120px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{["직원", "구분", "상태", "실무 담당자", "DB 자동배정", "권한", "최근 로그인", ""].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}</tr></thead>
+            <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{[...(globalSuperView ? ["로펌"] : []), "직원", "구분", "상태", "실무 담당자", "DB 자동배정", "권한", "최근 로그인", ""].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}</tr></thead>
             <tbody>
               {filtered.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100">
+                  {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{firmName(row.lawFirmId)}</span></td>}
                   <td className="px-4 py-3"><div className="font-bold text-slate-900">{row.displayName}</div><div className="mt-0.5 text-xs text-slate-400">{row.email}</div></td>
                   <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.role === "admin" ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : "직원"}</span></td>
                   <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span></td>
@@ -367,10 +372,10 @@ export default function StaffAccountsPage() {
                   <td className="px-4 py-3">{row.isActive && row.isWorkStaff && row.autoAssignLeads ? <span className="font-semibold text-emerald-700">참여 · {row.leadAssignmentOrder}</span> : <span className="text-slate-400">제외</span>}</td>
                   <td className="px-4 py-3 text-slate-500">{row.platformRole === "firm_admin" || row.platformRole === "super_admin" ? "관리자 권한" : `${permissionCount(row.permissions)}개`}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(row.lastSignInAt)}</td>
-                  <td className="px-4 py-3 text-right"><Button variant="secondary" onClick={() => { setEditing({ ...row, permissions: { ...row.permissions } }); setEditPassword(""); }}>설정</Button></td>
+                  <td className="px-4 py-3 text-right"><Button variant="secondary" disabled={globalSuperView} onClick={() => { setEditing({ ...row, permissions: { ...row.permissions } }); setEditPassword(""); }}>설정</Button></td>
                 </tr>
               ))}
-              {!loading && filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400">등록된 계정이 없습니다.</td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan={globalSuperView ? 9 : 8} className="px-4 py-12 text-center text-slate-400">등록된 계정이 없습니다.</td></tr>}
             </tbody>
           </table>
         </div>

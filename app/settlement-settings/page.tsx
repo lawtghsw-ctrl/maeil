@@ -16,12 +16,23 @@ const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const EXAMPLE_CONTRACT_AMOUNT = 3_300_000;
 
 export default function SettlementSettingsPage() {
-  const { settlementRates, updateSettlementRate, workStaffNames, can } = useStore();
+  const { settlementRates, updateSettlementRate, workStaffNames, can, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [exStaff, setExStaff] = useState<StaffName>(workStaffNames[0] || "");
   const [exMethod, setExMethod] = useState<PaymentMethod>(PAYMENT_METHODS[0]);
 
   const exRate = settlementRates[exStaff]?.[exMethod] ?? 0;
   const exAmount = useMemo(() => Math.round((EXAMPLE_CONTRACT_AMOUNT * exRate) / 100), [exRate]);
+
+  if (globalSuperView) {
+    return <>
+      <PageHeader title="정산설정" description="정산요율은 로펌별로 독립 관리됩니다." />
+      <Card className="border-violet-200 bg-violet-50 p-6 text-sm text-violet-900">
+        <div className="font-black">전체 로펌 통합보기에서는 정산요율을 합산하지 않습니다.</div>
+        <div className="mt-2 text-xs leading-5 text-violet-700">좌측 관리 범위에서 대상 로펌을 선택하면 해당 로펌의 담당자별 정산요율을 조회·수정할 수 있습니다.</div>
+      </Card>
+    </>;
+  }
 
   return (
     <>

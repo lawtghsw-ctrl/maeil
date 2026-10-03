@@ -626,7 +626,8 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 export default function DbManagementPage() {
-  const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, isAdmin, can } = useStore();
+  const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, isAdmin, can, profile, superAdminFirmScope } = useStore();
+  const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<LeadSource | "전체">("전체");
@@ -944,7 +945,7 @@ export default function DbManagementPage() {
             <div className="text-sm font-bold text-slate-900">고객리스트</div>
             <div className="mt-0.5 text-[11px] text-slate-400">현재 조건 {rows.length}건</div>
           </div>
-          {(isAdmin || can("db.create")) && (
+          {can("db.create") && (
             <Button onClick={() => setNewLeadOpen(true)} className="shrink-0">
               <Plus size={15} />
               추가
@@ -961,6 +962,7 @@ export default function DbManagementPage() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-base font-bold text-slate-900">{lead.name}</span>
+                    {globalSuperView && <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span>}
                     <CallWarningBadge lead={lead} todayIso={todayIso} />
                   </div>
                   <a href={`tel:${lead.phone.replace(/[^0-9+]/g, "")}`} className="mt-1 inline-block text-sm font-semibold text-blue-700">
@@ -1075,7 +1077,7 @@ export default function DbManagementPage() {
           <table className="admin-responsive-table w-full min-w-[1680px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500">
               <tr>
-                {["접수일", "이름", "연락처", "리드정보(인스턴트양식)", "상담후방향", "담당자", "진행단계", "예약일시", "메모", ""].map((h) => (
+                {[...(globalSuperView ? ["로펌"] : []), "접수일", "이름", "연락처", "리드정보(인스턴트양식)", "상담후방향", "담당자", "진행단계", "예약일시", "메모", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -1085,6 +1087,7 @@ export default function DbManagementPage() {
             <tbody>
               {pageRows(rows, page, 10).map((lead) => (
                 <tr key={lead.id} className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
+                  {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(lead.receivedAt)}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -1203,7 +1206,7 @@ export default function DbManagementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={globalSuperView ? 11 : 10} className="px-4 py-10 text-center text-slate-400">
                     조건에 맞는 DB가 없습니다.
                   </td>
                 </tr>
