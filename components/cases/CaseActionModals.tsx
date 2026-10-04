@@ -3,8 +3,8 @@
 // v22: 고객관리와 계약관리를 통합하면서 고객관리에서 실제로 유지하기로 한
 // 분납관리 / 전자계약서 / 서류안내문 전송 3개 기능만 계약 상세에서 재사용합니다.
 // 별도 고객관리 화면을 다시 의존하지 않도록 사건 1건 + 고객 1명을 입력으로 받는 독립
-// 컴포넌트로 분리했습니다. 실제 외부 API(전자서명/알림톡)는 아직 연결 전이라 기존과
-// 동일하게 미리보기 동작을 유지합니다.
+// 컴포넌트로 분리했습니다. 전자계약서는 eformsign API와 실제 연결하며, 서류안내문은
+// 기존 미리보기 동작을 유지합니다.
 import { useEffect, useState, type ChangeEvent } from "react";
 import { FileSignature, Plus, RefreshCw, Send, WalletCards } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
@@ -13,6 +13,7 @@ import { PAYMENT_METHOD_NOTE } from "@/lib/types";
 import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { fmtWon } from "@/lib/format";
 import { Button, Input, Label, Modal, NumberInput, Select } from "@/components/ui/Primitives";
+import { authJson } from "@/lib/platform/client";
 
 const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
 const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
@@ -303,41 +304,221 @@ function CaseEformModal({
   caseRecord: CaseRecord;
   onClose: () => void;
 }) {
+  const stored = caseRecord as CaseRecord & {
+    eformsignDocumentId?: string;
+    eformsignStatus?: string;
+    eformsignStatusCode?: string;
+    eformsignSentAt?: string;
+  };
+
+  const defaultCreditorCount = (() => {
+    const creditors = new Set<string>();
+    for (const row of client.consultation?.debts ?? []) {
+      const name = row.creditor?.trim();
+      if (name) creditors.add(name);
+    }
+    for (const row of client.consultation?.loanRecords ?? []) {
+      const name = row.lender?.trim();
+      if (name) creditors.add(name);
+    }
+    return creditors.size ? String(creditors.size) : "";
+  })();
+
+  const [name, setName] = useState(client.name);
+  const [address, setAddress] = useState(client.consultation?.personal?.address ?? "");
+  const [residentNumber, setResidentNumber] = useState("");
   const [phone, setPhone] = useState(client.phone);
+  const [creditorCount, setCreditorCount] = useState(defaultCreditorCount);
+  const [fee, setFee] = useState(caseRecord.contractAmount > 0 ? String(caseRecord.contractAmount) : "");
+  const [contractDate, setContractDate] = useState(caseRecord.contractDate || todayIsoStr());
+  const [signerName, setSignerName] = useState(client.name);
   const [message, setMessage] = useState("계약서 확인 후 서명 부탁드립니다.");
+  const [sending, setSending] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [documentId, setDocumentId] = useState(stored.eformsignDocumentId ?? "");
+  const [status, setStatus] = useState(stored.eformsignStatus ?? "");
+  const [statusCode, setStatusCode] = useState(stored.eformsignStatusCode ?? "");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setPhone(client.phone);
-      setMessage("계약서 확인 후 서명 부탁드립니다.");
+    if (!open) return;
+    setName(client.name);
+    setAddress(client.consultation?.personal?.address ?? "");
+    setResidentNumber("");
+    setPhone(client.phone);
+    setCreditorCount(defaultCreditorCount);
+    setFee(caseRecord.contractAmount > 0 ? String(caseRecord.contractAmount) : "");
+    setContractDate(caseRecord.contractDate || todayIsoStr());
+    setSignerName(client.name);
+    setMessage("계약서 확인 후 서명 부탁드립니다.");
+    setDocumentId(stored.eformsignDocumentId ?? "");
+    setStatus(stored.eformsignStatus ?? "");
+    setStatusCode(stored.eformsignStatusCode ?? "");
+    setNotice(null);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, client.id, caseRecord.id]);
+
+  async function send() {
+    setError(null);
+    setNotice(null);
+
+    const required = [
+      ["이름", name],
+      ["주소", address],
+      ["주민번호", residentNumber],
+      ["전화번호", phone],
+      ["채권자 수", creditorCount],
+      ["보수", fee],
+      ["계약일", contractDate],
+      ["갑_이름", signerName],
+    ] as const;
+    const missing = required.filter(([, value]) => !String(value || "").trim()).map(([label]) => label);
+    if (missing.length) {
+      setError(`필수 입력값을 확인해주세요: ${missing.join(", ")}`);
+      return;
     }
-  }, [open, client.phone]);
+
+    setSending(true);
+    try {
+      const result = await authJson<{
+        ok: true;
+        documentId: string;
+        status: string;
+        statusCode: string;
+      }>("/api/integrations/eformsign/send", {
+        method: "POST",
+        body: JSON.stringify({
+          caseId: caseRecord.id,
+          name,
+          address,
+          residentNumber,
+          phone,
+          creditorCount,
+          fee,
+          contractDate,
+          signerName,
+          message,
+        }),
+      });
+      setDocumentId(result.documentId);
+      setStatus(result.status);
+      setStatusCode(result.statusCode);
+      setNotice("전자계약서를 발송했습니다. 고객은 전달받은 링크에서 서명만 진행하면 됩니다.");
+      setResidentNumber("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "전자계약서 전송에 실패했습니다.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function checkStatus() {
+    setChecking(true);
+    setError(null);
+    try {
+      const result = await authJson<{
+        ok: true;
+        documentId: string;
+        status: string;
+        statusCode: string;
+      }>("/api/integrations/eformsign/status", {
+        method: "POST",
+        body: JSON.stringify({ caseId: caseRecord.id }),
+      });
+      setDocumentId(result.documentId);
+      setStatus(result.status);
+      setStatusCode(result.statusCode);
+      setNotice(`현재 전자계약 상태: ${result.status}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "서명상태 확인에 실패했습니다.");
+    } finally {
+      setChecking(false);
+    }
+  }
 
   return (
-    <Modal open={open} title={`${client.name} · 전자계약서 전송`} onClose={onClose}>
+    <Modal open={open} title={`${client.name} · 전자계약서 전송`} onClose={onClose} size="lg">
       <div className="space-y-4">
         <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
-          <b>{client.name}</b> 고객의 계약정보를 템플릿에 자동 입력해 서명 요청을 전송합니다.
-          <div className="mt-1 text-xs text-blue-600">※ 전자서명 API 연동 전 미리보기입니다.</div>
+          계약서의 <b>을(수임인) 작성란은 아래 값으로 자동 입력</b>하고, 고객에게는 SMS로 서명 요청을 전송합니다.
+          <div className="mt-1 text-xs text-blue-600">갑(위임인)은 이폼사인에서 서명란만 직접 서명합니다.</div>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Label text="고객명"><Input value={client.name} readOnly /></Label>
-          <Label text="계약일"><Input value={caseRecord.contractDate} readOnly /></Label>
-          <Label text="전화번호(SMS)">
-            <Input value={phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)} />
-          </Label>
-          <Label text="사건유형"><Input value={caseRecord.caseType} readOnly /></Label>
-          <Label text="총 수임료"><Input value={fmtWon(caseRecord.contractAmount)} readOnly /></Label>
-          <Label text="결제수단"><Input value={PAYMENT_METHOD_NOTE[caseRecord.paymentMethod]} readOnly /></Label>
+
+        {documentId && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <b>전자계약 발송됨</b>
+                <div className="mt-1 text-xs text-emerald-700">
+                  상태: {status || "확인 필요"}{statusCode ? ` (${statusCode})` : ""}
+                </div>
+              </div>
+              <Button variant="secondary" disabled={checking} onClick={checkStatus}>
+                <RefreshCw size={15} className={checking ? "animate-spin" : ""} />
+                {checking ? "확인 중" : "서명상태 확인"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-xl border border-slate-200 p-4">
+          <div className="mb-3 text-xs font-bold text-slate-500">1페이지 · 의뢰인 정보</div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="이름">
+              <Input value={name} onChange={(e: ChangeEvent<HTMLInputElement>) => { setName(e.target.value); if (signerName === client.name) setSignerName(e.target.value); }} />
+            </Label>
+            <Label text="전화번호(SMS)">
+              <Input value={phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)} />
+            </Label>
+            <Label text="주소">
+              <Input value={address} onChange={(e: ChangeEvent<HTMLInputElement>) => setAddress(e.target.value)} />
+            </Label>
+            <Label text="주민번호">
+              <Input value={residentNumber} autoComplete="off" onChange={(e: ChangeEvent<HTMLInputElement>) => setResidentNumber(e.target.value)} />
+            </Label>
+          </div>
+          <div className="mt-2 text-[11px] text-slate-400">주민번호는 이폼사인 계약서 작성 요청에만 사용하며 로파워 계약 데이터에는 저장하지 않습니다.</div>
         </div>
+
+        <div className="rounded-xl border border-slate-200 p-4">
+          <div className="mb-3 text-xs font-bold text-slate-500">1페이지 · 위임보수</div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="채권자 수">
+              <Input value={creditorCount} placeholder="예: 8" onChange={(e: ChangeEvent<HTMLInputElement>) => setCreditorCount(e.target.value)} />
+            </Label>
+            <Label text="보수">
+              <Input value={fee} placeholder="예: 1500000" onChange={(e: ChangeEvent<HTMLInputElement>) => setFee(e.target.value)} />
+            </Label>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 p-4">
+          <div className="mb-3 text-xs font-bold text-slate-500">2페이지 · 계약일 및 갑 이름</div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="계약일">
+              <Input type="date" value={contractDate} onChange={(e: ChangeEvent<HTMLInputElement>) => setContractDate(e.target.value)} />
+            </Label>
+            <Label text="갑_이름">
+              <Input value={signerName} onChange={(e: ChangeEvent<HTMLInputElement>) => setSignerName(e.target.value)} />
+            </Label>
+          </div>
+          <div className="mt-2 text-[11px] text-slate-400">계약일은 템플릿의 ‘월’, ‘일’ 입력항목으로 자동 분리해 입력됩니다.</div>
+        </div>
+
         <Label text="전송 메시지">
           <Input value={message} onChange={(e: ChangeEvent<HTMLInputElement>) => setMessage(e.target.value)} />
         </Label>
+
+        {notice && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">{notice}</div>}
+        {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</div>}
+
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>취소</Button>
-          <Button onClick={() => alert("전자계약서 전송 기능은 API 연동 후 제공됩니다.")}>
-            <RefreshCw size={15} />
-            계약서 전송
+          <Button disabled={sending || !!documentId} onClick={send}>
+            <RefreshCw size={15} className={sending ? "animate-spin" : ""} />
+            {documentId ? "발송완료" : sending ? "전송 중" : "계약서 전송"}
           </Button>
         </div>
       </div>
