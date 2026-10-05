@@ -1,22 +1,11 @@
-# v28.6.1 바로 덮어쓰기 파일
+LawPower v28.9.1 빌드 오류 수정 덮어쓰기
 
-이번 ZIP은 실행 스크립트가 아니라 실제 수정 파일입니다.
+수정:
+- lib/mock-data.ts의 applicationType 타입 오류 수정
+- CaseType 6종 확장에 맞게 caseTypeSplit 6종 반영
+- mock dayMap의 사건유형 비율 계산도 6종 전체 기준으로 수정
 
-## 덮어쓸 파일
-프로젝트 루트 기준 그대로 덮어쓰기:
-- `components/cases/CaseActionModals.tsx`
-- `app/cases/[id]/page.tsx`
+사용:
+압축을 풀고 lib 폴더를 기존 maeil 프로젝트에 그대로 덮어쓰기한 뒤 npm run build 실행.
 
-## Supabase
-DB관리 피벗 복구를 위해:
-- `supabase/V28_6_1_PIVOT_FIX.sql`
-
-을 Supabase SQL Editor에서 1회 실행합니다.
-
-### 반영 내용
-- 계약 상세 우측 상단 `최우선변제 안내표` 버튼 제거
-- 분납 현황 바로 아래 안내표 상시 노출
-- 기존 Raw2 데이터의 상담시간/채무/소득 피벗값 복구
-- 앞으로 들어오는 app_leads도 DB trigger에서 자동 정규화
-
-SQL은 기존 DB 삭제 없이 피벗용 JSON 필드만 채웁니다.
+SQL 실행 필요 없음.
