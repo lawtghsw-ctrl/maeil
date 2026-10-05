@@ -4,13 +4,13 @@ import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
-import { type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
+import { CASE_TYPE_OPTIONS, type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
 import { Plus } from "lucide-react";
 
-const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", "개인회생", "개인파산"];
+const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
 
 
@@ -36,8 +36,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
     setClientId(id);
     const client = clients.find((item) => item.id === id);
     if (client?.assignedStaff) setAssignedStaff(client.assignedStaff);
-    if (client?.applicationType === "개인파산") setCaseType("개인파산");
-    if (client?.applicationType === "개인회생") setCaseType("개인회생");
+    if (client?.applicationType) setCaseType(client.applicationType);
   }
 
   function save() {
@@ -79,8 +78,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
         <label className="text-xs font-semibold text-slate-600">
           사건유형
           <Select className="mt-1 w-full" value={caseType} onChange={(e) => setCaseType(e.target.value as CaseType)}>
-            <option value="개인회생">개인회생</option>
-            <option value="개인파산">개인파산</option>
+            {CASE_TYPE_OPTIONS.map((type) => <option key={type} value={type}>{type}</option>)}
           </Select>
         </label>
         <label className="text-xs font-semibold text-slate-600">

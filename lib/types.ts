@@ -4,7 +4,8 @@
 // camelCase로 우선 정의하고(프론트 우선), 실제 DB 연동 시 lib/data.ts의 매핑 함수만
 // 교체하면 되도록 데이터 레이어를 분리해 둠.
 
-export type CaseType = "개인회생" | "개인파산";
+export const CASE_TYPE_OPTIONS = ["개인회생", "개인파산", "워크아웃", "법인회생", "일반회생", "기타사건"] as const;
+export type CaseType = string;
 
 // 절차 진행 단계 — 개인회생/개인파산 공통 파이프라인으로 단순화.
 // (실무상 회생은 '변제계획인가' 단계를 거치고 파산은 '파산선고'를 거치는 차이가 있으나,
@@ -47,6 +48,50 @@ export const STAGE_LABELS: Record<CaseType, Record<CaseStage, string>> = {
     면책결정: "면책결정",
     종결: "종결",
   },
+  워크아웃: {
+    상담접수: "상담접수",
+    서류준비: "서류준비",
+    신청서작성: "신청서작성",
+    법원접수: "신청접수",
+    보정대기: "심사대기",
+    개시_선고: "채무조정안",
+    변제계획_면책심문: "약정체결",
+    면책결정: "이행중",
+    종결: "종결",
+  },
+  법인회생: {
+    상담접수: "상담접수",
+    서류준비: "서류준비",
+    신청서작성: "신청서작성",
+    법원접수: "법원접수",
+    보정대기: "보정대기",
+    개시_선고: "개시결정",
+    변제계획_면책심문: "회생계획인가",
+    면책결정: "인가 후 진행",
+    종결: "종결",
+  },
+  일반회생: {
+    상담접수: "상담접수",
+    서류준비: "서류준비",
+    신청서작성: "신청서작성",
+    법원접수: "법원접수",
+    보정대기: "보정대기",
+    개시_선고: "개시결정",
+    변제계획_면책심문: "회생계획인가",
+    면책결정: "인가 후 진행",
+    종결: "종결",
+  },
+  기타사건: {
+    상담접수: "상담접수",
+    서류준비: "서류준비",
+    신청서작성: "서류작성",
+    법원접수: "접수",
+    보정대기: "진행대기",
+    개시_선고: "진행중",
+    변제계획_면책심문: "후속절차",
+    면책결정: "완료대기",
+    종결: "종결",
+  },
 };
 
 // 사건유형을 구분하지 않고 파이프라인 전체를 한눈에 보여줄 때 쓰는 공용 라벨
@@ -79,11 +124,9 @@ export interface TenantStamped {
   _lawFirmName?: string;
 }
 
-// 상담 후 진행 방향 — 예전에는 DB 접수 시점에 "신청분류"로 미리 지정했지만, 실제로는
-// 상담을 해봐야 회생/파산/워크아웃 중 어느 방향이 맞는지 알 수 있는 경우가 많아
-// "상담 후 방향"으로 명칭·시점을 바꿨습니다. 법원 사건(계약관리)은 회생/파산만 다루므로
-// CaseType은 그대로 두고, 이 타입은 DB·고객 단계의 분류용으로 별도로 둡니다.
-export const CONSULT_DIRECTIONS = ["개인회생", "개인파산", "워크아웃"] as const;
+// 상담 후 진행 방향과 계약관리 사건유형을 동일한 6종으로 관리합니다.
+// 상담에서 정한 방향이 고객전환 후 계약관리 사건유형으로 그대로 승계됩니다.
+export const CONSULT_DIRECTIONS = CASE_TYPE_OPTIONS;
 export type ConsultDirection = (typeof CONSULT_DIRECTIONS)[number];
 
 export interface Client extends TenantStamped {
@@ -94,7 +137,7 @@ export interface Client extends TenantStamped {
   assignedStaff?: StaffName;
   memo?: string;
   fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
-  applicationType?: ConsultDirection; // 상담 후 방향(개인회생/개인파산/워크아웃) — DB관리에서 승계, 고객관리 상단 탭 분류 기준
+  applicationType?: ConsultDirection; // 상담 후 방향 — DB관리에서 승계, 고객/계약 분류 기준
   consultation?: ConsultationInfo; // 상담일지(DB관리 또는 고객관리 수정 팝업에서 작성, 전환 시 승계됨)
 }
 
@@ -152,7 +195,7 @@ export const DB_LEAD_STATUS_LABEL: Record<DbLeadStatus, string> = {
 export const DEBT_RANGE_OPTIONS = ["3천만원~5천만원", "5천만원~1억원", "1억원 이상"] as const;
 export type DebtRange = (typeof DEBT_RANGE_OPTIONS)[number];
 
-export const INCOME_RANGE_OPTIONS = ["100~200만원", "200~400만원", "400만원 이상"] as const;
+export const INCOME_RANGE_OPTIONS = ["무직", "100~200만원", "200~400만원", "400만원 이상"] as const;
 export type IncomeRange = (typeof INCOME_RANGE_OPTIONS)[number];
 
 export const CONSULT_TIME_OPTIONS = [
@@ -160,6 +203,8 @@ export const CONSULT_TIME_OPTIONS = [
   "평일 점심(12시~1시)",
   "평일 오후(1시~6시)",
   "퇴근 후(6시~9시)",
+  "주말 오전",
+  "주말 오후",
 ] as const;
 export type ConsultTimeSlot = (typeof CONSULT_TIME_OPTIONS)[number];
 
@@ -172,6 +217,7 @@ export const DEBT_RANGE_COLOR: Record<DebtRange, string> = {
   "1억원 이상": "#ef4444", // red-500
 };
 export const INCOME_RANGE_COLOR: Record<IncomeRange, string> = {
+  "무직": "#64748b", // slate-500
   "100~200만원": "#ef4444", // red-500 (소득 낮음 → 변제여력 낮음)
   "200~400만원": "#f59e0b", // amber-500
   "400만원 이상": "#22c55e", // green-500
@@ -181,7 +227,72 @@ export const CONSULT_TIME_COLOR: Record<ConsultTimeSlot, string> = {
   "평일 점심(12시~1시)": "#7c3aed", // violet-600
   "평일 오후(1시~6시)": "#059669", // emerald-600
   "퇴근 후(6시~9시)": "#d97706", // amber-600
+  "주말 오전": "#0891b2", // cyan-600
+  "주말 오후": "#9333ea", // purple-600
 };
+
+// 구글시트/Meta 원본 문구가 조금 달라도 피벗 필터에 빠지지 않도록 화면에서도 한번 더 정규화합니다.
+function compactPivotValue(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_,·ㆍ()\[\]]/g, "");
+}
+
+export function normalizeDebtRangeValue(value: unknown): DebtRange | undefined {
+  const s = compactPivotValue(value).replace(/원/g, "");
+  if (!s) return undefined;
+
+  if ((s.includes("3천") || s.includes("3000")) && (s.includes("5천") || s.includes("5000"))) {
+    return "3천만원~5천만원";
+  }
+  if ((s.includes("5천") || s.includes("5000")) && (s.includes("1억") || s.includes("10000"))) {
+    return "5천만원~1억원";
+  }
+  if (s.includes("1억") || s.includes("10000")) {
+    return "1억원 이상";
+  }
+  return undefined;
+}
+
+export function normalizeIncomeRangeValue(value: unknown): IncomeRange | undefined {
+  const raw = String(value ?? "").trim().toLowerCase();
+  const s = compactPivotValue(value).replace(/원/g, "");
+  if (!s) return undefined;
+
+  const noIncome = raw.replace(/\s/g, "");
+  if (
+    /(무직|무소득|소득없|수입없|직업없|현재소득없)/.test(noIncome) ||
+    /^(0|0만|0만원)$/.test(s)
+  ) {
+    return "무직";
+  }
+  if (s.includes("100") && s.includes("200")) return "100~200만원";
+  if (s.includes("200") && s.includes("400")) return "200~400만원";
+  if (s.includes("400") && (s.includes("이상") || s.includes("초과") || s.includes("+"))) return "400만원 이상";
+  return undefined;
+}
+
+export function normalizeConsultTimeValue(value: unknown): ConsultTimeSlot | undefined {
+  const s = compactPivotValue(value);
+  if (!s) return undefined;
+
+  const weekend =
+    s.includes("주말") ||
+    s.includes("토요일") ||
+    s.includes("일요일") ||
+    s.includes("토일") ||
+    s.includes("토/일");
+
+  if (weekend && (s.includes("오전") || s.includes("아침"))) return "주말 오전";
+  if (weekend && (s.includes("오후") || s.includes("점심") || s.includes("저녁"))) return "주말 오후";
+
+  if (s.includes("퇴근") || (s.includes("6시") && s.includes("9시"))) return "퇴근 후(6시~9시)";
+  if (s.includes("점심") || (s.includes("12시") && s.includes("1시"))) return "평일 점심(12시~1시)";
+  if (s.includes("오전") || s.includes("아침") || (s.includes("9시") && s.includes("12시"))) return "평일 오전(9시~12시)";
+  if (s.includes("오후") || (s.includes("1시") && s.includes("6시"))) return "평일 오후(1시~6시)";
+  return undefined;
+}
 
 // 고객 DB 유입경로 — 광고 채널별 반응률·전환율을 구분해서 볼 수 있도록 세분화.
 // 목록은 언제든 필요에 맞게 값만 바꾸면 되도록 별도 상수로 뒀습니다.
@@ -310,7 +421,7 @@ export interface DbLead extends TenantStamped {
   id: string;
   name: string;
   phone: string;
-  applicationType?: ConsultDirection; // 상담 후 방향(개인회생/개인파산/워크아웃) — 상담원이 상담 후 지정, 고객 전환 시 그대로 승계
+  applicationType?: ConsultDirection; // 상담 후 방향 — 상담원이 지정, 고객/계약 전환 시 그대로 승계
   receivedAt: string; // ISO datetime — DB 접수 시각
   status: DbLeadStatus;
   assignedStaff: StaffName;

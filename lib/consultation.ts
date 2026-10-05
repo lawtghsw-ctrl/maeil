@@ -171,7 +171,7 @@ export interface RequiredFieldDef {
 export const REQUIRED_CONSULTATION_FIELDS: RequiredFieldDef[] = [
   {
     key: "applicationType",
-    label: "상담 후 방향(개인회생/개인파산/워크아웃) 미지정",
+    label: "상담 후 방향 미지정",
     group: "기본정보",
     satisfied: (i) => !!i.applicationType,
   },

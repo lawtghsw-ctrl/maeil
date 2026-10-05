@@ -29,7 +29,7 @@ import {
   getStageDistribution,
   STAGE_CHART_COLORS,
 } from "@/lib/dashboard";
-import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, STAGE_GENERIC_LABELS, type DbLead } from "@/lib/types";
+import { CASE_TYPE_OPTIONS, DB_LEAD_DEFAULT_STAGE_BY_STATUS, STAGE_GENERIC_LABELS, type DbLead } from "@/lib/types";
 import { checkCallWarning, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
 import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
@@ -550,10 +550,11 @@ export default function DashboardPage() {
           <div className="mb-4 text-sm font-semibold text-slate-900">사건유형별 결제 구성</div>
           <DonutChart
             centerLabel={fmtEokMan(stats.current.paymentAmount)}
-            segments={[
-              { label: "개인회생", value: stats.current.caseTypeSplit.개인회생, color: CASE_TYPE_COLORS.개인회생 },
-              { label: "개인파산", value: stats.current.caseTypeSplit.개인파산, color: CASE_TYPE_COLORS.개인파산 },
-            ]}
+            segments={CASE_TYPE_OPTIONS.map((caseType) => ({
+              label: caseType,
+              value: stats.current.caseTypeSplit[caseType],
+              color: CASE_TYPE_COLORS[caseType],
+            }))}
           />
         </Card>}
         <Card className="p-4 sm:p-5">

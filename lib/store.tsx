@@ -671,7 +671,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           id: makeId("CASE"),
           caseNumber: `미접수-${Date.now().toString().slice(-6)}`,
           clientId: existingClient.id,
-          caseType: lead.applicationType === "개인파산" ? "개인파산" : "개인회생",
+          caseType: lead.applicationType ?? "개인회생",
           court: "미지정",
           stage: "상담접수",
           stageUpdatedAt: today,
@@ -713,7 +713,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       // v27.11: DB의 "고객 전환"은 고객 레코드만 만드는 것이 아니라
       // 계약관리에서 바로 이어서 처리할 수 있는 미접수 계약 레코드까지 함께 생성합니다.
       // 계약금액/법원/결제수단 등은 계약관리 상세에서 이후 보완하면 됩니다.
-      const caseType = lead.applicationType === "개인파산" ? "개인파산" : "개인회생";
+      const caseType = lead.applicationType ?? "개인회생";
       const caseRecord: CaseRecord = {
         id: makeId("CASE"),
         caseNumber: `미접수-${Date.now().toString().slice(-6)}`,

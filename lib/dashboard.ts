@@ -107,6 +107,10 @@ export const STAGE_CHART_COLORS: Record<CaseStage, string> = {
 export const CASE_TYPE_COLORS: Record<CaseType, string> = {
   개인회생: "#2563eb",
   개인파산: "#d97706",
+  워크아웃: "#059669",
+  법인회생: "#7c3aed",
+  일반회생: "#0891b2",
+  기타사건: "#64748b",
 };
 
 export interface LeadKpis {

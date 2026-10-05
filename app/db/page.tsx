@@ -15,6 +15,9 @@ import {
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_OPTIONS,
   LEAD_SOURCE_OPTIONS,
+  normalizeConsultTimeValue,
+  normalizeDebtRangeValue,
+  normalizeIncomeRangeValue,
   type ConsultDirection,
   type ConsultTimeSlot,
   type DbDetailStage,
@@ -50,6 +53,21 @@ function LeadTags({ lead }: { lead: DbLead }) {
       {income && <div>실 월소득 · {income}</div>}
       {consultTime && <div>상담가능시간 · {consultTime}</div>}
     </div>
+  );
+}
+
+function leadTimeCategory(lead: DbLead): ConsultTimeSlot | undefined {
+  return normalizeConsultTimeValue(lead.consultTime ?? lead.consultTimeRaw);
+}
+
+function leadDebtCategory(lead: DbLead): DebtRange | undefined {
+  return normalizeDebtRangeValue(lead.debtRange ?? lead.debtRaw);
+}
+
+function leadIncomeCategory(lead: DbLead): IncomeRange | undefined {
+  return (
+    normalizeIncomeRangeValue(lead.incomeRange ?? lead.incomeRaw) ??
+    (lead.consultation?.personal?.occupationType === "무직" ? "무직" : undefined)
   );
 }
 
@@ -739,25 +757,34 @@ export default function DbManagementPage() {
 
   const timeCounts = useMemo(() => {
     const map: Partial<Record<ConsultTimeSlot, number>> = {};
-    for (const l of baseRows) if (l.consultTime) map[l.consultTime] = (map[l.consultTime] ?? 0) + 1;
+    for (const l of baseRows) {
+      const category = leadTimeCategory(l);
+      if (category) map[category] = (map[category] ?? 0) + 1;
+    }
     return map;
   }, [baseRows]);
   const debtCounts = useMemo(() => {
     const map: Partial<Record<DebtRange, number>> = {};
-    for (const l of baseRows) if (l.debtRange) map[l.debtRange] = (map[l.debtRange] ?? 0) + 1;
+    for (const l of baseRows) {
+      const category = leadDebtCategory(l);
+      if (category) map[category] = (map[category] ?? 0) + 1;
+    }
     return map;
   }, [baseRows]);
   const incomeCounts = useMemo(() => {
     const map: Partial<Record<IncomeRange, number>> = {};
-    for (const l of baseRows) if (l.incomeRange) map[l.incomeRange] = (map[l.incomeRange] ?? 0) + 1;
+    for (const l of baseRows) {
+      const category = leadIncomeCategory(l);
+      if (category) map[category] = (map[category] ?? 0) + 1;
+    }
     return map;
   }, [baseRows]);
 
   const rows = useMemo(() => {
     return baseRows
-      .filter((l) => timeFilter === "전체" || l.consultTime === timeFilter)
-      .filter((l) => debtFilter === "전체" || l.debtRange === debtFilter)
-      .filter((l) => incomeFilter === "전체" || l.incomeRange === incomeFilter)
+      .filter((l) => timeFilter === "전체" || leadTimeCategory(l) === timeFilter)
+      .filter((l) => debtFilter === "전체" || leadDebtCategory(l) === debtFilter)
+      .filter((l) => incomeFilter === "전체" || leadIncomeCategory(l) === incomeFilter)
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
   }, [baseRows, timeFilter, debtFilter, incomeFilter]);
 

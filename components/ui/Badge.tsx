@@ -37,7 +37,15 @@ export function InstallmentStatusBadge({ status }: { status: InstallmentStatus }
 }
 
 export function CaseTypeBadge({ caseType }: { caseType: CaseType }) {
-  return <Badge tone={caseType === "개인회생" ? "blue" : "amber"}>{caseType}</Badge>;
+  const toneMap: Record<string, BadgeTone> = {
+    개인회생: "blue",
+    개인파산: "amber",
+    워크아웃: "green",
+    법인회생: "blue",
+    일반회생: "green",
+    기타사건: "gray",
+  };
+  return <Badge tone={toneMap[caseType] ?? "gray"}>{caseType}</Badge>;
 }
 
 export function DbLeadStatusBadge({ status }: { status: DbLeadStatus }) {

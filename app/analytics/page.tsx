@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { addMonths, buildDayMap, sumRange } from "@/lib/period-engine";
 import { getStaffPerformance, getStageDistribution, CASE_TYPE_COLORS, STAGE_CHART_COLORS } from "@/lib/dashboard";
-import { STAGE_GENERIC_LABELS } from "@/lib/types";
+import { CASE_TYPE_OPTIONS, STAGE_GENERIC_LABELS, type CaseType } from "@/lib/types";
 import { fmtEokMan, fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
 import { KpiCard } from "@/components/ui/KpiCard";
@@ -46,9 +46,9 @@ export default function AnalyticsPage() {
   }, [cases, globalSuperView]);
 
   const caseTypeSplit = useMemo(() => {
-    const 개인회생 = cases.filter((c) => c.caseType === "개인회생").length;
-    const 개인파산 = cases.filter((c) => c.caseType === "개인파산").length;
-    return { 개인회생, 개인파산 };
+    const counts = Object.fromEntries(CASE_TYPE_OPTIONS.map((caseType) => [caseType, 0])) as Record<CaseType, number>;
+    for (const record of cases) counts[record.caseType] = (counts[record.caseType] ?? 0) + 1;
+    return counts;
   }, [cases]);
 
   const monthlyTrend: TrendBucket[] = useMemo(() => {
@@ -122,10 +122,11 @@ export default function AnalyticsPage() {
         <Card className="p-4 sm:p-5">
           <div className="mb-4 text-sm font-semibold text-slate-900">사건유형별 사건 수 분포 (전체 {cases.length}건)</div>
           <StackedRatioBar
-            segments={[
-              { label: "개인회생", count: caseTypeSplit.개인회생, color: CASE_TYPE_COLORS.개인회생 },
-              { label: "개인파산", count: caseTypeSplit.개인파산, color: CASE_TYPE_COLORS.개인파산 },
-            ]}
+            segments={CASE_TYPE_OPTIONS.map((caseType) => ({
+              label: caseType,
+              count: caseTypeSplit[caseType],
+              color: CASE_TYPE_COLORS[caseType],
+            }))}
           />
         </Card>
         <Card className="p-4 sm:p-5">

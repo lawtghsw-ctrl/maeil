@@ -22,7 +22,7 @@ export function buildDayMap(
       newContractCount: 0,
       contractAmount: 0,
       paymentAmount: 0,
-      caseTypeSplit: { 개인회생: 0, 개인파산: 0 },
+      caseTypeSplit: { 개인회생: 0, 개인파산: 0, 워크아웃: 0, 법인회생: 0, 일반회생: 0, 기타사건: 0 },
     };
     map.set(date, created);
     return created;
@@ -50,10 +50,11 @@ export function buildDayMap(
   }
 
   for (const day of map.values()) {
-    const total = day.caseTypeSplit.개인회생 + day.caseTypeSplit.개인파산;
+    const total = Object.values(day.caseTypeSplit).reduce((sum, value) => sum + value, 0);
     if (total > 0) {
-      day.caseTypeSplit.개인회생 /= total;
-      day.caseTypeSplit.개인파산 /= total;
+      (Object.keys(day.caseTypeSplit) as CaseType[]).forEach((caseType) => {
+        day.caseTypeSplit[caseType] /= total;
+      });
     }
   }
 
@@ -173,6 +174,10 @@ export interface RangeSum {
 const emptySplit = (): Record<CaseType, number> => ({
   개인회생: 0,
   개인파산: 0,
+  워크아웃: 0,
+  법인회생: 0,
+  일반회생: 0,
+  기타사건: 0,
 });
 
 // dayMap: 날짜(YYYY-MM-DD) → 그날의 집계 데이터
