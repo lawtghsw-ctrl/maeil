@@ -510,28 +510,55 @@ export function useManagementSettings(
   const [loading, setLoading] = useState(manager);
   const [error, setError] = useState<string | null>(null);
 
+  const authHeaders = useCallback(async () => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw new Error(sessionError.message);
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error("로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.");
+    return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  }, [supabase]);
+
   const reload = useCallback(async () => {
     if (!manager) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    let query = supabase.from("firm_settings").select("law_firm_id,value").eq("key", MANAGEMENT_SETTINGS_KEY);
-    if (effectiveFirmId) query = query.eq("law_firm_id", effectiveFirmId);
-    const { data, error: loadError } = await query;
-    if (loadError) {
-      setError(loadError.message);
+    try {
+      const headers = await authHeaders();
+      const params = new URLSearchParams();
+      if (effectiveFirmId) params.set("firmId", effectiveFirmId);
+      const response = await fetch(`/api/admin/management-settings${params.toString() ? `?${params.toString()}` : ""}`, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.message || payload?.error || "정산설정을 불러오지 못했습니다.");
+
+      const map: Record<string, ManagementSettings> = {};
+      for (const row of payload?.rows ?? []) {
+        if (!row?.law_firm_id) continue;
+        map[row.law_firm_id] = ensureStaffCompensations(
+          normalizeManagementSettings(row.value),
+          effectiveFirmId === row.law_firm_id ? staffNames : [],
+        );
+      }
+      if (effectiveFirmId && !map[effectiveFirmId]) {
+        map[effectiveFirmId] = ensureStaffCompensations(DEFAULT_MANAGEMENT_SETTINGS, staffNames);
+      }
+      setSettingsByFirm(map);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "정산설정을 불러오지 못했습니다.";
+      setError(message);
+      if (effectiveFirmId) {
+        setSettingsByFirm((prev) => ({
+          ...prev,
+          [effectiveFirmId]: prev[effectiveFirmId] ?? ensureStaffCompensations(DEFAULT_MANAGEMENT_SETTINGS, staffNames),
+        }));
+      }
+    } finally {
       setLoading(false);
-      return;
     }
-    const map: Record<string, ManagementSettings> = {};
-    for (const row of data ?? []) {
-      map[row.law_firm_id] = ensureStaffCompensations(normalizeManagementSettings(row.value), effectiveFirmId === row.law_firm_id ? staffNames : []);
-    }
-    if (effectiveFirmId && !map[effectiveFirmId]) {
-      map[effectiveFirmId] = ensureStaffCompensations(DEFAULT_MANAGEMENT_SETTINGS, staffNames);
-    }
-    setSettingsByFirm(map);
-    setLoading(false);
-  }, [effectiveFirmId, manager, staffNames, supabase]);
+  }, [authHeaders, effectiveFirmId, manager, staffNames]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -542,16 +569,18 @@ export function useManagementSettings(
   const save = useCallback(async (next: ManagementSettings) => {
     if (!manager || !effectiveFirmId) throw new Error("대상 로펌을 선택해주세요.");
     const normalized = ensureStaffCompensations(normalizeManagementSettings(next), staffNames);
-    const { error: saveError } = await supabase.from("firm_settings").upsert({
-      law_firm_id: effectiveFirmId,
-      key: MANAGEMENT_SETTINGS_KEY,
-      value: normalized,
-      updated_by: profile?.id ?? null,
-    }, { onConflict: "law_firm_id,key" });
-    if (saveError) throw saveError;
-    setSettingsByFirm((prev) => ({ ...prev, [effectiveFirmId]: normalized }));
-    return normalized;
-  }, [effectiveFirmId, manager, profile?.id, staffNames, supabase]);
+    const headers = await authHeaders();
+    const response = await fetch("/api/admin/management-settings", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ firmId: effectiveFirmId, value: normalized }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.message || payload?.error || "정산설정 저장에 실패했습니다.");
+    const saved = ensureStaffCompensations(normalizeManagementSettings(payload?.value ?? normalized), staffNames);
+    setSettingsByFirm((prev) => ({ ...prev, [effectiveFirmId]: saved }));
+    return saved;
+  }, [authHeaders, effectiveFirmId, manager, staffNames]);
 
   return { manager, globalSuperView, effectiveFirmId, activeSettings, settingsByFirm, loading, error, reload, save };
 }

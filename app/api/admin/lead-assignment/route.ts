@@ -10,6 +10,8 @@ const CONSULT_TIME_SLOTS = [
   "평일 점심(12시~1시)",
   "평일 오후(1시~6시)",
   "퇴근 후(6시~9시)",
+  "주말 오전(8시~12시)",
+  "주말 오후(12시~19시)",
 ] as const;
 
 interface AssignmentMember {

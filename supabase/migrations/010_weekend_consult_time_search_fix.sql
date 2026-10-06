@@ -106,6 +106,32 @@ $$;
 
 -- 과거 DB 복구: consultTime 하나만 교정합니다.
 -- consultTimeRaw가 남아 있는 리드는 원본 양식 응답을 우선하여 재판정합니다.
+--
+-- SQL Editor에서 실행할 때 auth.uid()/auth.role() 문맥이 일반 사용자 요청과 달라
+-- DB 수정권한 검증 트리거가 이 관리용 백필을 차단할 수 있습니다.
+-- 또한 기존 pivot 정규화 트리거가 함께 돌면 debtRange/incomeRange까지 재정규화될 수 있으므로
+-- 이번 백필 동안에는 두 트리거만 잠시 중지하고 consultTime 키만 수정한 뒤 즉시 복구합니다.
+do $$
+begin
+  if exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.app_leads'::regclass
+      and tgname = 'trg_app_leads_permissions'
+      and not tgisinternal
+  ) then
+    execute 'alter table public.app_leads disable trigger trg_app_leads_permissions';
+  end if;
+
+  if exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.app_leads'::regclass
+      and tgname = 'trg_app_leads_normalize_pivot'
+      and not tgisinternal
+  ) then
+    execute 'alter table public.app_leads disable trigger trg_app_leads_normalize_pivot';
+  end if;
+end $$;
+
 with fixed as (
   select
     id,
@@ -120,6 +146,28 @@ from fixed f
 where l.id = f.id
   and f.normalized_time is not null
   and coalesce(l.data->>'consultTime','') is distinct from f.normalized_time;
+
+-- 관리용 백필이 끝났으므로 기존 권한/정규화 트리거를 즉시 원복합니다.
+do $$
+begin
+  if exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.app_leads'::regclass
+      and tgname = 'trg_app_leads_permissions'
+      and not tgisinternal
+  ) then
+    execute 'alter table public.app_leads enable trigger trg_app_leads_permissions';
+  end if;
+
+  if exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.app_leads'::regclass
+      and tgname = 'trg_app_leads_normalize_pivot'
+      and not tgisinternal
+  ) then
+    execute 'alter table public.app_leads enable trigger trg_app_leads_normalize_pivot';
+  end if;
+end $$;
 
 -- 고도화 자동배정 함수도 상담가능시간 값을 같은 정규화 기준으로 비교합니다.
 create or replace function public.import_tenant_google_sheet_lead(
