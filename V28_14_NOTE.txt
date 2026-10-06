@@ -1,0 +1,12 @@
+LawPower / Maeil v28.14 DB stage patch
+
+Changes
+1. DB관리 > 진행단계 > 상담 그룹에 "문자발송완료" 추가
+2. DB관리 상단 상담 피벗에서 "신규디비"와 "부재" 사이에 "문자발송완료" 추가
+3. 문자발송완료 선택 시 기존 내부 status는 신규접수로 유지하여 기존 호환 로직을 깨지 않음
+4. 문자발송완료는 별도 콜경고 단계로 취급하지 않음
+
+Apply
+- 프로젝트 루트에 압축 해제 후 동일 파일 덮어쓰기
+- 신규 SQL / Supabase migration 없음
+- npm run build 권장
