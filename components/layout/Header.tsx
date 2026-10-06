@@ -159,13 +159,39 @@ export function Header() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const matches = useMemo(
-    () =>
-      q.trim()
-        ? clients.filter((c) => `${c.name} ${c.phone}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8)
-        : [],
-    [q, clients]
-  );
+  const matches = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return [] as Array<{ id: string; kind: "lead" | "client"; name: string; phone: string; assignedStaff?: string; caseId?: string }>;
+    const compactNeedle = needle.replace(/[\s\-().]/g, "");
+    const ownNames = new Set([currentStaff, profile?.staffName, profile?.displayName].map((v) => String(v ?? "").trim()).filter(Boolean));
+    const leadScope = canViewAllLeads ? leads : leads.filter((lead) => ownNames.has(String(lead.assignedStaff ?? "").trim()));
+    const canViewAllClients = isAdmin || can("cases.view_all") || can("dashboard.company_metrics");
+    const clientScope = canViewAllClients ? clients : clients.filter((client) => ownNames.has(String(client.assignedStaff ?? "").trim()));
+
+    const includesNeedle = (value: string) => {
+      const lower = value.toLowerCase();
+      return lower.includes(needle) || (!!compactNeedle && lower.replace(/[\s\-().]/g, "").includes(compactNeedle));
+    };
+
+    const leadRows = leadScope
+      .filter((lead) => includesNeedle(`${lead.name} ${lead.phone} ${lead.email ?? ""} ${lead.adName ?? ""}`))
+      .map((lead) => ({ id: lead.id, kind: "lead" as const, name: lead.name, phone: lead.phone, assignedStaff: lead.assignedStaff }));
+    const clientRows = clientScope
+      .filter((client) => {
+        const caseNumbers = cases.filter((record) => record.clientId === client.id).map((record) => record.caseNumber).join(" ");
+        return includesNeedle(`${client.name} ${client.phone} ${caseNumbers}`);
+      })
+      .map((client) => ({
+        id: client.id,
+        kind: "client" as const,
+        name: client.name,
+        phone: client.phone,
+        assignedStaff: client.assignedStaff,
+        caseId: cases.find((record) => record.clientId === client.id)?.id,
+      }));
+
+    return [...leadRows, ...clientRows].slice(0, 10);
+  }, [q, leads, clients, cases, canViewAllLeads, isAdmin, can, currentStaff, profile?.staffName, profile?.displayName]);
 
   const overdueAlerts = useMemo(
     () =>
@@ -249,11 +275,15 @@ export function Header() {
   const newLeadCount = scopedLeads.filter((l) => (l.detailStage ?? (l.status === "신규접수" || l.status === "상담예정" ? "신규디비" : "")) === "신규디비").length;
   const reservationOwnerLabel = canViewAllLeads ? "전체 담당자" : currentStaff ?? profile?.displayName ?? "내 예약";
 
-  function choose(id: string) {
+  function choose(item: { id: string; kind: "lead" | "client"; name: string; phone: string; caseId?: string }) {
     setQ("");
     setSearchOpen(false);
-    const relatedCase = cases.find((record) => record.clientId === id);
-    router.push(relatedCase ? `/cases/${relatedCase.id}` : "/cases");
+    if (item.kind === "lead") {
+      if (typeof window !== "undefined") window.sessionStorage.setItem("lawpower_db_search", item.phone || item.name);
+      router.push("/db");
+      return;
+    }
+    router.push(item.caseId ? `/cases/${item.caseId}` : "/cases");
   }
 
   return (
@@ -269,7 +299,7 @@ export function Header() {
           }}
           onFocus={() => setSearchOpen(true)}
           onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-            if (e.key === "Enter" && matches[0]) choose(matches[0].id);
+            if (e.key === "Enter" && matches[0]) choose(matches[0]);
           }}
           placeholder="고객명 또는 전화번호 검색"
           className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
@@ -281,15 +311,15 @@ export function Header() {
             ) : (
               matches.map((c) => (
                 <button
-                  key={c.id}
-                  onClick={() => choose(c.id)}
+                  key={`${c.kind}-${c.id}`}
+                  onClick={() => choose(c)}
                   className="flex w-full items-center justify-between border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-blue-50"
                 >
                   <div>
                     <div className="text-sm font-semibold">{c.name}</div>
                     <div className="text-xs text-slate-400">{c.phone}</div>
                   </div>
-                  <span className="text-xs text-slate-500">{c.assignedStaff ?? "-"}</span>
+                  <div className="text-right"><div className="text-[10px] font-bold text-blue-600">{c.kind === "lead" ? "DB" : "계약"}</div><span className="text-xs text-slate-500">{c.assignedStaff ?? "-"}</span></div>
                 </button>
               ))
             )}

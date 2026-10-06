@@ -663,6 +663,35 @@ export default function DbManagementPage() {
   const canViewAllDb = can("db.view_all");
   const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
 
+  // 직원 계정은 본인 담당 DB만, 로펌 관리자/전체조회 권한은 해당 로펌 전체 DB를 검색합니다.
+  // 예전에는 staffFilter 상태값에 다시 의존해서 직원/로펌 관리자 검색이 빈 결과가 되는 경우가 있었습니다.
+  const accessibleLeads = useMemo(() => {
+    if (canViewAllDb) return leads;
+    const myNames = new Set(
+      [currentStaff, profile?.staffName, profile?.displayName]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    );
+    if (myNames.size === 0) return [];
+    return leads.filter((lead) => myNames.has(String(lead.assignedStaff ?? "").trim()));
+  }, [canViewAllDb, leads, currentStaff, profile?.staffName, profile?.displayName]);
+
+  // 최상단 통합검색에서 DB를 선택한 경우 DB관리 검색창으로 검색어를 넘겨받습니다.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const pending = window.sessionStorage.getItem("lawpower_db_search");
+    if (!pending) return;
+    window.sessionStorage.removeItem("lawpower_db_search");
+    setQuery(pending);
+    setSourceFilter("전체");
+    setStageFilter("전체");
+    setTimeFilter("전체");
+    setDebtFilter("전체");
+    setIncomeFilter("전체");
+    if (canViewAllDb) setStaffFilter("전체");
+    setPage(1);
+  }, [canViewAllDb]);
+
   useEffect(() => {
     if (!canViewAllDb && currentStaff) {
       setStaffFilter(currentStaff);
@@ -684,8 +713,8 @@ export default function DbManagementPage() {
     const needle = query.trim().toLowerCase();
     const compactNeedle = needle.replace(/[\s\-().]/g, "");
 
-    return leads
-      .filter((l) => staffFilter === "전체" || l.assignedStaff === staffFilter)
+    return accessibleLeads
+      .filter((l) => !canViewAllDb || staffFilter === "전체" || l.assignedStaff === staffFilter)
       .filter((l) => {
         if (!needle) return true;
 
@@ -710,7 +739,12 @@ export default function DbManagementPage() {
           l.adName ?? "",
           l.debtRaw ?? "",
           l.incomeRaw ?? "",
+          l.consultTime ?? "",
           l.consultTimeRaw ?? "",
+          l.debtRange ?? "",
+          l.incomeRange ?? "",
+          l.assignedStaff ?? "",
+          effectiveStage(l),
           l.memo ?? "",
           l.consultation?.memo ?? "",
           memoLogText,
@@ -725,7 +759,7 @@ export default function DbManagementPage() {
         // 하이픈/공백을 빼고도 비교해 0101111 또는 사건번호 일부 입력도 동작하게 합니다.
         return searchable.replace(/[\s\-().]/g, "").includes(compactNeedle);
       });
-  }, [leads, cases, staffFilter, query]);
+  }, [accessibleLeads, cases, canViewAllDb, staffFilter, query]);
 
   const sourceCounts = useMemo(() => {
     const map: Partial<Record<LeadSource, number>> = {};
@@ -863,6 +897,15 @@ export default function DbManagementPage() {
           value={query}
           onChange={(v) => {
             setQuery(v);
+            // 검색은 현재 선택된 피벗에 갇히지 않고, 현재 계정이 볼 수 있는 DB 전체에서 찾습니다.
+            if (v.trim()) {
+              setSourceFilter("전체");
+              setStageFilter("전체");
+              setTimeFilter("전체");
+              setDebtFilter("전체");
+              setIncomeFilter("전체");
+              if (canViewAllDb) setStaffFilter("전체");
+            }
             setPage(1);
           }}
           onReset={() => {

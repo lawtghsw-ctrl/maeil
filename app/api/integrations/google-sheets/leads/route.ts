@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  CONSULT_TIME_OPTIONS,
+  normalizeConsultTimeValue,
   DEBT_RANGE_OPTIONS,
   INCOME_RANGE_OPTIONS,
   type ConsultTimeSlot,
@@ -279,7 +279,7 @@ export async function POST(request: NextRequest) {
     const consultTimeRaw = text(rawRow.consultTime);
     const debtRange = exactOption(rawRow.debtRange, DEBT_RANGE_OPTIONS) as DebtRange | undefined;
     const incomeRange = exactOption(rawRow.income, INCOME_RANGE_OPTIONS) as IncomeRange | undefined;
-    const consultTime = exactOption(rawRow.consultTime, CONSULT_TIME_OPTIONS) as ConsultTimeSlot | undefined;
+    const consultTime = normalizeConsultTimeValue(rawRow.consultTime) as ConsultTimeSlot | undefined;
     const leadId = `DB-GS-${crypto.randomUUID()}`;
 
     const lead: Omit<DbLead, "assignedStaff"> & { _platform?: Record<string, unknown> } = {
@@ -297,7 +297,8 @@ export async function POST(request: NextRequest) {
       consultTime,
       debtRaw: debtRange ? undefined : debtRaw || undefined,
       incomeRaw: incomeRange ? undefined : incomeRaw || undefined,
-      consultTimeRaw: consultTime ? undefined : consultTimeRaw || undefined,
+      // 원본 인스턴트 양식 응답은 항상 보존합니다. 피벗용 consultTime은 별도로 정규화합니다.
+      consultTimeRaw: consultTimeRaw || undefined,
       _platform: {
         firmCode: tenant.firm.firm_code,
         adSourceId: source?.id ?? null,

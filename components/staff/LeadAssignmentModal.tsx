@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Clock3, Plus, RefreshCw, Settings2, Trash2, UsersRound } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button, Card, Input, Modal, Select } from "@/components/ui/Primitives";
+import { CONSULT_TIME_OPTIONS, normalizeConsultTimeValue } from "@/lib/types";
 
 type DayType = "all" | "weekday" | "weekend" | "custom";
 
@@ -50,19 +51,22 @@ interface AssignmentPayload {
   config: AssignmentConfig;
 }
 
-const CONSULT_TIME_SLOTS = [
-  "평일 오전(9시~12시)",
-  "평일 점심(12시~1시)",
-  "평일 오후(1시~6시)",
-  "퇴근 후(6시~9시)",
-] as const;
+const CONSULT_TIME_SLOTS = CONSULT_TIME_OPTIONS;
 
 const WEEKDAYS = [
   [1, "월"], [2, "화"], [3, "수"], [4, "목"], [5, "금"], [6, "토"], [7, "일"],
 ] as const;
 
 function cloneConfig(config: AssignmentConfig): AssignmentConfig {
-  return JSON.parse(JSON.stringify(config)) as AssignmentConfig;
+  const cloned = JSON.parse(JSON.stringify(config)) as AssignmentConfig;
+  return {
+    ...cloned,
+    rules: cloned.rules.map((rule) => ({
+      ...rule,
+      // 기존 설정의 "주말 오전/주말 오후"도 새 시간표기 슬롯으로 자동 승계합니다.
+      consultTimeSlots: Array.from(new Set(rule.consultTimeSlots.map((slot) => normalizeConsultTimeValue(slot) ?? slot))),
+    })),
+  };
 }
 
 function nextRuleId() {
