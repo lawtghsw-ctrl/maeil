@@ -260,6 +260,46 @@ function CaseInstallmentModal({
   );
 }
 
+export function PriorityRepaymentGuideTable() {
+  const rows = [
+    ["서울특별시", "1억 5,000만 원 이하", "1억 6,500만 원 이하", "5,000만 원 이하", "5,500만 원 이하"],
+    ["과밀억제권역, 세종·용인·화성·김포", "1억 3,000만 원 이하", "1억 4,500만 원 이하", "4,300만 원 이하", "4,800만 원 이하"],
+    ["광역시, 안산·광주·파주·이천·평택", "7,000만 원 이하", "8,500만 원 이하", "2,300만 원 이하", "2,800만 원 이하"],
+    ["그 밖의 지역", "6,000만 원 이하", "7,500만 원 이하", "2,000만 원 이하", "2,500만 원 이하"],
+  ];
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-300">
+      <table className="w-full min-w-[760px] border-collapse text-center text-sm">
+        <thead>
+          <tr className="bg-white">
+            <th rowSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">지역</th>
+            <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제 대상 임차인의 보증금액</th>
+            <th colSpan={2} className="border border-slate-300 px-3 py-3 font-semibold text-slate-700">최우선변제금액</th>
+          </tr>
+          <tr>
+            <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
+            <th className="border border-slate-300 bg-amber-100 px-3 py-2 font-semibold text-slate-700">개정안</th>
+            <th className="border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-600">현행</th>
+            <th className="border border-slate-300 bg-amber-200 px-3 py-2 font-semibold text-slate-700">개정안</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row[0]}>
+              <td className="border border-slate-300 px-3 py-3 font-medium text-slate-700">{row[0]}</td>
+              <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[1]}</td>
+              <td className="border border-slate-300 bg-amber-50 px-3 py-3 font-semibold text-slate-800">{row[2]}</td>
+              <td className="border border-slate-300 px-3 py-3 text-slate-700">{row[3]}</td>
+              <td className="border border-slate-300 bg-amber-100 px-3 py-3 font-semibold text-slate-800">{row[4]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function PriorityRepaymentGuideModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const rows = [
     ["서울특별시", "1억 5,000만 원 이하", "1억 6,500만 원 이하", "5,000만 원 이하", "5,500만 원 이하"],
