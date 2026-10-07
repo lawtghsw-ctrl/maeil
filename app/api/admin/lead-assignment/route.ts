@@ -10,7 +10,7 @@ const CONSULT_TIME_SLOTS = [
   "평일 점심(12시~1시)",
   "평일 오후(1시~6시)",
   "퇴근 후(6시~9시)",
-  "주말 오전(8시~12시)",
+  "주말 오전(8~12시)",
   "주말 오후(12시~19시)",
 ] as const;
 
@@ -88,6 +88,22 @@ function validTime(value: unknown, fallback: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(s) ? s : fallback;
 }
 
+function normalizeConsultSlot(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  const compact = raw.toLowerCase().replace(/[\s_,·ㆍ()\[\]]/g, "");
+  if (!compact) return null;
+
+  const weekend = compact.includes("주말") || compact.includes("토요일") || compact.includes("일요일") || compact.includes("토일") || compact.includes("토/일");
+  if (weekend && (compact.includes("오전") || compact.includes("아침") || (compact.includes("8") && compact.includes("12")))) return "주말 오전(8~12시)";
+  if (weekend && (compact.includes("오후") || compact.includes("점심") || compact.includes("저녁") || (compact.includes("12") && compact.includes("19")))) return "주말 오후(12시~19시)";
+
+  if (compact.includes("퇴근") || (compact.includes("6시") && compact.includes("9시"))) return "퇴근 후(6시~9시)";
+  if (compact.includes("점심") || (compact.includes("12시") && compact.includes("1시"))) return "평일 점심(12시~1시)";
+  if (compact.includes("오전") || compact.includes("아침") || (compact.includes("9시") && compact.includes("12시"))) return "평일 오전(9시~12시)";
+  if (compact.includes("오후") || (compact.includes("1시") && compact.includes("6시"))) return "평일 오후(1시~6시)";
+  return (CONSULT_TIME_SLOTS as readonly string[]).includes(raw) ? raw : null;
+}
+
 function sanitizeMembers(raw: unknown, allowedIds: Set<string>): AssignmentMember[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -126,7 +142,7 @@ function sanitizeConfig(raw: any, staff: any[]): AssignmentConfig {
           ? Array.from(new Set<number>(rule.weekdays.map((v: unknown) => clampInt(v, 1, 7, 1)))).sort((a, b) => a - b)
           : [];
         const consultTimeSlots = Array.isArray(rule?.consultTimeSlots)
-          ? rule.consultTimeSlots.map(String).filter((v: string) => (CONSULT_TIME_SLOTS as readonly string[]).includes(v))
+          ? Array.from(new Set(rule.consultTimeSlots.map((v: unknown) => normalizeConsultSlot(v)).filter((v: string | null): v is string => !!v)))
           : [];
         return {
           id: String(rule?.id || crypto.randomUUID()),
