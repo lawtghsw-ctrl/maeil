@@ -94,7 +94,8 @@ function CaseInstallmentModal({
       .map(({ id, dueDate, amount, status, paidDate }) => ({ id, dueDate, amount, status, paidDate }));
 
   const [rows, setRows] = useState<InstallmentDraft[]>(makeRows);
-  const [totalDebt, setTotalDebt] = useState(caseRecord.totalDebt);\n  const [contractAmount, setContractAmount] = useState(caseRecord.contractAmount);
+  const [totalDebt, setTotalDebt] = useState(caseRecord.totalDebt);
+  const [contractAmount, setContractAmount] = useState(caseRecord.contractAmount);
   const [paidAmount, setPaidAmount] = useState(caseRecord.paidAmount);
   const [installmentCount, setInstallmentCount] = useState(caseRecord.installmentCount ?? makeRows().length);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(caseRecord.paymentMethod);
@@ -108,7 +109,8 @@ function CaseInstallmentModal({
       filledRows.push({ dueDate: "", amount: 0, status: "예정", paidDate: "" });
     }
     setRows(filledRows.slice(0, nextCount));
-    setTotalDebt(caseRecord.totalDebt);\n    setContractAmount(caseRecord.contractAmount);
+    setTotalDebt(caseRecord.totalDebt);
+    setContractAmount(caseRecord.contractAmount);
     setPaidAmount(caseRecord.paidAmount);
     setInstallmentCount(nextCount);
     setPaymentMethod(caseRecord.paymentMethod);
