@@ -8,7 +8,7 @@ import { CASE_TYPE_OPTIONS, type CaseStatus, type CaseType, type PaymentMethod, 
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
@@ -115,13 +115,28 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 export default function CasesPage() {
-  const { cases, clients, installments, can, currentStaff, profile, superAdminFirmScope } = useStore();
+  const { cases, clients, installments, can, currentStaff, profile, superAdminFirmScope, deleteCase } = useStore();
   const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
   const [page, setPage] = useState(1);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleDelete(caseId: string, clientName: string, caseNumber: string) {
+    if (!can("cases.delete") || deletingId) return;
+    const ok = window.confirm(
+      `${clientName}님의 계약(${caseNumber})을 삭제하시겠습니까?\n\n연결된 분납 일정과 계약 일정도 함께 삭제됩니다.\n고객정보와 원본 DB는 삭제되지 않습니다.`
+    );
+    if (!ok) return;
+    setDeletingId(caseId);
+    try {
+      await deleteCase(caseId);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const rows = useMemo(() => {
     const scopedCases = can("cases.view_all") ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff);
@@ -197,25 +212,32 @@ export default function CasesPage() {
           {pageRows(rows, page, 10).map(({ c, client }) => {
             const receivable = Math.max(0, c.contractAmount - c.paidAmount);
             return (
-              <Link key={c.id} href={`/cases/${c.id}`} className="block space-y-2 p-4 hover:bg-slate-50">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-base font-bold text-slate-900">{client?.name ?? "-"}</span>
-                      <span className="text-xs font-semibold text-slate-500">{c.caseType}</span>
+              <div key={c.id} className="p-4 hover:bg-slate-50">
+                <Link href={`/cases/${c.id}`} className="block space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-base font-bold text-slate-900">{client?.name ?? "-"}</span>
+                        <span className="text-xs font-semibold text-slate-500">{c.caseType}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">{globalSuperView ? `${c._lawFirmName ?? "-"} · ` : ""}{c.caseNumber} · 담당 {c.assignedStaff}</div>
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-500">{globalSuperView ? `${c._lawFirmName ?? "-"} · ` : ""}{c.caseNumber} · 담당 {c.assignedStaff}</div>
+                    <StatusBadge status={c.status} />
                   </div>
-                  <StatusBadge status={c.status} />
-                </div>
-                <div className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</div>
-                {can("cases.view_finance") && <div className="grid grid-cols-2 gap-1 text-sm">
-                  <span className="text-slate-500">총 수임료 {fmtWon(c.contractAmount)}</span>
-                  <span className="text-slate-500">납부금액 {fmtWon(c.paidAmount)}</span>
-                  <span className="text-slate-500">납부회차 {(c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length) || 0}회</span>
-                  {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
-                </div>}
-              </Link>
+                  <div className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</div>
+                  {can("cases.view_finance") && <div className="grid grid-cols-2 gap-1 text-sm">
+                    <span className="text-slate-500">총 수임료 {fmtWon(c.contractAmount)}</span>
+                    <span className="text-slate-500">납부금액 {fmtWon(c.paidAmount)}</span>
+                    <span className="text-slate-500">납부회차 {(c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length) || 0}회</span>
+                    {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
+                  </div>}
+                </Link>
+                {can("cases.delete") && !globalSuperView && (
+                  <button type="button" disabled={deletingId === c.id} onClick={() => void handleDelete(c.id, client?.name ?? "고객", c.caseNumber)} className="mt-3 inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
+                    <Trash2 size={13} /> {deletingId === c.id ? "삭제 중..." : "삭제"}
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
@@ -255,9 +277,16 @@ export default function CasesPage() {
                       <StatusBadge status={c.status} />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link href={`/cases/${c.id}`} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                        상세
-                      </Link>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Link href={`/cases/${c.id}`} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                          상세
+                        </Link>
+                        {can("cases.delete") && !globalSuperView && (
+                          <button type="button" disabled={deletingId === c.id} onClick={() => void handleDelete(c.id, client?.name ?? "고객", c.caseNumber)} className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
+                            <Trash2 size={13} /> {deletingId === c.id ? "삭제 중..." : "삭제"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

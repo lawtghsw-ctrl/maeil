@@ -147,6 +147,7 @@ interface AppStoreValue {
   toggleDocument: (caseId: string, itemId: string) => void;
   addCase: (draft: Omit<CaseRecord, "id">) => string;
   updateCase: (id: string, patch: Partial<CaseRecord>) => void;
+  deleteCase: (id: string) => Promise<boolean>;
   setCaseInstallments: (
     caseId: string,
     rows: InstallmentDraft[],
@@ -850,6 +851,42 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
   );
 
+  const deleteCase = useCallback(
+    async (id: string): Promise<boolean> => {
+      if (isGlobalSuperAdmin || !can("cases.delete")) {
+        setSyncError("삭제 실패 · 현재 계정에 계약 삭제 권한이 없습니다.");
+        return false;
+      }
+      const target = cases.find((record) => record.id === id);
+      if (!target) {
+        setSyncError("삭제 실패 · 계약을 찾지 못했습니다. 목록을 새로 확인해주세요.");
+        return false;
+      }
+      if (!supabase) {
+        setSyncError("삭제 실패 · Supabase가 연결되지 않았습니다.");
+        return false;
+      }
+
+      try {
+        const { error } = await supabase.rpc("delete_case_with_relations", { target_case_id: id });
+        if (error) throw error;
+
+        setCases((prev) => prev.filter((record) => record.id !== id));
+        setInstallments((prev) => prev.filter((item) => item.caseId !== id));
+        setScheduleItems((prev) => prev.filter((item) => item.caseId !== id));
+        setLeads((prev) => prev.map((lead) => lead.convertedCaseId === id ? { ...lead, convertedCaseId: undefined } : lead));
+        setSyncError(null);
+        logChange("계약관리", "삭제", target.caseNumber, "계약 및 연결된 분납·계약일정 삭제 (고객정보·원본 DB 유지)");
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "계약 삭제에 실패했습니다.";
+        setSyncError(`삭제 실패 · 데이터는 변경되지 않았습니다. (${message})`);
+        return false;
+      }
+    },
+    [can, cases, isGlobalSuperAdmin, logChange, supabase]
+  );
+
   const setCaseInstallments = useCallback(
     async (
       caseId: string,
@@ -1018,6 +1055,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       toggleDocument,
       addCase,
       updateCase,
+      deleteCase,
       setCaseInstallments,
       addPost,
       updatePost,
@@ -1061,6 +1099,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       toggleDocument,
       addCase,
       updateCase,
+      deleteCase,
       setCaseInstallments,
       addPost,
       updatePost,

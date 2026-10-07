@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { PAYMENT_METHOD_NOTE } from "@/lib/types";
 import { CaseTypeBadge, InstallmentStatusBadge, StatusBadge } from "@/components/ui/Badge";
 import { CaseActionPanel, PriorityRepaymentGuideTable } from "@/components/cases/CaseActionModals";
-import { Card } from "@/components/ui/Primitives";
-import { ArrowLeft } from "lucide-react";
+import { Button, Card } from "@/components/ui/Primitives";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 // v22: 고객관리와 계약관리를 계약관리로 통합했습니다. 계약 상세는 고객/계약의 핵심 재무정보와
@@ -15,8 +15,9 @@ import { fmtDate, fmtWon } from "@/lib/format";
 // 기존 절차 진행 단계, 서류체크리스트 UI, 일정 영역은 요청에 따라 제거했습니다.
 export default function CaseDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const caseId = Array.isArray(params.id) ? params.id[0] : params.id;
-  const { cases, clients, installments, can } = useStore();
+  const { cases, clients, installments, can, deleteCase } = useStore();
   const c = caseId ? cases.find((item) => item.id === caseId) : undefined;
 
   if (!c) {
@@ -34,15 +35,32 @@ export default function CaseDetailPage() {
   const installs = installments.filter((item) => item.caseId === c.id).sort((a, b) => a.seq - b.seq);
   const receivable = Math.max(0, c.contractAmount - c.paidAmount);
 
+  async function handleDelete() {
+    if (!can("cases.delete")) return;
+    const ok = window.confirm(
+      `${client?.name ?? "고객"}님의 계약(${c.caseNumber})을 삭제하시겠습니까?\n\n연결된 분납 일정과 계약 일정도 함께 삭제됩니다.\n고객정보와 원본 DB는 삭제되지 않습니다.`
+    );
+    if (!ok) return;
+    const deleted = await deleteCase(c.id);
+    if (deleted) router.replace("/cases");
+  }
+
   return (
     <div className="space-y-4">
-      <Link
-        href="/cases"
-        className="inline-flex w-fit items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
-      >
-        <ArrowLeft size={16} />
-        계약목록으로 돌아가기
-      </Link>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Link
+          href="/cases"
+          className="inline-flex w-fit items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+        >
+          <ArrowLeft size={16} />
+          계약목록으로 돌아가기
+        </Link>
+        {can("cases.delete") && (
+          <Button variant="danger" onClick={() => void handleDelete()}>
+            <Trash2 size={15} /> 계약 삭제
+          </Button>
+        )}
+      </div>
 
       <Card className="p-5">
         <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center">
