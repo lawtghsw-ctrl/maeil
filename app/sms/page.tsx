@@ -58,7 +58,7 @@ function sourceLabel(source: string) {
 
 export default function SmsCenterPage() {
   const supabase = useMemo(() => createClient(), []);
-  const { profile, superAdminFirmScope, workStaffNames, isAdmin } = useStore();
+  const { profile, superAdminFirmScope, workStaffNames, can } = useStore();
   const firmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
   const [tab, setTab] = useState<Tab>("send");
   const [senders, setSenders] = useState<Sender[]>([]);
@@ -94,7 +94,18 @@ export default function SmsCenterPage() {
   const selectedSender = senders.find((s) => s.id === senderId);
   const bytes = smsBytes(message);
   const msgType = images.length ? "MMS" : bytes <= 90 ? "SMS" : "LMS";
-  const canManage = isAdmin || profile?.platformRole === "firm_admin" || profile?.platformRole === "super_admin";
+  const canSend = can("sms.send");
+  const canHistory = can("sms.view_history");
+  const canManage = can("sms.manage_settings");
+
+  useEffect(() => {
+    const allowedTabs: Tab[] = [
+      ...(canSend ? ["send" as Tab] : []),
+      ...(canHistory ? ["history" as Tab] : []),
+      ...(canManage ? ["automation" as Tab, "settings" as Tab] : []),
+    ];
+    if (allowedTabs.length && !allowedTabs.includes(tab)) setTab(allowedTabs[0]);
+  }, [canSend, canHistory, canManage, tab]);
 
   const load = useCallback(async () => {
     if (!firmId) return;
@@ -200,6 +211,7 @@ export default function SmsCenterPage() {
   }
 
   async function queueSend() {
+    if (!canSend) { setNotice("문자 발송 권한이 없습니다."); return; }
     if (!firmId) { setNotice("대상 로펌을 먼저 선택해주세요."); return; }
     if (!selectedSender) { setNotice("발신번호를 선택해주세요."); return; }
     if (!recipients.length) { setNotice("수신자를 1명 이상 추가해주세요."); return; }
@@ -329,10 +341,9 @@ export default function SmsCenterPage() {
   }
 
   const tabs: Array<[Tab,string,ReactNode]> = [
-    ["send","문자 보내기",<Send key="s" size={16}/>],
-    ["history","발송내역",<Clock3 key="h" size={16}/>],
-    ["automation","자동발송",<RefreshCw key="a" size={16}/>],
-    ["settings","발신번호 · 문구",<Settings2 key="g" size={16}/>],
+    ...(canSend ? [["send","문자 보내기",<Send key="s" size={16}/>] as [Tab,string,ReactNode]] : []),
+    ...(canHistory ? [["history","발송내역",<Clock3 key="h" size={16}/>] as [Tab,string,ReactNode]] : []),
+    ...(canManage ? [["automation","자동발송",<RefreshCw key="a" size={16}/>] as [Tab,string,ReactNode], ["settings","발신번호 · 문구",<Settings2 key="g" size={16}/>] as [Tab,string,ReactNode]] : []),
   ];
 
   return <div className="space-y-5">
@@ -352,7 +363,9 @@ export default function SmsCenterPage() {
 
     {notice && <div className="flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700"><span>{notice}</span><button onClick={()=>setNotice("")}><X size={15}/></button></div>}
 
-    {tab === "send" && <div className="grid gap-5 2xl:grid-cols-[1fr_390px]">
+    {tabs.length === 0 && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">문자발송 메뉴 조회 권한은 있으나 사용할 수 있는 세부 권한이 없습니다. 관리자에게 문자 발송·발송내역·설정 권한 중 필요한 권한을 요청해주세요.</div>}
+
+    {tab === "send" && canSend && <div className="grid gap-5 2xl:grid-cols-[1fr_390px]">
       <div className="space-y-5">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black text-slate-900">1. 수신자</h2><p className="text-xs text-slate-400">수기 입력 또는 주소록 파일을 드래그해서 추가</p></div><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">{recipients.length}명</span></div>
@@ -432,14 +445,14 @@ export default function SmsCenterPage() {
       </aside>
     </div>}
 
-    {tab === "history" && <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+    {tab === "history" && canHistory && <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-100 p-5"><div><h2 className="font-black">발송내역</h2><p className="text-xs text-slate-400">수기발송과 자동발송을 함께 확인합니다.</p></div><button onClick={()=>void load()} className="rounded-lg border border-slate-200 p-2 text-slate-500"><RefreshCw size={16}/></button></div>
       <div className="overflow-x-auto"><table className="w-full min-w-[950px] text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{["등록일시","구분","수신자","발신번호","유형","내용","상태","알리고 ID"].map((h)=><th key={h} className="px-4 py-3">{h}</th>)}</tr></thead>
       <tbody>{history.map((h)=><tr key={h.id} className="border-t border-slate-100"><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{new Date(h.created_at).toLocaleString("ko-KR")}</td><td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">{sourceLabel(h.source)}</span></td><td className="px-4 py-3"><b>{h.receiver_name||"-"}</b><div className="text-xs text-slate-400">{prettyPhone(h.receiver_number)}</div></td><td className="px-4 py-3 text-xs">{prettyPhone(h.sender_number)}</td><td className="px-4 py-3 font-bold">{h.msg_type}</td><td className="max-w-[320px] truncate px-4 py-3 text-xs">{h.message}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${h.status==="sent"?"bg-emerald-50 text-emerald-700":h.status==="failed"?"bg-red-50 text-red-700":"bg-amber-50 text-amber-700"}`}>{statusLabel(h.status)}</span></td><td className="px-4 py-3 text-xs text-slate-400">{h.provider_message_id||"-"}</td></tr>)}
       {!history.length&&<tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400">아직 발송내역이 없습니다.</td></tr>}</tbody></table></div>
     </section>}
 
-    {tab === "automation" && <div className="space-y-5">
+    {tab === "automation" && canManage && <div className="space-y-5">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div><h2 className="font-black text-slate-900">영업자별 자동발송 설정</h2><p className="mt-1 text-xs text-slate-400">영업자마다 신규 DB·부재중 문구와 이미지를 각각 다르게 지정합니다.</p></div>
@@ -491,7 +504,7 @@ export default function SmsCenterPage() {
       </div>}
     </div>}
 
-    {tab === "settings" && <div className="grid gap-5 xl:grid-cols-2">
+    {tab === "settings" && canManage && <div className="grid gap-5 xl:grid-cols-2">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4"><h2 className="flex items-center gap-2 font-black"><Phone size={17}/> 담당자별 발신번호</h2><p className="text-xs text-slate-400">알리고에서 사전 등록한 번호와 담당자를 매핑합니다.</p></div>
         <div className="space-y-2">{senders.map((s)=><div key={s.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3"><div className="grid size-9 place-items-center rounded-full bg-blue-50 text-blue-700"><Phone size={15}/></div><div className="min-w-0 flex-1"><b className="text-sm">{s.staff_name} · {s.label}</b><div className="text-xs text-slate-400">{prettyPhone(s.phone)} · {s.is_registered?"알리고 등록완료":"알리고 등록대기"}</div></div>{s.is_default?<span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">기본</span>:canManage&&<button onClick={()=>void setDefaultSender(s.id)} className="text-xs font-bold text-blue-600">기본지정</button>}{canManage&&<button onClick={()=>void deleteSender(s.id)} className="text-red-400"><Trash2 size={15}/></button>}</div>)}</div>
