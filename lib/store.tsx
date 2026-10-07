@@ -150,7 +150,7 @@ interface AppStoreValue {
   setCaseInstallments: (
     caseId: string,
     rows: InstallmentDraft[],
-    finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
+    finance?: { totalDebt?: number; contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
   ) => void;
   addPost: (draft: Omit<BoardPost, "id">) => void;
   updatePost: (id: string, patch: Partial<BoardPost>) => void;
@@ -258,7 +258,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!keys.length) return false;
       return keys.every((key) => {
         if (key === "assignedStaff") return can("cases.change_assignee");
-        if (key === "paidAmount" || key === "contractAmount" || key === "installmentCount" || key === "paymentMethod") return can("cases.manage_installments");
+        if (key === "totalDebt" || key === "paidAmount" || key === "contractAmount" || key === "installmentCount" || key === "paymentMethod") return can("cases.manage_installments");
         if (key === "docsSentAt") return can("cases.send_docs");
         return false;
       });
@@ -671,7 +671,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           id: makeId("CASE"),
           caseNumber: `미접수-${Date.now().toString().slice(-6)}`,
           clientId: existingClient.id,
-          caseType: lead.applicationType ?? "개인회생",
+          caseType: lead.applicationType === "개인파산" ? "개인파산" : "개인회생",
           court: "미지정",
           stage: "상담접수",
           stageUpdatedAt: today,
@@ -713,7 +713,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       // v27.11: DB의 "고객 전환"은 고객 레코드만 만드는 것이 아니라
       // 계약관리에서 바로 이어서 처리할 수 있는 미접수 계약 레코드까지 함께 생성합니다.
       // 계약금액/법원/결제수단 등은 계약관리 상세에서 이후 보완하면 됩니다.
-      const caseType = lead.applicationType ?? "개인회생";
+      const caseType = lead.applicationType === "개인파산" ? "개인파산" : "개인회생";
       const caseRecord: CaseRecord = {
         id: makeId("CASE"),
         caseNumber: `미접수-${Date.now().toString().slice(-6)}`,
@@ -815,7 +815,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     (
       caseId: string,
       rows: InstallmentDraft[],
-      finance?: { contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
+      finance?: { totalDebt?: number; contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
     ) => {
       if (isGlobalSuperAdmin || !can("cases.manage_installments")) return;
       const oldRows = installments.filter((i) => i.caseId === caseId);
@@ -835,6 +835,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const caseNext = caseBefore
         ? {
             ...caseBefore,
+            totalDebt: Math.max(0, finance?.totalDebt ?? caseBefore.totalDebt),
             contractAmount: Math.max(0, finance?.contractAmount ?? caseBefore.contractAmount),
             paidAmount: Math.max(0, finance?.paidAmount ?? completedAmount),
             installmentCount: Math.max(0, Math.trunc(finance?.installmentCount ?? updated.length)),
@@ -852,7 +853,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           ...(caseNext ? [saveEntity("app_cases", caseNext)] : []),
         ])
       );
-      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
+      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 채무액·총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
     },
     [can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
   );
