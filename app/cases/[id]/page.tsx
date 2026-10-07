@@ -35,13 +35,13 @@ export default function CaseDetailPage() {
   const installs = installments.filter((item) => item.caseId === c.id).sort((a, b) => a.seq - b.seq);
   const receivable = Math.max(0, c.contractAmount - c.paidAmount);
 
-  async function handleDelete() {
-    if (!can("cases.delete")) return;
+  async function handleDelete(caseRecord: typeof c) {
+    if (!caseRecord || !can("cases.delete")) return;
     const ok = window.confirm(
-      `${client?.name ?? "고객"}님의 계약(${c.caseNumber})을 삭제하시겠습니까?\n\n연결된 분납 일정과 계약 일정도 함께 삭제됩니다.\n고객정보와 원본 DB는 삭제되지 않습니다.`
+      `${client?.name ?? "고객"}님의 계약(${caseRecord.caseNumber})을 삭제하시겠습니까?\n\n연결된 분납 일정과 계약 일정도 함께 삭제됩니다.\n고객정보와 원본 DB는 삭제되지 않습니다.`
     );
     if (!ok) return;
-    const deleted = await deleteCase(c.id);
+    const deleted = await deleteCase(caseRecord.id);
     if (deleted) router.replace("/cases");
   }
 
@@ -56,7 +56,7 @@ export default function CaseDetailPage() {
           계약목록으로 돌아가기
         </Link>
         {can("cases.delete") && (
-          <Button variant="danger" onClick={() => void handleDelete()}>
+          <Button variant="danger" onClick={() => void handleDelete(c)}>
             <Trash2 size={15} /> 계약 삭제
           </Button>
         )}
