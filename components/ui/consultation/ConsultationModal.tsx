@@ -14,11 +14,10 @@
 // "[기본정보][소득][의사][자산][기대출리스트][기타][플랜]"은 shared.tsx의 SectionBar로
 // 순수 회색 구분 바(액션 불가)로 렌더링됩니다.
 //
-// ---- 저장 방식에 대한 설계 결정 (Section 11, v12에서 확정, 변경 없음) ----
-// 프로젝트 전체가 예외 없이 "취소/저장" 명시적 버튼 구조라, 이 모달도 자동저장 대신
-// 명시적 저장 버튼을 유지합니다. 헤더에는 자동저장 상태 대신 "상담일지 작성률/필수항목
-// 충족" 배지를 보여줍니다(고객전환 가능 여부는 이 배지가 아니라 필수항목 충족 여부로만
-// 판정 — Section 24).
+// ---- v28.25 데이터 유실 방지 ----
+// 최종 서버 반영은 기존처럼 [저장] 버튼으로 확정하되, 작성 중 draft는 고객 ID별 localStorage에
+// 임시보관합니다. 팝업 닫힘/새로고침/세션 문제 뒤 다시 열면 자동 복구하며, 서버 저장 성공이
+// 확인된 뒤에만 임시본을 삭제합니다. 저장되지 않은 상태에서 닫을 때는 확인 경고도 표시합니다.
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   REQUIRED_CONSULTATION_FIELDS,
@@ -66,6 +65,38 @@ function makePatcher<T>(setState: Updater<T>) {
   return (patch: Partial<T>) => setState((prev) => ({ ...prev, ...patch }));
 }
 
+type StoredConsultationDraft = {
+  version: 1;
+  resetKey: string;
+  updatedAt: string;
+  expiresAt: string;
+  consultation: ConsultationInfo;
+  applicationType?: ConsultDirection;
+  detailStage?: DbDetailStage;
+  reservationChoice?: boolean;
+  reservationAt?: string;
+};
+
+const CONSULTATION_DRAFT_PREFIX = "lawpower:consultation-draft:v1:";
+
+function consultationDraftKey(resetKey: string) {
+  return `${CONSULTATION_DRAFT_PREFIX}${resetKey}`;
+}
+
+function snapshotFingerprint(value: unknown): string {
+  try { return JSON.stringify(value); } catch { return String(Date.now()); }
+}
+
+function draftSnapshot(
+  consultation: ConsultationInfo | undefined,
+  applicationType: ConsultDirection | undefined,
+  detailStage: DbDetailStage | undefined,
+  reservationChoice: boolean | undefined,
+  reservationAt: string | undefined
+) {
+  return { consultation: consultation ?? {}, applicationType, detailStage, reservationChoice, reservationAt };
+}
+
 export function ConsultationModal({
   open,
   resetKey,
@@ -111,7 +142,7 @@ export function ConsultationModal({
   detailStage?: DbDetailStage;
   onDetailStageChange?: (v: DbDetailStage | undefined) => void;
   initialConsultation: ConsultationInfo | undefined;
-  onSave: (consultation: ConsultationInfo) => void;
+  onSave: (consultation: ConsultationInfo) => void | boolean | Promise<void | boolean>;
   // 고객관리 화면에만 있는 "고객 상담 엑셀 다운로드" 버튼 — 지금 화면에서 편집 중인
   // draft 스냅샷을 그대로 넘겨줘야 해서(저장하지 않고도 다운로드 가능), 콜백 형태로
   // 뺐습니다. 전달하지 않으면 버튼 자체가 보이지 않습니다(DB관리 화면은 사용 안 함).
@@ -141,24 +172,80 @@ export function ConsultationModal({
   const [counselPlan, setCounselPlan] = useState<ConsultationCounselPlan>(initialConsultation?.counselPlan ?? {});
   const [debtSummaryExtra, setDebtSummaryExtra] = useState<ConsultationDebtSummaryExtra>(initialConsultation?.debtSummaryExtra ?? {});
   const [recentLoanInsurance, setRecentLoanInsurance] = useState<ConsultationRecentLoanInsurance>(initialConsultation?.recentLoanInsurance ?? {});
+  const [draftReady, setDraftReady] = useState(false);
+  const [baselineFingerprint, setBaselineFingerprint] = useState("");
+  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null);
+  const [savePending, setSavePending] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // 대상이 바뀌면(resetKey 변경) 모든 draft를 해당 대상의 값으로 다시 채웁니다 — 기존
+  // 대상이 바뀌면(resetKey 변경) 서버 저장본을 기본값으로 채운 뒤, 같은 고객의 로컬 임시본이
+  // 있으면 그 값을 우선 복구합니다. 팝업 닫힘/새로고침/세션 만료가 있어도 작성 중 내용이
+  // 브라우저에 남도록 하는 v28.25 데이터 유실 방지 장치입니다.
   // LeadConsultationModal/CustomerEditModal과 동일한 패턴.
   useEffect(() => {
-    if (!open) return;
-    setPersonal(initialConsultation?.personal ?? {});
-    setIncome(initialConsultation?.income ?? {});
-    setAssets(initialConsultation?.assets ?? emptyAssetRows());
-    setDebts(initialConsultation?.debts ?? emptyDebtRows());
-    setPlan(initialConsultation?.plan ?? emptyPlanInput());
-    setMemoLog(initialConsultation?.memoLog ?? []);
-    setLoanRecords(initialConsultation?.loanRecords ?? []);
-    setAttachedFiles(initialConsultation?.attachedFiles ?? []);
-    setHousing(initialConsultation?.housing ?? {});
-    setJudgment(initialConsultation?.judgment ?? {});
-    setCounselPlan(initialConsultation?.counselPlan ?? {});
-    setDebtSummaryExtra(initialConsultation?.debtSummaryExtra ?? {});
-    setRecentLoanInsurance(initialConsultation?.recentLoanInsurance ?? {});
+    if (!open) {
+      setDraftReady(false);
+      return;
+    }
+
+    const serverSnapshot = draftSnapshot(initialConsultation, applicationType, detailStage, reservationChoice, reservationAt);
+    setBaselineFingerprint(snapshotFingerprint(serverSnapshot));
+    setSaveError(null);
+    setRestoredDraftAt(null);
+
+    let source = initialConsultation;
+    let restored: StoredConsultationDraft | null = null;
+    if (!readOnly && typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(consultationDraftKey(resetKey));
+        if (raw) {
+          const parsed = JSON.parse(raw) as StoredConsultationDraft;
+          if (parsed?.version === 1 && parsed.resetKey === resetKey && parsed.consultation) {
+            if (parsed.expiresAt && new Date(parsed.expiresAt).getTime() < Date.now()) {
+              window.localStorage.removeItem(consultationDraftKey(resetKey));
+            } else {
+            const storedFingerprint = snapshotFingerprint(
+              draftSnapshot(parsed.consultation, parsed.applicationType, parsed.detailStage, parsed.reservationChoice, parsed.reservationAt)
+            );
+            const serverFingerprint = snapshotFingerprint(serverSnapshot);
+            if (storedFingerprint !== serverFingerprint) {
+              restored = parsed;
+              source = parsed.consultation;
+            } else {
+              window.localStorage.removeItem(consultationDraftKey(resetKey));
+            }
+            }
+          }
+        }
+      } catch {
+        // localStorage가 차단된 브라우저에서도 상담일지 자체는 정상 동작해야 합니다.
+      }
+    }
+
+    setPersonal(source?.personal ?? {});
+    setIncome(source?.income ?? {});
+    setAssets(source?.assets ?? emptyAssetRows());
+    setDebts(source?.debts ?? emptyDebtRows());
+    setPlan(source?.plan ?? emptyPlanInput());
+    setMemoLog(source?.memoLog ?? []);
+    setLoanRecords(source?.loanRecords ?? []);
+    setAttachedFiles(source?.attachedFiles ?? []);
+    setHousing(source?.housing ?? {});
+    setJudgment(source?.judgment ?? {});
+    setCounselPlan(source?.counselPlan ?? {});
+    setDebtSummaryExtra(source?.debtSummaryExtra ?? {});
+    setRecentLoanInsurance(source?.recentLoanInsurance ?? {});
+
+    if (restored) {
+      if (allowApplicationTypeEdit) onApplicationTypeChange(restored.applicationType);
+      if (showDetailStage) onDetailStageChange?.(restored.detailStage);
+      onReservationChoiceChange?.(restored.reservationChoice);
+      onReservationAtChange?.(restored.reservationAt);
+      setRestoredDraftAt(restored.updatedAt);
+    }
+    setDraftReady(true);
+    // resetKey가 바뀔 때만 해당 고객의 서버값/임시본으로 초기화합니다. 실시간 DB reload가
+    // 발생해도 작성 중인 draft를 덮어쓰지 않기 위해 initialConsultation은 의도적으로 제외합니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, resetKey]);
 
@@ -218,31 +305,118 @@ export function ConsultationModal({
     [personal, income, assets, debts, plan, memoLog, loanRecords, attachedFiles, housing, judgment, counselPlan, debtSummaryExtra, recentLoanInsurance, initialConsultation?.memo]
   );
 
+  const currentFingerprint = useMemo(
+    () => snapshotFingerprint(draftSnapshot(draft, applicationType, detailStage, reservationChoice, reservationAt)),
+    [draft, applicationType, detailStage, reservationChoice, reservationAt]
+  );
+  const hasUnsavedChanges = !readOnly && draftReady && !!baselineFingerprint && currentFingerprint !== baselineFingerprint;
+
+  // 입력이 바뀔 때마다 250ms 지연 후 브라우저 임시저장. 서버 저장과 별개이므로 네트워크/RLS
+  // 오류가 나더라도 마지막 작성본은 남습니다. 정상 저장이 확인된 뒤에만 삭제합니다.
+  useEffect(() => {
+    if (!open || readOnly || !draftReady || !hasUnsavedChanges || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => {
+      const envelope: StoredConsultationDraft = {
+        version: 1,
+        resetKey,
+        updatedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        consultation: draft,
+        applicationType,
+        detailStage,
+        reservationChoice,
+        reservationAt,
+      };
+      try {
+        window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
+      } catch {
+        // 저장공간 제한/브라우저 정책으로 실패해도 화면 입력은 유지합니다.
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [open, readOnly, draftReady, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt]);
+
+  // 탭 닫기/새로고침도 작성 중이면 브라우저 기본 경고를 띄웁니다.
+  useEffect(() => {
+    if (!open || !hasUnsavedChanges || typeof window === "undefined") return;
+    const warn = (event: BeforeUnloadEvent) => {
+      try {
+        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, applicationType, detailStage, reservationChoice, reservationAt };
+        window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
+      } catch {}
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [open, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt]);
+
   const completeness = useMemo(() => checkConsultationRequired(applicationType, draft), [applicationType, draft]);
   const stats = useMemo(() => getConsultationCompletionStats(applicationType, draft), [applicationType, draft]);
   const missingKeys = useMemo(() => new Set(completeness.missingFields.map((f) => f.key)), [completeness]);
   const requiredKeys = useMemo(() => new Set(REQUIRED_CONSULTATION_FIELDS.map((f) => f.key)), []);
 
-  function save() {
-    if (readOnly) return;
-    onSave(draft);
+  async function save() {
+    if (readOnly || savePending) return;
+    setSavePending(true);
+    setSaveError(null);
+    try {
+      const result = await onSave(draft);
+      if (result === false) {
+        setSaveError("서버 저장에 실패했습니다. 작성 내용은 임시저장되어 있으니 새로고침하지 말고 다시 저장해주세요.");
+        return;
+      }
+      if (typeof window !== "undefined") {
+        try { window.localStorage.removeItem(consultationDraftKey(resetKey)); } catch {}
+      }
+      setBaselineFingerprint(currentFingerprint);
+      setRestoredDraftAt(null);
+      onClose();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "서버 저장에 실패했습니다.";
+      setSaveError(`${message} 작성 내용은 임시저장되어 있습니다.`);
+    } finally {
+      setSavePending(false);
+    }
+  }
+
+  function requestClose() {
+    if (savePending) return;
+    if (hasUnsavedChanges && typeof window !== "undefined") {
+      // 마지막 키 입력 직후(250ms debounce 전)에 닫아도 최신값을 즉시 보관합니다.
+      try {
+        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, applicationType, detailStage, reservationChoice, reservationAt };
+        window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
+      } catch {}
+      const ok = window.confirm("저장되지 않은 상담일지 작성 내용이 있습니다.\n지금 닫아도 임시저장본은 남아 다음에 다시 열면 자동 복구됩니다.\n그래도 닫으시겠습니까?");
+      if (!ok) return;
+    }
     onClose();
   }
 
   const headerExtra = (
-    <span
-      className={`hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold sm:inline-flex ${
-        completeness.ok ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700"
-      }`}
-    >
-      {completeness.ok ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
-      작성률 {stats.percent}% · 필수항목 {REQUIRED_CONSULTATION_FIELDS.length - missingKeys.size}/{REQUIRED_CONSULTATION_FIELDS.length}
-    </span>
+    <>
+      {!readOnly && (
+        <span className={`hidden shrink-0 rounded-md px-2 py-1 text-[10px] font-bold sm:inline-flex ${savePending ? "bg-amber-50 text-amber-700" : hasUnsavedChanges ? "bg-blue-50 text-blue-700" : "bg-emerald-50 text-emerald-700"}`}>
+          {savePending ? "서버 저장 중..." : hasUnsavedChanges ? "임시저장 보호 중" : "저장본과 동일"}
+        </span>
+      )}
+      <span
+        className={`hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold sm:inline-flex ${
+          completeness.ok ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700"
+        }`}
+      >
+        {completeness.ok ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+        작성률 {stats.percent}% · 필수항목 {REQUIRED_CONSULTATION_FIELDS.length - missingKeys.size}/{REQUIRED_CONSULTATION_FIELDS.length}
+      </span>
+    </>
   );
 
   return (
-    <Modal open={open} title={`${displayName} · 상담일지`} headerExtra={headerExtra} onClose={onClose} size="full">
+    <Modal open={open} title={`${displayName} · 상담일지`} headerExtra={headerExtra} onClose={requestClose} size="full">
       {readOnly && <div className="mb-1 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">조회 전용 권한입니다. 상담일지 내용은 확인할 수 있지만 수정·파일반영·예약변경·저장은 할 수 없습니다.</div>}
+      {restoredDraftAt && !readOnly && <div className="mb-1 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">이전에 저장하지 못하고 닫힌 상담일지 임시본을 자동 복구했습니다. 내용을 확인한 뒤 [저장]을 눌러 서버에 반영해주세요.</div>}
+      {saveError && <div className="mb-1 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saveError}</div>}
       <fieldset disabled={readOnly} className="min-w-0 border-0 p-0 disabled:opacity-100">
       <div className="space-y-1">
         <div className="flex min-h-8 flex-wrap items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
@@ -370,8 +544,8 @@ export function ConsultationModal({
           )}
         </div>
         <div className="flex gap-1">
-          <Button variant="secondary" className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={onClose}>취소</Button>
-          {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save}>저장</Button>}
+          <Button variant="secondary" className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={requestClose} disabled={savePending}>취소</Button>
+          {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save} disabled={savePending}>{savePending ? "저장 중..." : "저장"}</Button>}
         </div>
       </div>
     </Modal>

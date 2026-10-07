@@ -99,6 +99,8 @@ function CaseInstallmentModal({
   const [paidAmount, setPaidAmount] = useState(caseRecord.paidAmount);
   const [installmentCount, setInstallmentCount] = useState(caseRecord.installmentCount ?? makeRows().length);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(caseRecord.paymentMethod);
+  const [savePending, setSavePending] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -114,6 +116,7 @@ function CaseInstallmentModal({
     setPaidAmount(caseRecord.paidAmount);
     setInstallmentCount(nextCount);
     setPaymentMethod(caseRecord.paymentMethod);
+    setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, caseRecord.id, caseRecord.totalDebt, caseRecord.contractAmount, caseRecord.paidAmount, caseRecord.installmentCount, caseRecord.paymentMethod]);
 
@@ -147,21 +150,30 @@ function CaseInstallmentModal({
     });
   }
 
-  function save() {
-    setCaseInstallments(caseRecord.id, rows.filter((row) => row.dueDate), {
+  async function save() {
+    if (savePending) return;
+    setSavePending(true);
+    setSaveError(null);
+    const ok = await setCaseInstallments(caseRecord.id, rows.filter((row) => row.dueDate), {
       totalDebt,
       contractAmount,
       paidAmount,
       installmentCount,
       paymentMethod,
     });
+    setSavePending(false);
+    if (!ok) {
+      setSaveError("서버 저장에 실패했습니다. 입력값은 그대로 유지되어 있으니 권한/네트워크 확인 후 다시 저장해주세요.");
+      return;
+    }
     onClose();
   }
 
   const receivable = Math.max(0, contractAmount - paidAmount);
 
   return (
-    <Modal open={open} title={`${client.name} · 분납관리`} onClose={onClose} size="lg">
+    <Modal open={open} title={`${client.name} · 분납관리`} onClose={savePending ? () => {} : onClose} size="lg">
+      {saveError && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saveError}</div>}
       <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
         <div className="mb-3 text-xs font-semibold text-blue-700">
           {caseRecord.caseNumber} · {caseRecord.caseType}
@@ -253,8 +265,8 @@ function CaseInstallmentModal({
         납부 회차 추가
       </button>
       <div className="mt-5 flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>취소</Button>
-        <Button onClick={save}>분납정보 저장</Button>
+        <Button variant="secondary" onClick={onClose} disabled={savePending}>취소</Button>
+        <Button onClick={save} disabled={savePending}>{savePending ? "저장 중..." : "분납정보 저장"}</Button>
       </div>
     </Modal>
   );

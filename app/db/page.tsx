@@ -476,7 +476,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
         if (value !== true) setReservationAt(undefined);
       } : undefined}
       onReservationAtChange={can("db.manage_reservation") ? setReservationAt : undefined}
-      onSave={(consultation) => {
+      onSave={async (consultation) => {
         const patch: Partial<DbLead> = { consultation };
         if (can("db.edit_basic")) patch.applicationType = applicationType;
         if (can("db.manage_reservation")) {
@@ -493,7 +493,8 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
             patch.reservationAt = undefined;
           }
         }
-        updateLead(lead.id, patch);
+        // v28.25: 서버 저장 성공을 확인한 뒤에만 상담일지 모달이 닫히고 임시본이 삭제됩니다.
+        return await updateLead(lead.id, patch);
       }}
     />
   );

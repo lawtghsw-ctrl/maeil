@@ -141,7 +141,7 @@ interface AppStoreValue {
   addLead: (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }) => string;
   updateClient: (id: string, patch: Partial<Client>) => void;
   deleteClient: (id: string) => void;
-  updateLead: (id: string, patch: Partial<DbLead>) => void;
+  updateLead: (id: string, patch: Partial<DbLead>) => Promise<boolean>;
   deleteLead: (id: string) => void;
   convertLeadToClient: (leadId: string) => string | undefined;
   toggleDocument: (caseId: string, itemId: string) => void;
@@ -151,7 +151,7 @@ interface AppStoreValue {
     caseId: string,
     rows: InstallmentDraft[],
     finance?: { totalDebt?: number; contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
-  ) => void;
+  ) => Promise<boolean>;
   addPost: (draft: Omit<BoardPost, "id">) => void;
   updatePost: (id: string, patch: Partial<BoardPost>) => void;
   deletePost: (id: string) => void;
@@ -483,11 +483,31 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!rowFirmId) throw new Error("전체 로펌 통합보기는 조회 전용입니다. 수정/등록하려면 좌측에서 대상 로펌을 선택해주세요.");
       const cleanEntity: Record<string, unknown> = { ...entity };
       delete cleanEntity._lawFirmId; delete cleanEntity._lawFirmName;
-      const { error } = await supabase.from(table).upsert(
-        { id: entity.id, data: cleanEntity, law_firm_id: rowFirmId },
-        { onConflict: "id" }
-      );
-      if (error) throw error;
+
+      // v28.25: 기존에는 모든 저장을 UPSERT로 처리했습니다. Postgres RLS에서 UPSERT는
+      // 기존 행 수정이어도 INSERT 정책까지 함께 검사하므로, '수정 권한은 있지만 등록 권한은
+      // 없는 직원'의 정상적인 저장이 거절되고 화면이 원래 값으로 돌아가는 문제가 있었습니다.
+      // 먼저 UPDATE를 시도하고 실제 대상 행이 없을 때만 INSERT하여 권한 의미를 분리합니다.
+      const payload = { data: cleanEntity, law_firm_id: rowFirmId };
+      const { data: existingRow, error: lookupError } = await supabase
+        .from(table)
+        .select("id")
+        .eq("id", entity.id)
+        .eq("law_firm_id", rowFirmId)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+
+      if (existingRow) {
+        const { error: updateError } = await supabase
+          .from(table)
+          .update(payload)
+          .eq("id", entity.id)
+          .eq("law_firm_id", rowFirmId);
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await supabase.from(table).insert({ id: entity.id, ...payload });
+        if (insertError) throw insertError;
+      }
 
       // Lead 상태 변경 트리거가 Meta 전송 대기열을 만들면 같은 요청 흐름에서 즉시 전송을 시도합니다.
       // 실패해도 CRM 저장은 성공 상태를 유지하고, queue가 다음 수정/수동 전송/외부 worker에서 재시도합니다.
@@ -538,11 +558,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const queueWrite = useCallback(
     (promise: Promise<unknown>) => {
       void promise.catch((err) => {
-        setSyncError(err instanceof Error ? err.message : "데이터 저장에 실패했습니다.");
-        void reloadData();
+        // v28.25: 저장 실패 직후 전체 reloadData()를 호출하면 사용자가 다른 화면에서
+        // 작성 중이던 값까지 서버값으로 덮여 '초기화'처럼 보일 수 있습니다. 실패한 입력은
+        // 화면에 유지하고 오류를 명확히 표시해 재시도할 수 있게 합니다.
+        const message = err instanceof Error ? err.message : "데이터 저장에 실패했습니다.";
+        setSyncError(`저장 실패 · 입력값은 현재 화면에 유지됩니다. 새로고침하지 말고 다시 저장해주세요. (${message})`);
       });
     },
-    [reloadData]
+    []
   );
 
   const logChange = useCallback(
@@ -621,16 +644,32 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const updateLead = useCallback(
-    (id: string, patch: Partial<DbLead>) => {
-      if (isGlobalSuperAdmin || !canPatchLead(patch)) return;
+    async (id: string, patch: Partial<DbLead>): Promise<boolean> => {
+      if (isGlobalSuperAdmin || !canPatchLead(patch)) {
+        setSyncError("저장 실패 · 현재 계정에 해당 DB 항목을 수정할 권한이 없습니다.");
+        return false;
+      }
       const before = leads.find((l) => l.id === id);
-      if (!before) return;
+      if (!before) {
+        setSyncError("저장 실패 · 수정할 DB를 찾지 못했습니다. 목록을 새로 확인해주세요.");
+        return false;
+      }
       const next = { ...before, ...patch };
       setLeads((prev) => prev.map((l) => (l.id === id ? next : l)));
-      queueWrite(saveEntity("app_leads", next));
-      logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
+      try {
+        await saveEntity("app_leads", next);
+        setSyncError(null);
+        logChange("DB관리", "수정", before.name, "DB 리드 정보 수정");
+        return true;
+      } catch (err) {
+        // 저장이 실패해도 사용자가 방금 입력한 값은 유지합니다. 상담일지 모달은 별도의
+        // 로컬 임시저장도 갖고 있어 새로고침/팝업 종료 후 다시 복구할 수 있습니다.
+        const message = err instanceof Error ? err.message : "데이터 저장에 실패했습니다.";
+        setSyncError(`저장 실패 · 입력값은 유지되었습니다. 다시 저장해주세요. (${message})`);
+        return false;
+      }
     },
-    [canPatchLead, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]
+    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity]
   );
 
   const deleteLead = useCallback(
@@ -812,12 +851,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const setCaseInstallments = useCallback(
-    (
+    async (
       caseId: string,
       rows: InstallmentDraft[],
       finance?: { totalDebt?: number; contractAmount?: number; paidAmount?: number; installmentCount?: number; paymentMethod?: PaymentMethod }
-    ) => {
-      if (isGlobalSuperAdmin || !can("cases.manage_installments")) return;
+    ): Promise<boolean> => {
+      if (isGlobalSuperAdmin || !can("cases.manage_installments")) {
+        setSyncError("저장 실패 · 현재 계정에 분납관리 수정 권한이 없습니다.");
+        return false;
+      }
       const oldRows = installments.filter((i) => i.caseId === caseId);
       const updated: Installment[] = rows.map((r, idx) => ({
         id: r.id ?? makeId(`${caseId}-INS`),
@@ -846,16 +888,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setInstallments((prev) => [...prev.filter((i) => i.caseId !== caseId), ...updated]);
       if (caseNext) setCases((prev) => prev.map((c) => (c.id === caseId ? caseNext : c)));
 
-      queueWrite(
-        Promise.all([
+      try {
+        await Promise.all([
           ...removed.map((i) => deleteEntity("app_installments", i.id)),
           ...updated.map((i) => saveEntity("app_installments", i)),
           ...(caseNext ? [saveEntity("app_cases", caseNext)] : []),
-        ])
-      );
-      if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 채무액·총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
+        ]);
+        setSyncError(null);
+        if (caseBefore) logChange("계약관리", "수정", caseBefore.caseNumber, "총 채무액·총 수임료·납부금액·납부회차·결제방법 및 분납 일정 저장");
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "분납정보 저장에 실패했습니다.";
+        setSyncError(`저장 실패 · 분납 입력값은 현재 화면에 유지됩니다. 다시 저장해주세요. (${message})`);
+        return false;
+      }
     },
-    [can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
+    [can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity]
   );
 
   const addPost = useCallback(
