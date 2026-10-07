@@ -3,7 +3,7 @@
 --
 -- 핵심:
 -- 1) Meta 인스턴트 양식의 "주말 오전 (8시 ~ 12시)", "주말 오후 (12시 ~ 19시)"를
---    각각 "주말 오전(8시~12시)", "주말 오후(12시~19시)"로 고정합니다.
+--    각각 "주말 오전(8~12시)", "주말 오후(12시~19시)"로 고정합니다.
 -- 2) 예전 정규화 함수가 주말 값을 평일 오전/점심/오후로 잘못 매핑한 과거 DB도 복구합니다.
 -- 3) 복구 시 app_leads.data의 consultTime 키 하나만 수정합니다.
 --    상담 후 방향 / 담당자 / 진행단계 / 상담일지 / 메모 / 예약 / 계약전환 값은 건드리지 않습니다.
@@ -36,7 +36,7 @@ begin
     or position('아침' in s) > 0
     or (position('8시' in s) > 0 and position('12시' in s) > 0)
   ) then
-    return '주말 오전(8시~12시)';
+    return '주말 오전(8~12시)';
   end if;
 
   if weekend and (
@@ -499,7 +499,7 @@ commit;
 -- 확인용: 주말 원본이 더 이상 평일 슬롯으로 남아 있지 않은지 확인합니다.
 select
   count(*) filter (where coalesce(data->>'consultTimeRaw','') ~ '주말|토요일|일요일|토일') as weekend_source_count,
-  count(*) filter (where data->>'consultTime' = '주말 오전(8시~12시)') as weekend_morning_count,
+  count(*) filter (where data->>'consultTime' = '주말 오전(8~12시)') as weekend_morning_count,
   count(*) filter (where data->>'consultTime' = '주말 오후(12시~19시)') as weekend_afternoon_count,
   count(*) filter (
     where coalesce(data->>'consultTimeRaw','') ~ '주말|토요일|일요일|토일'

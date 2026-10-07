@@ -203,7 +203,7 @@ export const CONSULT_TIME_OPTIONS = [
   "평일 점심(12시~1시)",
   "평일 오후(1시~6시)",
   "퇴근 후(6시~9시)",
-  "주말 오전(8시~12시)",
+  "주말 오전(8~12시)",
   "주말 오후(12시~19시)",
 ] as const;
 export type ConsultTimeSlot = (typeof CONSULT_TIME_OPTIONS)[number];
@@ -227,7 +227,7 @@ export const CONSULT_TIME_COLOR: Record<ConsultTimeSlot, string> = {
   "평일 점심(12시~1시)": "#7c3aed", // violet-600
   "평일 오후(1시~6시)": "#059669", // emerald-600
   "퇴근 후(6시~9시)": "#d97706", // amber-600
-  "주말 오전(8시~12시)": "#0891b2", // cyan-600
+  "주말 오전(8~12시)": "#0891b2", // cyan-600
   "주말 오후(12시~19시)": "#9333ea", // purple-600
 };
 
@@ -287,7 +287,7 @@ export function normalizeConsultTimeValue(value: unknown): ConsultTimeSlot | und
   // 주말 여부를 평일 오전/점심/오후 판정보다 반드시 먼저 확인합니다.
   // Meta 인스턴트 양식의 "주말 오전 (8시 ~ 12시)" / "주말 오후 (12시 ~ 19시)"가
   // 12시/오전/오후 문자열 때문에 평일 슬롯으로 잘못 매핑되는 문제를 방지합니다.
-  if (weekend && (s.includes("오전") || s.includes("아침") || (s.includes("8시") && s.includes("12시")))) return "주말 오전(8시~12시)";
+  if (weekend && (s.includes("오전") || s.includes("아침") || (s.includes("8시") && s.includes("12시")))) return "주말 오전(8~12시)";
   if (weekend && (s.includes("오후") || s.includes("점심") || s.includes("저녁") || (s.includes("12시") && s.includes("19시")))) return "주말 오후(12시~19시)";
 
   if (s.includes("퇴근") || (s.includes("6시") && s.includes("9시"))) return "퇴근 후(6시~9시)";
