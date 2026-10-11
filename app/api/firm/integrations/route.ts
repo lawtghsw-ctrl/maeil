@@ -252,3 +252,60 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: e.message }, { status: e.status });
   }
 }
+
+// v28.27 integration delete: unused configurations only; retain historical CRM data.
+export async function DELETE(request: NextRequest) {
+  try {
+    const { admin, profile } = await requirePlatformUser(request, ["super_admin"]);
+    const body = await request.json();
+    const lawFirmId = await resolveFirmId(request, profile, body);
+    await assertFirm(admin, lawFirmId);
+    const kind = String(body.kind || "");
+    const id = String(body.id || "").trim();
+    const configs: Record<string, { table: string; label: string }> = {
+      meta: { table: "firm_meta_accounts", label: "Meta 광고계정" },
+      sheet: { table: "firm_sheet_integrations", label: "Google Sheet 연동" },
+      source: { table: "ad_sources", label: "광고소스" },
+      rule: { table: "firm_meta_event_rules", label: "Meta 자동전송 규칙" },
+    };
+    const target = configs[kind];
+    if (!target || !id) throw new Error("삭제 대상을 선택해주세요.");
+    await assertOwned(admin, target.table, id, lawFirmId, target.label);
+
+    // FK SET NULL would erase historical attribution. Explicitly block references.
+    const deps: Array<[string, string]> = kind === "meta"
+      ? [["ad_sources", "meta_account_id"], ["app_leads", "meta_account_id"], ["meta_event_queue", "meta_account_id"], ["meta_event_logs", "meta_account_id"], ["lead_supply_ledger", "meta_account_id"]]
+      : kind === "sheet" ? [["ad_sources", "sheet_integration_id"]]
+      : kind === "source" ? [["app_leads", "ad_source_id"], ["meta_event_queue", "ad_source_id"], ["meta_event_logs", "ad_source_id"], ["lead_supply_ledger", "ad_source_id"]]
+      : [];
+    for (const [table, column] of deps) {
+      const { count, error } = await admin.from(table)
+        .select("id", { count: "exact", head: true })
+        .eq("law_firm_id", lawFirmId).eq(column, id);
+      if (error) throw error;
+      if ((count ?? 0) > 0) {
+        return NextResponse.json({ error: target.label + "에 연결된 기존 기록(" + table + ": " + count + "건)이 있습니다. 삭제 대신 비활성화해주세요." }, { status: 409 });
+      }
+    }
+    if (kind === "sheet") {
+      const { data: sheet, error } = await admin.from("firm_sheet_integrations")
+        .select("last_received_at").eq("id", id).eq("law_firm_id", lawFirmId).single();
+      if (error) throw error;
+      if (sheet?.last_received_at) {
+        return NextResponse.json({ error: "DB 수신 이력이 있는 시트는 삭제할 수 없습니다. 비활성화해주세요." }, { status: 409 });
+      }
+    }
+    const { data: removed, error: deleteError } = await admin.from(target.table)
+      .delete().eq("id", id).eq("law_firm_id", lawFirmId).select("id").maybeSingle();
+    if (deleteError) throw deleteError;
+    if (!removed) throw new Error("삭제가 적용되지 않았습니다.");
+    await writePlatformAudit(admin, request, profile, {
+      lawFirmId, action: "integration." + kind + ".delete", targetType: target.table, targetId: id,
+      detail: { kind, label: target.label, deleted: true },
+    });
+    return NextResponse.json({ ok: true, deletedId: id });
+  } catch (err) {
+    const e = platformError(err);
+    return NextResponse.json({ error: e.message }, { status: e.status });
+  }
+}
