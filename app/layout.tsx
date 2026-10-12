@@ -4,7 +4,7 @@ import "./globals.css";
 import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
-  title: "로파워 · LawPower Admin",
+  title: "로파워 회생 ADMIN",
   description: "회생/파산 사건관리 어드민 — 도원 Admin과 동일한 디자인 시스템으로 제작",
 };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
