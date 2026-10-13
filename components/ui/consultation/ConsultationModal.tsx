@@ -71,6 +71,7 @@ type StoredConsultationDraft = {
   updatedAt: string;
   expiresAt: string;
   consultation: ConsultationInfo;
+  customerName?: string;
   applicationType?: ConsultDirection;
   detailStage?: DbDetailStage;
   reservationChoice?: boolean;
@@ -92,9 +93,10 @@ function draftSnapshot(
   applicationType: ConsultDirection | undefined,
   detailStage: DbDetailStage | undefined,
   reservationChoice: boolean | undefined,
-  reservationAt: string | undefined
+  reservationAt: string | undefined,
+  customerName?: string
 ) {
-  return { consultation: consultation ?? {}, applicationType, detailStage, reservationChoice, reservationAt };
+  return { consultation: consultation ?? {}, applicationType, detailStage, reservationChoice, reservationAt, customerName };
 }
 
 export function ConsultationModal({
@@ -102,6 +104,7 @@ export function ConsultationModal({
   resetKey,
   onClose,
   displayName,
+  allowNameEdit = false,
   displayPhone,
   joinedAtLabel,
   caseNumberLabel,
@@ -130,6 +133,7 @@ export function ConsultationModal({
   resetKey: string;
   onClose: () => void;
   displayName: string;
+  allowNameEdit?: boolean;
   displayPhone: string;
   joinedAtLabel: string;
   caseNumberLabel: string;
@@ -142,7 +146,7 @@ export function ConsultationModal({
   detailStage?: DbDetailStage;
   onDetailStageChange?: (v: DbDetailStage | undefined) => void;
   initialConsultation: ConsultationInfo | undefined;
-  onSave: (consultation: ConsultationInfo) => void | boolean | Promise<void | boolean>;
+  onSave: (consultation: ConsultationInfo, customerName?: string) => void | boolean | Promise<void | boolean>;
   // 고객관리 화면에만 있는 "고객 상담 엑셀 다운로드" 버튼 — 지금 화면에서 편집 중인
   // draft 스냅샷을 그대로 넘겨줘야 해서(저장하지 않고도 다운로드 가능), 콜백 형태로
   // 뺐습니다. 전달하지 않으면 버튼 자체가 보이지 않습니다(DB관리 화면은 사용 안 함).
@@ -159,6 +163,7 @@ export function ConsultationModal({
   onReservationChoiceChange?: (value: boolean | undefined) => void;
   onReservationAtChange?: (value: string | undefined) => void;
 }) {
+  const [editedName, setEditedName] = useState(displayName);
   const [personal, setPersonal] = useState<ConsultationPersonal>(initialConsultation?.personal ?? {});
   const [income, setIncome] = useState<ConsultationIncome>(initialConsultation?.income ?? {});
   const [assets, setAssets] = useState<AssetRow[]>(initialConsultation?.assets ?? emptyAssetRows());
@@ -188,7 +193,7 @@ export function ConsultationModal({
       return;
     }
 
-    const serverSnapshot = draftSnapshot(initialConsultation, applicationType, detailStage, reservationChoice, reservationAt);
+    const serverSnapshot = draftSnapshot(initialConsultation, applicationType, detailStage, reservationChoice, reservationAt, displayName);
     setBaselineFingerprint(snapshotFingerprint(serverSnapshot));
     setSaveError(null);
     setRestoredDraftAt(null);
@@ -205,7 +210,7 @@ export function ConsultationModal({
               window.localStorage.removeItem(consultationDraftKey(resetKey));
             } else {
             const storedFingerprint = snapshotFingerprint(
-              draftSnapshot(parsed.consultation, parsed.applicationType, parsed.detailStage, parsed.reservationChoice, parsed.reservationAt)
+              draftSnapshot(parsed.consultation, parsed.applicationType, parsed.detailStage, parsed.reservationChoice, parsed.reservationAt, parsed.customerName ?? displayName)
             );
             const serverFingerprint = snapshotFingerprint(serverSnapshot);
             if (storedFingerprint !== serverFingerprint) {
@@ -222,6 +227,7 @@ export function ConsultationModal({
       }
     }
 
+    setEditedName(allowNameEdit && restored?.customerName !== undefined ? restored.customerName : displayName);
     setPersonal(source?.personal ?? {});
     setIncome(source?.income ?? {});
     setAssets(source?.assets ?? emptyAssetRows());
@@ -306,8 +312,8 @@ export function ConsultationModal({
   );
 
   const currentFingerprint = useMemo(
-    () => snapshotFingerprint(draftSnapshot(draft, applicationType, detailStage, reservationChoice, reservationAt)),
-    [draft, applicationType, detailStage, reservationChoice, reservationAt]
+    () => snapshotFingerprint(draftSnapshot(draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit ? editedName : displayName)),
+    [draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName]
   );
   const hasUnsavedChanges = !readOnly && draftReady && !!baselineFingerprint && currentFingerprint !== baselineFingerprint;
 
@@ -322,6 +328,7 @@ export function ConsultationModal({
         updatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         consultation: draft,
+        customerName: allowNameEdit ? editedName : displayName,
         applicationType,
         detailStage,
         reservationChoice,
@@ -334,14 +341,14 @@ export function ConsultationModal({
       }
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [open, readOnly, draftReady, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt]);
+  }, [open, readOnly, draftReady, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName]);
 
   // 탭 닫기/새로고침도 작성 중이면 브라우저 기본 경고를 띄웁니다.
   useEffect(() => {
     if (!open || !hasUnsavedChanges || typeof window === "undefined") return;
     const warn = (event: BeforeUnloadEvent) => {
       try {
-        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, applicationType, detailStage, reservationChoice, reservationAt };
+        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, applicationType, detailStage, reservationChoice, reservationAt };
         window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
       } catch {}
       event.preventDefault();
@@ -349,7 +356,7 @@ export function ConsultationModal({
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [open, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt]);
+  }, [open, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName]);
 
   const completeness = useMemo(() => checkConsultationRequired(applicationType, draft), [applicationType, draft]);
   const stats = useMemo(() => getConsultationCompletionStats(applicationType, draft), [applicationType, draft]);
@@ -358,10 +365,14 @@ export function ConsultationModal({
 
   async function save() {
     if (readOnly || savePending) return;
+    if (allowNameEdit && !editedName.trim()) {
+      setSaveError("고객 이름은 비워둘 수 없습니다.");
+      return;
+    }
     setSavePending(true);
     setSaveError(null);
     try {
-      const result = await onSave(draft);
+      const result = await onSave(draft, allowNameEdit ? editedName.trim() : undefined);
       if (result === false) {
         setSaveError("서버 저장에 실패했습니다. 작성 내용은 임시저장되어 있으니 새로고침하지 말고 다시 저장해주세요.");
         return;
@@ -385,7 +396,7 @@ export function ConsultationModal({
     if (hasUnsavedChanges && typeof window !== "undefined") {
       // 마지막 키 입력 직후(250ms debounce 전)에 닫아도 최신값을 즉시 보관합니다.
       try {
-        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, applicationType, detailStage, reservationChoice, reservationAt };
+        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, applicationType, detailStage, reservationChoice, reservationAt };
         window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
       } catch {}
       const ok = window.confirm("저장되지 않은 상담일지 작성 내용이 있습니다.\n지금 닫아도 임시저장본은 남아 다음에 다시 열면 자동 복구됩니다.\n그래도 닫으시겠습니까?");
@@ -413,7 +424,7 @@ export function ConsultationModal({
   );
 
   return (
-    <Modal open={open} title={`${displayName} · 상담일지`} headerExtra={headerExtra} onClose={requestClose} size="full">
+    <Modal open={open} title={`${allowNameEdit ? (editedName.trim() || displayName) : displayName} · 상담일지`} headerExtra={headerExtra} onClose={requestClose} size="full">
       {readOnly && <div className="mb-1 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">조회 전용 권한입니다. 상담일지 내용은 확인할 수 있지만 수정·파일반영·예약변경·저장은 할 수 없습니다.</div>}
       {restoredDraftAt && !readOnly && <div className="mb-1 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">이전에 저장하지 못하고 닫힌 상담일지 임시본을 자동 복구했습니다. 내용을 확인한 뒤 [저장]을 눌러 서버에 반영해주세요.</div>}
       {saveError && <div className="mb-1 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saveError}</div>}
@@ -479,7 +490,9 @@ export function ConsultationModal({
               patchPersonal={patchPersonal}
               requiredKeys={requiredKeys}
               missingKeys={missingKeys}
-              displayName={displayName}
+              displayName={allowNameEdit ? editedName : displayName}
+              allowNameEdit={allowNameEdit}
+              onNameChange={setEditedName}
               displayPhone={displayPhone}
               joinedAtLabel={joinedAtLabel}
               caseNumberLabel={caseNumberLabel}

@@ -457,6 +457,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       resetKey={lead.id}
       onClose={onClose}
       displayName={lead.name}
+      allowNameEdit={can("db.edit_basic") && can("db.edit_consultation") && !lead.convertedClientId}
       displayPhone={lead.phone}
       joinedAtLabel={fmtDate(lead.receivedAt)}
       caseNumberLabel="- (법원 접수 전)"
@@ -476,8 +477,13 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
         if (value !== true) setReservationAt(undefined);
       } : undefined}
       onReservationAtChange={can("db.manage_reservation") ? setReservationAt : undefined}
-      onSave={async (consultation) => {
+      onSave={async (consultation, customerName) => {
         const patch: Partial<DbLead> = { consultation };
+        // 계약관리로 전환되기 전 DB만 이름을 변경할 수 있습니다.
+        // 전환된 고객은 app_clients와 데이터가 불일치하지 않도록 잠금 유지.
+        if (can("db.edit_basic") && !lead.convertedClientId && customerName !== undefined && customerName !== lead.name) {
+          patch.name = customerName;
+        }
         if (can("db.edit_basic")) patch.applicationType = applicationType;
         if (can("db.manage_reservation")) {
           const wasReservationStage = effectiveStage(lead) === "예약";

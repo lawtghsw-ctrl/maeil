@@ -23,6 +23,8 @@ export function BasicInfoSection({
   requiredKeys,
   missingKeys,
   displayName,
+  allowNameEdit = false,
+  onNameChange,
   displayPhone,
   joinedAtLabel,
   caseNumberLabel,
@@ -32,6 +34,8 @@ export function BasicInfoSection({
   requiredKeys: Set<string>;
   missingKeys: Set<string>;
   displayName: string;
+  allowNameEdit?: boolean;
+  onNameChange?: (name: string) => void;
   displayPhone: string;
   joinedAtLabel: string;
   caseNumberLabel: string;
@@ -77,7 +81,13 @@ export function BasicInfoSection({
     <div className="flex h-full min-h-0 flex-col gap-1">
       <SectionCard title="기본정보" className="shrink-0">
         <FieldRow label="이름">
-          <Input className={`${compactInputClass} text-center font-semibold`} value={displayName} readOnly />
+          <Input
+            className={`${compactInputClass} text-center font-semibold ${allowNameEdit ? "border-sky-300 bg-sky-50" : ""}`}
+            value={displayName}
+            maxLength={100}
+            readOnly={!allowNameEdit}
+            onChange={allowNameEdit ? (e: ChangeEvent<HTMLInputElement>) => onNameChange?.(e.target.value) : undefined}
+          />
         </FieldRow>
         <FieldRow label="연락처">
           <Input className={`${compactInputClass} text-center font-semibold`} value={displayPhone} readOnly />
