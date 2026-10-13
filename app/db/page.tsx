@@ -276,6 +276,14 @@ function legacyStatusForStage(stage: DbDetailStage, current: DbLeadStatus): DbLe
   return current;
 }
 
+// 계약 전환된 DB의 진행단계도 계속 관리할 수 있어야 합니다.
+// 수임전환 상태값은 전환/매출 집계의 기준이므로 상세 단계만 변경하고 보존합니다.
+function stageUpdatePatch(lead: DbLead, detailStage: DbDetailStage): Partial<DbLead> {
+  return lead.convertedClientId
+    ? { detailStage }
+    : { detailStage, status: legacyStatusForStage(detailStage, lead.status) };
+}
+
 function StageBoard({
   counts,
   warningCounts,
@@ -457,7 +465,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       resetKey={lead.id}
       onClose={onClose}
       displayName={lead.name}
-      allowNameEdit={can("db.edit_basic") && can("db.edit_consultation") && !lead.convertedClientId}
+      allowNameEdit={can("db.edit_basic") && can("db.edit_consultation")}
       displayPhone={lead.phone}
       joinedAtLabel={fmtDate(lead.receivedAt)}
       caseNumberLabel="- (법원 접수 전)"
@@ -479,9 +487,9 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       onReservationAtChange={can("db.manage_reservation") ? setReservationAt : undefined}
       onSave={async (consultation, customerName) => {
         const patch: Partial<DbLead> = { consultation };
-        // 계약관리로 전환되기 전 DB만 이름을 변경할 수 있습니다.
-        // 전환된 고객은 app_clients와 데이터가 불일치하지 않도록 잠금 유지.
-        if (can("db.edit_basic") && !lead.convertedClientId && customerName !== undefined && customerName !== lead.name) {
+        // 계약 전환된 DB도 이름 수정 허용. DB 트리거가 같은 로펌의 연결된
+        // app_clients 이름을 동일 트랜잭션에서 변경하여 계약관리까지 일치시킵니다.
+        if (can("db.edit_basic") && customerName !== undefined && customerName !== lead.name) {
           patch.name = customerName;
         }
         if (can("db.edit_basic")) patch.applicationType = applicationType;
@@ -489,11 +497,11 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
           const wasReservationStage = effectiveStage(lead) === "예약";
           if (reservationChoice === true) {
             patch.detailStage = "예약";
-            patch.status = "상담예정";
+            if (!lead.convertedClientId) patch.status = "상담예정";
             patch.reservationAt = reservationAt;
           } else if (wasReservationStage) {
             patch.detailStage = "신규디비";
-            patch.status = "신규접수";
+            if (!lead.convertedClientId) patch.status = "신규접수";
             patch.reservationAt = undefined;
           } else {
             patch.reservationAt = undefined;
@@ -1079,10 +1087,10 @@ export default function DbManagementPage() {
               </select>
               <select
                 value={effectiveStage(lead)}
-                disabled={!!lead.convertedClientId || !can("db.change_stage")}
+                disabled={!can("db.change_stage")}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => {
                   const detailStage = e.target.value as DbDetailStage;
-                  updateLead(lead.id, { detailStage, status: legacyStatusForStage(detailStage, lead.status) });
+                  void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
                 }}
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
               >
@@ -1097,7 +1105,7 @@ export default function DbManagementPage() {
                   <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
                   <ReservationDateTimeEditor
                     value={lead.reservationAt}
-                    disabled={!!lead.convertedClientId || !can("db.manage_reservation")}
+                    disabled={!can("db.manage_reservation")}
                     onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
                   />
                 </label>
@@ -1211,10 +1219,10 @@ export default function DbManagementPage() {
                   <td className="px-4 py-3">
                     <select
                       value={effectiveStage(lead)}
-                      disabled={!!lead.convertedClientId || !can("db.change_stage")}
+                      disabled={!can("db.change_stage")}
                       onChange={(e: ChangeEvent<HTMLSelectElement>) => {
                         const detailStage = e.target.value as DbDetailStage;
-                        updateLead(lead.id, { detailStage, status: legacyStatusForStage(detailStage, lead.status) });
+                        void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
                       }}
                       className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
                     >
@@ -1228,7 +1236,7 @@ export default function DbManagementPage() {
                   <td className="min-w-[320px] px-4 py-3">
                     <ReservationDateTimeEditor
                       value={lead.reservationAt}
-                      disabled={!!lead.convertedClientId || effectiveStage(lead) !== "예약" || !can("db.manage_reservation")}
+                      disabled={effectiveStage(lead) !== "예약" || !can("db.manage_reservation")}
                       onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
                       compact
                     />
