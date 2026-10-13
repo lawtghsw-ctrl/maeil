@@ -1059,7 +1059,7 @@ export default function DbManagementPage() {
               <LeadTags lead={lead} />
               <select
                 value={lead.applicationType ?? ""}
-                disabled={!!lead.convertedClientId || !can("db.edit_basic")}
+                disabled={!can("db.edit_basic")}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                   updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
                 }
@@ -1074,7 +1074,7 @@ export default function DbManagementPage() {
               </select>
               <select
                 value={lead.assignedStaff}
-                disabled={!!lead.convertedClientId || !can("db.change_assignee")}
+                disabled={!can("db.change_assignee")}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
               >
@@ -1187,7 +1187,7 @@ export default function DbManagementPage() {
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
                       value={lead.applicationType ?? ""}
-                      disabled={!!lead.convertedClientId || !can("db.edit_basic")}
+                      disabled={!can("db.edit_basic")}
                       onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                         updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
                       }
@@ -1204,7 +1204,7 @@ export default function DbManagementPage() {
                   <td className="whitespace-nowrap px-4 py-3">
                     <select
                       value={lead.assignedStaff}
-                      disabled={!!lead.convertedClientId || !can("db.change_assignee")}
+                      disabled={!can("db.change_assignee")}
                       onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
                       className="min-w-[90px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
                     >
