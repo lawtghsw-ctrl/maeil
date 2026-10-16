@@ -430,6 +430,13 @@ export interface CallWarningResult {
   threshold: number; // 오늘 필요한 최대 부재중 기록 횟수
 }
 
+// 콜 관리가 필요한 모든 진행단계에서 동일한 기록 기준을 사용합니다.
+// 통화완료는 연락 성공으로 따로 처리하고, 부재중 및 내용이 있는 일반 메모는
+// 각각 1회의 컨택 기록으로 인정합니다. 메모 한 건당 최대 1회만 집계합니다.
+function countsAsUnansweredContact(entry: MemoLogEntry): boolean {
+  return entry.tag === "부재중" || (entry.tag === "일반" && !!entry.text?.trim());
+}
+
 export function checkCallWarning(
   memoLog: MemoLogEntry[] | undefined,
   todayIso?: string,
@@ -438,7 +445,7 @@ export function checkCallWarning(
   const today = todayIso ?? kstDateStr();
   const threshold = Math.max(1, Math.trunc(noAnswerThreshold || 1));
   const todays = (memoLog ?? []).filter((e) => kstDateStr(new Date(e.at)) === today);
-  const noAnswerCountToday = todays.filter((e) => e.tag === "부재중").length;
+  const noAnswerCountToday = todays.filter(countsAsUnansweredContact).length;
   const reachedToday = todays.some((e) => e.tag === "재통화");
   const active = !reachedToday && noAnswerCountToday < threshold;
   return { active, noAnswerCountToday, reachedToday, threshold };
@@ -464,7 +471,7 @@ export function checkPeriodicContactWarning(
   const today = todayIso ?? kstDateStr();
   const interval = Math.max(1, Math.trunc(intervalDays || 1));
   const contactDates = (memoLog ?? [])
-    .filter((entry) => entry.tag === "재통화" || entry.tag === "부재중")
+    .filter((entry) => entry.tag === "재통화" || countsAsUnansweredContact(entry))
     .map((entry) => kstDateStr(new Date(entry.at)))
     .filter(Boolean)
     .sort();
