@@ -34,9 +34,9 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
 
   useEffect(()=>{
     if(!record || !caseId) return;
-    const items=installments.filter(i=>i.caseId===caseId).sort((a,b)=>a.seq-b.seq)
+    const items: InstallmentDraft[] = installments.filter(i=>i.caseId===caseId).sort((a,b)=>a.seq-b.seq)
       .map(i=>({id:i.id,dueDate:i.dueDate,amount:i.amount,status:i.status,paidDate:i.paidDate}));
-    const full=[...items];
+    const full: InstallmentDraft[] = [...items];
     const count=Math.min(60,Math.max(0,record.installmentCount??items.length));
     while(full.length<count)full.push({dueDate:"",amount:0,status:"예정",paidDate:undefined});
     setRows(full);

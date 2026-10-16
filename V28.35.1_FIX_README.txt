@@ -1,0 +1,6 @@
+V28.35.1: 계약 상세 팝업 분납 회차 추가 시 TypeScript 타입 에러 수정
+
+적용: 기존 V28.35 소스 위에 덮어쓰기. SQL 불필요.
+원인: rows를 필수 id로 추론하여 신규 미저장 회차에 id가 없을 때 TS 오류.
+해결: InstallmentDraft[] 명시 (id optional).
+전체 Next.js 빌드 미실행.
