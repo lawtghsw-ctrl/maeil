@@ -40,6 +40,7 @@ export interface InstallmentDraft {
   amount: number;
   status: InstallmentStatus;
   paidDate?: string;
+  actualPaidAmount?: number;
 }
 
 export type ChangeCategory = "DB관리" | "고객관리" | "계약관리" | "입금·분납" | "게시판" | "설정";
@@ -499,12 +500,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (lookupError) throw lookupError;
 
       if (existingRow) {
-        const { error: updateError } = await supabase
+        const { data: updatedRows, error: updateError } = await supabase
           .from(table)
           .update(payload)
           .eq("id", entity.id)
-          .eq("law_firm_id", rowFirmId);
+          .eq("law_firm_id", rowFirmId)
+          .select("id");
         if (updateError) throw updateError;
+        if (!updatedRows?.length) throw new Error(`${table}: 저장한 행이 없습니다. 직원 권한/RLS를 확인해주세요.`);
       } else {
         const { error: insertError } = await supabase.from(table).insert({ id: entity.id, ...payload });
         if (insertError) throw insertError;
@@ -906,10 +909,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         amount: r.amount,
         status: r.status,
         paidDate: r.paidDate || undefined,
+        actualPaidAmount: r.actualPaidAmount,
       }));
       const keepIds = new Set(updated.map((i) => i.id));
       const removed = oldRows.filter((i) => !keepIds.has(i.id));
-      const completedAmount = updated.filter((i) => i.status === "완료").reduce((sum, i) => sum + i.amount, 0);
+      // 회차별 실납부금액을 우선 사용하고, 과거 완료 건은 예정금액을 실납부액으로 간주합니다.
+      const completedAmount = updated.reduce((sum, i) => sum + (i.actualPaidAmount ?? (i.status === "완료" ? i.amount : 0)), 0);
       const caseBefore = cases.find((c) => c.id === caseId);
       const caseNext = caseBefore
         ? {

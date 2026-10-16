@@ -35,7 +35,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
   useEffect(()=>{
     if(!record || !caseId) return;
     const items: InstallmentDraft[] = installments.filter(i=>i.caseId===caseId).sort((a,b)=>a.seq-b.seq)
-      .map(i=>({id:i.id,dueDate:i.dueDate,amount:i.amount,status:i.status,paidDate:i.paidDate}));
+      .map(i=>({id:i.id,dueDate:i.dueDate,amount:i.amount,status:i.status,paidDate:i.paidDate,actualPaidAmount:i.actualPaidAmount}));
     const full: InstallmentDraft[] = [...items];
     const count=Math.min(60,Math.max(0,record.installmentCount??items.length));
     while(full.length<count)full.push({dueDate:"",amount:0,status:"예정",paidDate:undefined});
@@ -47,7 +47,15 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
     setChanged(false);setNotice("");
   },[caseId]); // 다른 계약으로 전환할 때 초기화; 저장 성공 후에는 별도 최신값 사용
 
-  function editRow(i:number,p:Partial<InstallmentDraft>){setRows(v=>v.map((r,j)=>i===j?{...r,...p}:r));setChanged(true);}
+  function editRow(i:number,p:Partial<InstallmentDraft>){
+    const nextRows=rows.map((r,j)=>i===j?{...r,...p}:r);
+    setRows(nextRows);
+    if ("actualPaidAmount" in p || "status" in p || "amount" in p) {
+      const total=nextRows.reduce((sum,row)=>sum+(row.actualPaidAmount??(row.status==="완료"?row.amount:0)),0);
+      setPaidAmount(total);
+    }
+    setChanged(true);
+  }
   function changeCount(n:number){const count=Math.max(0,Math.min(60,Math.trunc(n||0)));setRows(prev=>{const a=[...prev];while(a.length<count)a.push({dueDate:"",amount:0,status:"예정",paidDate:undefined});return a.slice(0,count)});setChanged(true);}
   function safeClose(){if(saving)return;if(changed&&!window.confirm("저장하지 않은 계약/분납 변경사항이 있습니다. 닫으시겠습니까?"))return;onClose();}
   async function save(){
@@ -58,7 +66,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
       totalDebt,contractAmount,paidAmount,installmentCount:rows.length,paymentMethod
     });
     setSaving(false);
-    if(success){setChanged(false);setNotice("저장되었습니다. 계약목록과 정산에도 변경 금액이 반영됩니다.");}
+    if(success){setChanged(false);setNotice("저장되었습니다. 납부금액과 미수금이 반영되었습니다.");}
     else setNotice("저장 실패: 계정 권한 또는 서버 연결을 확인해주세요. 입력값은 유지됩니다.");
   }
   if(!record||!client||!caseId)return null;
@@ -107,7 +115,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
             <td className="px-2 py-1"><input className={input} type="date" disabled={!permitted} value={row.dueDate} onChange={e=>editRow(i,{dueDate:e.target.value})}/></td>
             <td className="px-2 py-1"><MoneyInput value={row.amount} disabled={!permitted} onChange={v=>editRow(i,{amount:v})}/></td>
             <td className="px-2 py-1"><select className={input} disabled={!permitted} value={row.status} onChange={e=>editRow(i,{status:e.target.value as InstallmentStatus})}>{statuses.map(s=><option key={s}>{s}</option>)}</select></td>
-            <td className="px-2 py-1 text-right text-slate-500">{row.status==="완료"?fmtWon(row.amount):"0원"}</td>
+            <td className="px-2 py-1"><MoneyInput value={row.actualPaidAmount??(row.status==="완료"?row.amount:0)} disabled={!permitted} onChange={v=>editRow(i,{actualPaidAmount:v})}/></td>
             <td className="px-2 py-1"><input className={input} type="date" disabled={!permitted} value={row.paidDate??""} onChange={e=>editRow(i,{paidDate:e.target.value})}/></td>
             <td className="px-2 py-1 text-center"><button type="button" className="rounded border border-red-200 px-2 py-1.5 text-red-600 disabled:opacity-30" disabled={!permitted} onClick={()=>{setRows(v=>v.filter((_,j)=>i!==j));setChanged(true)}}><Trash2 size={14}/></button></td>
           </tr>)}{!rows.length&&<tr><td colSpan={7} className="p-5 text-center text-slate-400">등록된 분납 일정이 없습니다.</td></tr>}</tbody>

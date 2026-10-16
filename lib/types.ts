@@ -481,6 +481,7 @@ export interface Installment extends TenantStamped {
   seq: number; // 회차, 1=계약금
   dueDate: string; // ISO date
   amount: number;
+  actualPaidAmount?: number; // 회차별 실제 납부액; 과거 완료 회차는 amount로 계산
   status: InstallmentStatus;
   paidDate?: string; // 완료된 경우 실제 입금일
 }
