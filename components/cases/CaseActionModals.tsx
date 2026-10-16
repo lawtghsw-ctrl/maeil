@@ -26,14 +26,14 @@ function todayIsoStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export function CaseActionPanel({ client, caseRecord }: { client: Client; caseRecord: CaseRecord }) {
+export function CaseActionPanel({ client, caseRecord, showInstallment = true }: { client: Client; caseRecord: CaseRecord; showInstallment?: boolean }) {
   const { can } = useStore();
   const [open, setOpen] = useState<ActionKind>(null);
 
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        {can("cases.manage_installments") && <Button onClick={() => setOpen("installment")}>
+        {showInstallment && can("cases.manage_installments") && <Button onClick={() => setOpen("installment")}>
           <WalletCards size={15} />
           분납관리
         </Button>}

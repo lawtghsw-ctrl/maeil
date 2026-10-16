@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/ui/Badge";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
 import { Plus, Trash2 } from "lucide-react";
+import { CaseDetailPopup } from "@/components/cases/CaseDetailPopup";
 
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
@@ -118,6 +119,7 @@ export default function CasesPage() {
   const { cases, clients, installments, can, currentStaff, profile, superAdminFirmScope, deleteCase } = useStore();
   const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailCaseId, setDetailCaseId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
@@ -213,7 +215,7 @@ export default function CasesPage() {
             const receivable = Math.max(0, c.contractAmount - c.paidAmount);
             return (
               <div key={c.id} className="p-4 hover:bg-slate-50">
-                <Link href={`/cases/${c.id}`} className="block space-y-2">
+                <div role="button" tabIndex={0} onClick={() => setDetailCaseId(c.id)} onKeyDown={e => {if(e.key === "Enter" || e.key === " "){e.preventDefault();setDetailCaseId(c.id)}}} className="block cursor-pointer space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -231,7 +233,7 @@ export default function CasesPage() {
                     <span className="text-slate-500">납부회차 {(c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length) || 0}회</span>
                     {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
                   </div>}
-                </Link>
+                </div>
                 {can("cases.delete") && !globalSuperView && (
                   <button type="button" disabled={deletingId === c.id} onClick={() => void handleDelete(c.id, client?.name ?? "고객", c.caseNumber)} className="mt-3 inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
                     <Trash2 size={13} /> {deletingId === c.id ? "삭제 중..." : "삭제"}
@@ -278,9 +280,9 @@ export default function CasesPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <Link href={`/cases/${c.id}`} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                        <button type="button" onClick={() => setDetailCaseId(c.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
                           상세
-                        </Link>
+                        </button>
                         {can("cases.delete") && !globalSuperView && (
                           <button type="button" disabled={deletingId === c.id} onClick={() => void handleDelete(c.id, client?.name ?? "고객", c.caseNumber)} className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
                             <Trash2 size={13} /> {deletingId === c.id ? "삭제 중..." : "삭제"}
@@ -304,6 +306,7 @@ export default function CasesPage() {
         <Pagination page={page} total={rows.length} onChange={setPage} pageSize={10} />
       </Card>
       <ContractCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <CaseDetailPopup key={detailCaseId ?? "empty"} caseId={detailCaseId} onClose={() => setDetailCaseId(null)} />
     </>
   );
 }
