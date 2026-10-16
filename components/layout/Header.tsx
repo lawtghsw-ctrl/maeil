@@ -223,7 +223,7 @@ export function Header() {
     const min = now - 24 * 60 * 60 * 1000;
     const max = now + 3 * 24 * 60 * 60 * 1000;
     return leads
-      .filter((lead) => (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) && lead.detailStage === "예약" && !!lead.reservationAt)
+      .filter((lead) => (canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff)) && !!lead.reservationAt)
       .map((lead) => ({ lead, at: reservationTimeMs(lead.reservationAt as string) }))
       .filter(({ at }) => Number.isFinite(at) && at >= min && at <= max)
       .sort((a, b) => a.at - b.at)
@@ -245,7 +245,7 @@ export function Header() {
       .filter(
         (lead) => {
           if (!(canViewAllLeads || (!!currentStaff && lead.assignedStaff === currentStaff))) return false;
-          if (lead.detailStage !== "예약" || !lead.reservationAt) return false;
+          if (!lead.reservationAt) return false;
           const reservationDate = lead.reservationAt.slice(0, 10);
           return reservationDate >= today && reservationDate <= windowEnd;
         }

@@ -24,7 +24,9 @@ export function ConsultationMemoSection({ memoLog, setMemoLog }: { memoLog: Memo
       staff: profile?.displayName || currentUser?.email || "사용자",
       at: new Date().toISOString(),
       text: memoDraft.trim(),
-      tag: memoTag,
+      // 새 일반 메모는 부재중 컨택 1회로 간주합니다.
+      // 기존 메모의 태그는 변경하지 않으며, 통화완료는 부재중으로 집계하지 않습니다.
+      tag: memoTag === "일반" ? "부재중" : memoTag,
     };
     setMemoLog((prev) => [entry, ...prev]);
     setMemoDraft("");
@@ -37,7 +39,7 @@ export function ConsultationMemoSection({ memoLog, setMemoLog }: { memoLog: Memo
         className={`${compactTextareaClass} min-h-12 shrink-0`}
         value={memoDraft}
         onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMemoDraft(e.target.value)}
-        placeholder="상담 메모 작성"
+        placeholder="상담 메모 작성 (일반 메모 추가 시 부재중 1회로 기록)"
       />
       <div className="flex shrink-0 items-center gap-1">
         <button

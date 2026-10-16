@@ -435,14 +435,14 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
   const { updateLead, cases, can } = useStore();
   const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
   const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(
-    effectiveStage(lead) === "예약" || !!lead.reservationAt ? true : false
+    !!lead.reservationAt
   );
   const [reservationAt, setReservationAt] = useState<string | undefined>(lead.reservationAt);
 
   useEffect(() => {
     if (!open) return;
     setApplicationType(lead.applicationType);
-    setReservationChoice(effectiveStage(lead) === "예약" || !!lead.reservationAt ? true : false);
+    setReservationChoice(!!lead.reservationAt);
     setReservationAt(lead.reservationAt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead.id]);
@@ -494,18 +494,8 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
         }
         if (can("db.edit_basic")) patch.applicationType = applicationType;
         if (can("db.manage_reservation")) {
-          const wasReservationStage = effectiveStage(lead) === "예약";
-          if (reservationChoice === true) {
-            patch.detailStage = "예약";
-            if (!lead.convertedClientId) patch.status = "상담예정";
-            patch.reservationAt = reservationAt;
-          } else if (wasReservationStage) {
-            patch.detailStage = "신규디비";
-            if (!lead.convertedClientId) patch.status = "신규접수";
-            patch.reservationAt = undefined;
-          } else {
-            patch.reservationAt = undefined;
-          }
+          // 예약은 진행단계와 독립적인 일정입니다. 기존 상태/전환 기록을 변경하지 않습니다.
+          patch.reservationAt = reservationChoice === true ? reservationAt : undefined;
         }
         // v28.25: 서버 저장 성공을 확인한 뒤에만 상담일지 모달이 닫히고 임시본이 삭제됩니다.
         return await updateLead(lead.id, patch);
@@ -1100,7 +1090,7 @@ export default function DbManagementPage() {
                   </optgroup>
                 ))}
               </select>
-              {effectiveStage(lead) === "예약" && (
+              {can("db.manage_reservation") && (
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
                   <ReservationDateTimeEditor
@@ -1236,7 +1226,7 @@ export default function DbManagementPage() {
                   <td className="min-w-[320px] px-4 py-3">
                     <ReservationDateTimeEditor
                       value={lead.reservationAt}
-                      disabled={effectiveStage(lead) !== "예약" || !can("db.manage_reservation")}
+                      disabled={!can("db.manage_reservation")}
                       onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
                       compact
                     />
