@@ -914,14 +914,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const keepIds = new Set(updated.map((i) => i.id));
       const removed = oldRows.filter((i) => !keepIds.has(i.id));
       // 회차별 실납부금액을 우선 사용하고, 과거 완료 건은 예정금액을 실납부액으로 간주합니다.
-      const completedAmount = updated.reduce((sum, i) => sum + (i.actualPaidAmount ?? (i.status === "완료" ? i.amount : 0)), 0);
+      const completedAmount = updated.reduce((sum, i) => sum + (i.status === "완료" ? Math.max(0, i.actualPaidAmount ?? i.amount) : 0), 0);
       const caseBefore = cases.find((c) => c.id === caseId);
       const caseNext = caseBefore
         ? {
             ...caseBefore,
             totalDebt: Math.max(0, finance?.totalDebt ?? caseBefore.totalDebt),
             contractAmount: Math.max(0, finance?.contractAmount ?? caseBefore.contractAmount),
-            paidAmount: Math.max(0, finance?.paidAmount ?? completedAmount),
+            paidAmount: completedAmount,
             installmentCount: Math.max(0, Math.trunc(finance?.installmentCount ?? updated.length)),
             paymentMethod: finance?.paymentMethod ?? caseBefore.paymentMethod,
           }

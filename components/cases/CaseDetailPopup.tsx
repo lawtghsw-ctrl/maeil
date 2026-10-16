@@ -26,7 +26,6 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
   const [rows,setRows] = useState<InstallmentDraft[]>([]);
   const [totalDebt,setTotalDebt] = useState(0);
   const [contractAmount,setContractAmount] = useState(0);
-  const [paidAmount,setPaidAmount] = useState(0);
   const [paymentMethod,setPaymentMethod] = useState<PaymentMethod>("단순분납");
   const [saving,setSaving] = useState(false);
   const [changed,setChanged] = useState(false);
@@ -42,18 +41,18 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
     setRows(full);
     setTotalDebt(record.totalDebt);
     setContractAmount(record.contractAmount);
-    setPaidAmount(record.paidAmount);
     setPaymentMethod(record.paymentMethod);
     setChanged(false);setNotice("");
   },[caseId]); // 다른 계약으로 전환할 때 초기화; 저장 성공 후에는 별도 최신값 사용
 
+  // 완료 회차의 실입금액만 합산. 과거 완료 데이터는 예정금액으로 대체합니다.
+  const paidAmount = rows.reduce((sum, row) => sum + (row.status === "완료" ? Math.max(0, row.actualPaidAmount ?? row.amount) : 0), 0);
+  // 표의 표시 순서만 상환일 오름차순으로 정렬해 회차 ID와 기존 저장 데이터는 보존합니다.
+  const sortedRows = rows.map((row, originalIndex) => ({ row, originalIndex }))
+    .sort((a, b) => (a.row.dueDate || "9999-12-31").localeCompare(b.row.dueDate || "9999-12-31") || a.originalIndex - b.originalIndex);
+
   function editRow(i:number,p:Partial<InstallmentDraft>){
-    const nextRows=rows.map((r,j)=>i===j?{...r,...p}:r);
-    setRows(nextRows);
-    if ("actualPaidAmount" in p || "status" in p || "amount" in p) {
-      const total=nextRows.reduce((sum,row)=>sum+(row.actualPaidAmount??(row.status==="완료"?row.amount:0)),0);
-      setPaidAmount(total);
-    }
+    setRows(prev => prev.map((r,j) => i === j ? { ...r, ...p } : r));
     setChanged(true);
   }
   function changeCount(n:number){const count=Math.max(0,Math.min(60,Math.trunc(n||0)));setRows(prev=>{const a=[...prev];while(a.length<count)a.push({dueDate:"",amount:0,status:"예정",paidDate:undefined});return a.slice(0,count)});setChanged(true);}
@@ -90,7 +89,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
           </div>
           <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-200 lg:border-r">
             <label className="flex items-center justify-center bg-slate-100 px-2 text-xs font-bold text-slate-600">납부금액</label>
-            <div className="p-2"><MoneyInput value={paidAmount} disabled={!permitted} onChange={v=>{setPaidAmount(v);setChanged(true)}}/></div>
+            <div className="p-2"><div className={`${input} flex items-center justify-between bg-slate-100 font-bold text-slate-800`} aria-label="완료 회차 납부금액 합계" title="완료 처리된 회차의 실제 납부금액 합계"><span>{paidAmount.toLocaleString("ko-KR")}</span><span className="ml-2 text-slate-500">원</span></div></div>
           </div>
           <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-200">
             <label className="flex items-center justify-center bg-slate-100 px-2 text-xs font-bold text-slate-600">결제방법</label>
@@ -109,9 +108,9 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
       <div className="flex flex-wrap justify-between gap-2"><h3 className="text-sm font-bold text-slate-800">분납 일정 / 실입금 내역</h3><div className="flex flex-wrap gap-2">{permitted&&<Button variant="secondary" onClick={()=>{setRows(v=>[...v,{dueDate:"",amount:0,status:"예정"}]);setChanged(true)}}><Plus size={13}/> 회차 추가</Button>}{<CaseActionPanel client={client} caseRecord={record} showInstallment={false}/>}</div></div>
       <div className="overflow-x-auto rounded-lg border border-slate-300">
         <table className="w-full min-w-[790px] border-collapse text-xs">
-          <thead className="bg-slate-100 text-slate-700"><tr>{["회차","상환일","납부예정금액","납부상태","실납부금액","실제 입금일","관리"].map(t=><th key={t} className="border-b border-r border-slate-200 px-2 py-3">{t}</th>)}</tr></thead>
-          <tbody>{rows.map((row,i)=><tr key={row.id??`new-${i}`} className="border-b border-slate-200">
-            <td className="w-[80px] px-2 text-center">{i===0?"계약금":`${i}회차`}</td>
+          <thead className="bg-slate-100 text-slate-700"><tr>{["회차","상환 예정일","납부예정금액","납부상태","실납부금액","실제 입금일","관리"].map(t=><th key={t} className="border-b border-r border-slate-200 px-2 py-3">{t}</th>)}</tr></thead>
+          <tbody>{sortedRows.map(({row,originalIndex:i},displayIndex)=><tr key={row.id??`new-${i}`} className="border-b border-slate-200">
+            <td className="w-[80px] px-2 text-center">{displayIndex===0?"계약금":`${displayIndex}회차`}</td>
             <td className="px-2 py-1"><input className={input} type="date" disabled={!permitted} value={row.dueDate} onChange={e=>editRow(i,{dueDate:e.target.value})}/></td>
             <td className="px-2 py-1"><MoneyInput value={row.amount} disabled={!permitted} onChange={v=>editRow(i,{amount:v})}/></td>
             <td className="px-2 py-1"><select className={input} disabled={!permitted} value={row.status} onChange={e=>editRow(i,{status:e.target.value as InstallmentStatus})}>{statuses.map(s=><option key={s}>{s}</option>)}</select></td>
