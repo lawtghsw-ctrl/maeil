@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { assertRelayReady, assertRpc, CAPABILITIES, DeliveryGate, fail, gateView, isDemoFirm, readGate, readJson, readLiveConfiguration, requireSmsActor, requireUuid, smsErrorResponse } from "@/lib/sms/delivery";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 const headers = { "Cache-Control": "private, no-store" };
 async function view(actor: Awaited<ReturnType<typeof requireSmsActor>>, gate: DeliveryGate | null) {
   const demo = await isDemoFirm(actor.admin,actor.firmId);

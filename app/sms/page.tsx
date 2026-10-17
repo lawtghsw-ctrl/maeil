@@ -16,7 +16,7 @@ type Template = { id: string; name: string; category: string; body: string };
 type Outbox = {
   id: string; receiver_name: string | null; receiver_number: string; sender_number: string; message: string;
   msg_type: string; status: string; source: string; auto_kind: string | null; created_at: string; provider_message_id: string | null;
-  recordKind: "legacy" | "delivery"; reserved_at: string | null; error_message: string | null;
+  recordKind: "legacy" | "delivery"; reserved_at: string | null; error_message: string | null; deleted_at: string | null;
 };
 type Automation = {
   new_lead_enabled: boolean; absence_enabled: boolean; new_lead_template: string; absence_template: string;
@@ -118,6 +118,13 @@ function SmsFirmWorkspace({ initialDraft, onDraftChange }: { initialDraft?: SmsD
   const [deliveryError, setDeliveryError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyView, setHistoryView] = useState<"active" | "deleted">("active");
+  const [canManageHistory, setCanManageHistory] = useState(false);
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyNotice, setHistoryNotice] = useState("");
+  const [historyUpdatedAt, setHistoryUpdatedAt] = useState<string | null>(null);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [pendingRequest, setPendingRequest] = useState<SendRequest | null>(initialDraft?.pendingRequest ?? null);
   const fileInput = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
@@ -130,6 +137,8 @@ function SmsFirmWorkspace({ initialDraft, onDraftChange }: { initialDraft?: SmsD
   const historySequence = useRef(0);
   const deliveryAbort = useRef<AbortController | null>(null);
   const historyAbort = useRef<AbortController | null>(null);
+  const historyInFlight = useRef(false);
+  const historyMutating = useRef(false);
   const serverOffset = useRef(0);
 
   const selectedSender = senders.find((s) => s.id === senderId);
@@ -179,28 +188,73 @@ function SmsFirmWorkspace({ initialDraft, onDraftChange }: { initialDraft?: SmsD
     } finally { if (mounted.current && sequence === deliverySequence.current) setDeliveryLoading(false); }
   }, [firmId, authorizedFetch]);
 
-  const loadHistory = useCallback(async () => {
-    if (!firmId || !canHistory) return;
+  const loadHistory = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    if (!firmId || !canHistory || historyMutating.current || (quiet && historyInFlight.current)) return;
     const sequence = ++historySequence.current;
+    historyInFlight.current = true;
     historyAbort.current?.abort();
     const controller = new AbortController(); historyAbort.current = controller;
     setHistoryLoading(true); setHistoryError("");
     try {
-      const response = await authorizedFetch(`/api/sms/history?lawFirmId=${encodeURIComponent(firmId)}`, { cache: "no-store", signal: controller.signal });
+      const response = await authorizedFetch(`/api/sms/history?lawFirmId=${encodeURIComponent(firmId)}&view=${historyView}`, { cache: "no-store", signal: controller.signal });
       const data = await response.json();
       if (!response.ok || !Array.isArray(data?.items)) throw new Error(data?.error || "발송내역을 읽지 못했습니다.");
       const rows: Outbox[] = data.items.map((row: Record<string, unknown>) => {
         if (!row || typeof row.id !== "string" || !["legacy", "delivery"].includes(String(row.recordKind)) || typeof row.status !== "string") throw new Error("발송내역 응답을 확인하지 못했습니다.");
-        return { id: row.id, recordKind: row.recordKind as "legacy" | "delivery", receiver_name: String(row.receiverName ?? ""), receiver_number: String(row.receiverNumber ?? ""), sender_number: String(row.senderNumber ?? ""), message: String(row.message ?? ""), msg_type: String(row.msgType ?? ""), status: row.status, source: String(row.source ?? ""), auto_kind: typeof row.autoKind === "string" ? row.autoKind : null, created_at: String(row.createdAt ?? ""), reserved_at: typeof row.reservedAt === "string" ? row.reservedAt : null, provider_message_id: row.providerMessageId == null ? null : String(row.providerMessageId), error_message: typeof row.errorMessage === "string" ? row.errorMessage : null };
+        return { id: row.id, recordKind: row.recordKind as "legacy" | "delivery", receiver_name: String(row.receiverName ?? ""), receiver_number: String(row.receiverNumber ?? ""), sender_number: String(row.senderNumber ?? ""), message: String(row.message ?? ""), msg_type: String(row.msgType ?? ""), status: row.status, source: String(row.source ?? ""), auto_kind: typeof row.autoKind === "string" ? row.autoKind : null, created_at: String(row.createdAt ?? ""), reserved_at: typeof row.reservedAt === "string" ? row.reservedAt : null, provider_message_id: row.providerMessageId == null ? null : String(row.providerMessageId), error_message: typeof row.errorMessage === "string" ? row.errorMessage : null, deleted_at: typeof row.deletedAt === "string" ? row.deletedAt : null };
       });
-      if (mounted.current && sequence === historySequence.current) setHistory(rows);
+      if (mounted.current && sequence === historySequence.current) {
+        setHistory(rows); setCanManageHistory(data.canManageHistory === true); setHistoryUpdatedAt(new Date().toISOString());
+        setSelectedHistoryIds((previous) => data.canManageHistory === true ? previous.filter((id) => rows.some((row) => row.id === id)) : []);
+      }
     } catch (error) {
       if (mounted.current && sequence === historySequence.current && !controller.signal.aborted) setHistoryError(error instanceof Error ? error.message : "발송내역을 읽지 못했습니다.");
-    } finally { if (mounted.current && sequence === historySequence.current) setHistoryLoading(false); }
-  }, [firmId, canHistory, authorizedFetch]);
+    } finally { if (mounted.current && sequence === historySequence.current) { historyInFlight.current = false; setHistoryLoading(false); } }
+  }, [firmId, canHistory, historyView, authorizedFetch]);
 
   useEffect(() => { void loadDelivery(); }, [loadDelivery]);
-  useEffect(() => { void loadHistory(); }, [loadHistory]);
+  useEffect(() => {
+    if (tab !== "history" || !canHistory) return;
+    const refresh = () => { if (document.visibilityState === "visible") void loadHistory({ quiet: true }); };
+    refresh();
+    const timer = setInterval(refresh, 12000);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      clearInterval(timer); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh);
+      historySequence.current++; historyAbort.current?.abort(); historyInFlight.current = false;
+    };
+  }, [tab, canHistory, loadHistory, historyRefreshKey]);
+
+  function changeHistoryView(view: "active" | "deleted") {
+    if (historyMutating.current || view === historyView) return;
+    historySequence.current++; historyAbort.current?.abort(); historyInFlight.current = false;
+    setHistoryView(view); setHistory([]); setSelectedHistoryIds([]); setHistoryError(""); setHistoryNotice(""); setHistoryUpdatedAt(null); setHistoryLoading(true);
+  }
+
+  function toggleHistorySelection(id: string) {
+    if (!canManageHistory || historyMutating.current) return;
+    setSelectedHistoryIds((previous) => previous.includes(id) ? previous.filter((value) => value !== id) : previous.length < 100 ? [...previous, id] : previous);
+  }
+
+  async function changeHistoryVisibility(ids: string[], restore: boolean) {
+    if (!firmId || !canManageHistory || historyMutating.current || !ids.length || ids.length > 100 || ids.some((id) => !history.some((row) => row.id === id))) return;
+    if (!restore && !confirm(`${ids.length}건을 발송내역 목록에서 삭제할까요?\n문자 발송·예약은 취소되지 않으며, 삭제한 내역은 복구할 수 있습니다.`)) return;
+    historyMutating.current = true; setHistoryBusy(true); setHistoryError(""); setHistoryNotice("");
+    historySequence.current++; historyAbort.current?.abort(); historyInFlight.current = false; setHistoryLoading(false);
+    try {
+      const response = await authorizedFetch("/api/sms/history", { method: restore ? "PATCH" : "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ lawFirmId: firmId, ids }) });
+      const data = await response.json();
+      if (!response.ok || data?.ok !== true) throw new Error(data?.error || "내역 목록 변경을 확인하지 못했습니다. 새로고침 후 확인해주세요.");
+      if (!mounted.current) return;
+      setSelectedHistoryIds([]); setHistoryNotice(`${ids.length}건의 내역을 ${restore ? "복구했습니다." : "목록에서 삭제했습니다. 삭제한 내역에서 복구할 수 있습니다."}`);
+    } catch (error) {
+      if (mounted.current) setHistoryNotice(error instanceof Error ? error.message : "내역 목록을 변경하지 못했습니다.");
+    } finally {
+      historyMutating.current = false;
+      if (mounted.current) { setHistoryBusy(false); setHistoryRefreshKey((value) => value + 1); }
+    }
+  }
 
   async function saveDelivery(liveEnabled: boolean, autoEnabled: boolean) {
     if (!firmId || !delivery?.canManageGate || gateSaving.current) return;
@@ -377,10 +431,9 @@ function SmsFirmWorkspace({ initialDraft, onDraftChange }: { initialDraft?: SmsD
         return;
       }
       setPendingRequest(null);
-      setNotice(`${data.reused ? "기존 요청을 확인했습니다." : "새 요청을 등록했습니다."} ${data.createdCount.toLocaleString()}건 · ${data.status === "scheduled" ? "예약 요청 대기" : "처리 대기"}. 아직 문자 전달이 완료된 상태는 아닙니다.`);
+      setNotice(`${data.reused ? "기존 요청을 확인했습니다." : "새 요청을 등록했습니다."} ${data.createdCount.toLocaleString()}건${data.status === "scheduled" ? " · 예약 요청" : ""}. 발송 결과는 아래 내역에서 확인해주세요.`);
       setRecipients([]); setMessage(""); setTitle(""); setImages([]); setReservedAt("");
-      await loadHistory();
-      if (canHistory) setTab("history");
+      if (canHistory) { setHistoryView("active"); setSelectedHistoryIds([]); setTab("history"); setHistoryRefreshKey((value) => value + 1); }
     } catch (e) {
       if (mounted.current) setNotice(`${e instanceof Error ? e.message : "발송 요청을 처리하지 못했습니다."}${pendingRef.current ? " 동일 요청으로 접수 여부를 다시 확인해주세요. 작성한 내용은 유지됩니다." : ""}`);
       else if (latestDraft.current) onDraftChange({ ...latestDraft.current, pendingRequest: pendingRef.current });
@@ -591,13 +644,47 @@ function SmsFirmWorkspace({ initialDraft, onDraftChange }: { initialDraft?: SmsD
       </aside>
     </div>}
 
-    {tab === "history" && canHistory && <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-slate-100 p-5"><div><h2 className="font-black">발송내역</h2><p className="text-xs text-slate-400">새 요청과 이전 보관 내역을 함께 표시합니다. 이전 대기 문자는 발송 대상에 포함되지 않습니다.</p></div><button disabled={historyLoading} onClick={()=>void loadHistory()} aria-label="발송내역 새로고침" className="rounded-lg border border-slate-200 p-2 text-slate-500 disabled:opacity-40"><RefreshCw size={16}/></button></div>
+    {tab === "history" && canHistory && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 p-5">
+        <div><h2 className="font-black">발송내역</h2><p className="mt-1 text-xs leading-5 text-slate-500">새 요청과 이전 보관 내역을 함께 표시합니다. 이전 대기 문자는 발송 대상에 포함되지 않습니다.</p>
+          <p className="mt-1 text-xs text-slate-400">화면을 보고 있는 동안 12초마다 갱신{historyUpdatedAt ? ` · 최근 확인 ${new Date(historyUpdatedAt).toLocaleTimeString("ko-KR")}` : ""}</p>
+        </div>
+        <button type="button" disabled={historyLoading || historyBusy} onClick={()=>void loadHistory()} aria-label="발송내역 새로고침" className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 disabled:opacity-40"><RefreshCw size={15} className={historyLoading ? "animate-spin" : ""}/>{historyLoading ? "확인 중" : "새로고침"}</button>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+        <div className="flex items-center gap-2">
+          <button type="button" aria-pressed={historyView === "active"} disabled={historyBusy} onClick={()=>changeHistoryView("active")} className={`rounded-lg px-3 py-2 text-xs font-bold ${historyView === "active" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"}`}>발송내역 보기</button>
+          {(canManageHistory || historyView === "deleted") && <button type="button" aria-pressed={historyView === "deleted"} disabled={historyBusy} onClick={()=>changeHistoryView("deleted")} className={`rounded-lg px-3 py-2 text-xs font-bold ${historyView === "deleted" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"}`}>삭제한 내역</button>}
+          <span className="text-xs text-slate-400">표시 {history.length.toLocaleString()}건</span>
+        </div>
+        {canManageHistory && <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">{selectedHistoryIds.length}/100건 선택</span>
+          <button type="button" disabled={!selectedHistoryIds.length || historyBusy || historyLoading} onClick={()=>void changeHistoryVisibility(selectedHistoryIds, historyView === "deleted")} className={`rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-40 ${historyView === "deleted" ? "border-blue-200 text-blue-700" : "border-red-200 text-red-600"}`}>{historyBusy ? "목록 변경 중..." : historyView === "deleted" ? "선택 복구" : "선택 삭제"}</button>
+        </div>}
+      </div>
+      {canManageHistory && <p className="bg-slate-50 px-5 py-2.5 text-xs leading-5 text-slate-500">삭제는 목록에서 보관하는 기능입니다. 문자 발송·예약을 취소하지 않으며, 삭제한 내역은 복구할 수 있습니다.</p>}
+      {historyNotice && <p role="status" className="border-b border-blue-100 bg-blue-50 px-5 py-3 text-sm text-blue-700">{historyNotice}</p>}
       {historyError && <p role="alert" className="px-5 py-3 text-sm text-red-700">{historyError}</p>}
-      <div className="overflow-x-auto"><table className="w-full min-w-[950px] text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{["등록일시","구분","수신자","발신번호","유형","내용","상태","알리고 ID"].map((h)=><th key={h} className="px-4 py-3">{h}</th>)}</tr></thead>
-      <tbody>{history.map((h)=><tr key={`${h.recordKind}:${h.id}`} className="border-t border-slate-100"><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{new Date(h.created_at).toLocaleString("ko-KR")}{h.reserved_at && <div className="mt-1">예약 {new Date(h.reserved_at).toLocaleString("ko-KR")}</div>}</td><td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">{sourceLabel(h.source)}</span><div className="mt-1 text-[10px] text-slate-400">{h.recordKind === "legacy" ? "이전 보관" : "신규 승인 요청"}</div></td><td className="px-4 py-3"><b>{h.receiver_name||"-"}</b><div className="text-xs text-slate-400">{prettyPhone(h.receiver_number)}</div></td><td className="px-4 py-3 text-xs">{prettyPhone(h.sender_number)}</td><td className="px-4 py-3 font-bold">{h.msg_type}</td><td className="max-w-[320px] truncate px-4 py-3 text-xs" title={h.message}>{h.message}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${h.status==="sent" || h.status==="delivered" || h.status==="delivery_delivered" ? "bg-emerald-50 text-emerald-700" : (h.status==="failed" || h.status==="delivery_failed") ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>{h.recordKind === "legacy" && ["pending_api", "queued", "sending"].includes(h.status) ? "이전 보관 · 발송 대상 아님" : statusLabel(h.status)}</span>{h.error_message && <div className="mt-1 max-w-56 text-xs text-red-600">{h.error_message}</div>}</td><td className="px-4 py-3 text-xs text-slate-400">{h.provider_message_id||"-"}</td></tr>)}
-      {!history.length&&!historyError&&<tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400">{historyLoading ? "발송내역을 확인하고 있습니다." : "아직 발송내역이 없습니다."}</td></tr>}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[950px] text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>
+        {canManageHistory && <th className="px-3 py-3"><input type="checkbox" aria-label="표시된 내역 최대 100건 선택" checked={history.length > 0 && history.slice(0,100).every((row)=>selectedHistoryIds.includes(row.id))} disabled={historyBusy || historyLoading || !history.length} onChange={(event)=>setSelectedHistoryIds(event.target.checked ? history.slice(0,100).map((row)=>row.id) : [])}/></th>}
+        {["등록일시","구분","수신자","발신번호","유형","내용","상태","알리고 ID"].map((label)=><th key={label} className="px-4 py-3">{label}</th>)}
+        {canManageHistory && <th className="px-4 py-3">관리</th>}
+      </tr></thead><tbody>
+        {history.map((h)=><tr key={`${h.recordKind}:${h.id}`} className={`border-t border-slate-100 ${selectedHistoryIds.includes(h.id) ? "bg-blue-50/50" : ""}`}>
+          {canManageHistory && <td className="px-3 py-3"><input type="checkbox" aria-label={`${h.receiver_name || h.receiver_number || "문자"} 내역 선택`} value={h.id} checked={selectedHistoryIds.includes(h.id)} disabled={historyBusy || historyLoading || (selectedHistoryIds.length >= 100 && !selectedHistoryIds.includes(h.id))} onChange={()=>toggleHistorySelection(h.id)}/></td>}
+          <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{new Date(h.created_at).toLocaleString("ko-KR")}{h.reserved_at && <div className="mt-1">예약 {new Date(h.reserved_at).toLocaleString("ko-KR")}</div>}{h.deleted_at && <div className="mt-1 text-slate-400">목록 삭제 {new Date(h.deleted_at).toLocaleString("ko-KR")}</div>}</td>
+          <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold">{sourceLabel(h.source)}</span><div className="mt-1 text-[10px] text-slate-400">{h.recordKind === "legacy" ? "이전 보관" : "신규 승인 요청"}</div></td>
+          <td className="px-4 py-3"><b>{h.receiver_name||"-"}</b><div className="text-xs text-slate-400">{prettyPhone(h.receiver_number)}</div></td>
+          <td className="px-4 py-3 text-xs">{prettyPhone(h.sender_number)}</td><td className="px-4 py-3 font-bold">{h.msg_type}</td>
+          <td className="max-w-[320px] truncate px-4 py-3 text-xs" title={h.message}>{h.message}</td>
+          <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${h.status==="sent" || h.status==="delivered" || h.status==="delivery_delivered" ? "bg-emerald-50 text-emerald-700" : (h.status==="failed" || h.status==="delivery_failed") ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>{h.recordKind === "legacy" && ["pending_api", "queued", "sending"].includes(h.status) ? "이전 보관 · 발송 대상 아님" : statusLabel(h.status)}</span>{h.error_message && <div className="mt-1 max-w-56 text-xs text-red-600">{h.error_message}</div>}</td>
+          <td className="px-4 py-3 text-xs text-slate-400">{h.provider_message_id||"-"}</td>
+          {canManageHistory && <td className="px-4 py-3"><button type="button" disabled={historyBusy || historyLoading} onClick={()=>void changeHistoryVisibility([h.id],historyView === "deleted")} aria-label={`${h.receiver_name || h.receiver_number || "문자"} 내역 ${historyView === "deleted" ? "복구" : "삭제"}`} className={`whitespace-nowrap text-xs font-bold disabled:opacity-40 ${historyView === "deleted" ? "text-blue-600" : "text-red-500"}`}>{historyView === "deleted" ? "복구" : "삭제"}</button></td>}
+        </tr>)}
+        {!history.length && !historyError && <tr><td colSpan={canManageHistory ? 10 : 8} className="px-4 py-12 text-center text-slate-400">{historyLoading ? "발송내역을 확인하고 있습니다." : historyView === "deleted" ? "삭제한 내역이 없습니다." : "아직 발송내역이 없습니다."}</td></tr>}
+      </tbody></table></div>
     </section>}
+
 
     {tab === "automation" && canManage && <div className="space-y-5">
       <DeliveryControls state={delivery} loading={deliveryLoading} saving={deliverySaving} error={deliveryError} onRefresh={()=>void loadDelivery()} onSave={saveDelivery}/>
