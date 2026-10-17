@@ -230,7 +230,7 @@ configure_https() {
     sed -e "s|__SERVER_NAME__|$server_name|g" -e "s|__CERT_PATH__|$cert|g" -e "s|__KEY_PATH__|$key|g" "$SCRIPT_DIR/nginx.conf.template" > "$WORK_DIR/nginx.conf"
     # Test with a temporary PID path; the systemd RuntimeDirectory exists only after service start.
     sed "s|/run/lawpower-sms-relay-gateway/nginx.pid|$WORK_DIR/nginx.pid|g" "$WORK_DIR/nginx.conf" > "$WORK_DIR/nginx-check.conf"
-    /usr/sbin/nginx -t -q -c "$WORK_DIR/nginx-check.conf"
+    /usr/sbin/nginx -t -q -c "$WORK_DIR/nginx-check.conf" -e /dev/null
     install_once "$WORK_DIR/nginx.conf" "$CONFIG_ROOT/nginx.conf" 644
     note 'HTTPS config verified and installed. No service started, enabled, reloaded, or firewall rule changed.'
 }
