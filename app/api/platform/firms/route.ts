@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePlatformUser, platformError, writePlatformAudit } from "@/lib/platform/server";
+import { loadFirmDirectory } from "@/lib/platform/firm-directory";
 
 async function firmCode(admin: any) {
   const { data, error } = await admin.rpc("generate_firm_code");
@@ -78,6 +79,9 @@ function pct(n: number, d: number) {
 export async function GET(request: NextRequest) {
   try {
     const { admin } = await requirePlatformUser(request, ["super_admin"]);
+    if (request.nextUrl.searchParams.get("view") === "directory") {
+      return NextResponse.json(await loadFirmDirectory(admin), { headers: { "Cache-Control": "private, no-store" } });
+    }
     const selectedMonth = validMonth(request.nextUrl.searchParams.get("month"));
     const trendMonths = Array.from({ length: 6 }, (_, i) => shiftMonth(selectedMonth, i - 5));
     const trendStart = monthBounds(trendMonths[0]).start;
