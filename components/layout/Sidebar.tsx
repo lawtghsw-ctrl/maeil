@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, Building2, FileSignature, Calculator, History, Inbox, KeyRound, LayoutDashboard, Link2, Menu, MessageSquareText, Percent, Scale, LogOut, UsersRound, X, type LucideIcon } from "lucide-react";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import type { PermissionKey } from "@/lib/permissions";
 
 type MenuItem = readonly [string, string, LucideIcon, PermissionKey | "admin"];

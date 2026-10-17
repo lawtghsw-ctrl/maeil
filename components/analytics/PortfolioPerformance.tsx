@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Building2, Download, RefreshCw, Search } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import type { PortfolioFirmPerformance, PortfolioPerformanceReport, PortfolioScope } from "@/lib/performance/portfolio";
 import type { PerformanceQuality } from "@/lib/performance/firm";
 import { STAGE_GENERIC_LABELS, type CaseStage } from "@/lib/types";

@@ -33,6 +33,8 @@ import { Card, PageHeader } from "@/components/ui/Primitives";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { exportAnalyticsMeetingWorkbook, type AnalyticsMeetingSheet } from "@/lib/analytics-excel";
+import { createStaffScopeKey, groupByKey, groupRelatedRows } from "@/lib/analytics-indexes";
+import { firstByKey } from "@/lib/list-indexes";
 
 const TABS = ["요약", "팀 · 인원", "상담 운영", "광고 · 소재", "수임 · 매출", "사건 · 수납"] as const;
 type Tab = typeof TABS[number];
@@ -75,18 +77,39 @@ export default function AnalyticsPage(){
   const rangeLeads=useMemo(()=>leads.filter(l=>inDateRange(l.receivedAt,start,end)),[leads,start,end]);
   const rangeCases=useMemo(()=>cases.filter(c=>inDateRange(c.contractDate,start,end)),[cases,start,end]);
   const rangePaid=useMemo(()=>installments.filter(i=>i.status==="완료"&&inDateRange(i.paidDate,start,end)),[installments,start,end]);
-  const cashSales=rangePaid.reduce((s,i)=>s+i.amount,0); const contractSales=rangeCases.reduce((s,c)=>s+c.contractAmount,0); const converted=rangeLeads.filter(l=>!!l.convertedClientId).length;
+  const {cashSales,contractSales,converted}=useMemo(()=>({
+    cashSales:rangePaid.reduce((s,i)=>s+i.amount,0),
+    contractSales:rangeCases.reduce((s,c)=>s+c.contractAmount,0),
+    converted:rangeLeads.filter(l=>!!l.convertedClientId).length,
+  }),[rangePaid,rangeCases,rangeLeads]);
 
   const firmIds=useMemo(()=>{
     const activeIds=firmDirectory.filter(f=>f.status==="active").map(f=>f.id);
     if(activeIds.length)return activeIds;
     return Array.from(new Set([...leads.map(x=>x._lawFirmId),...cases.map(x=>x._lawFirmId)].filter(Boolean) as string[]));
   },[firmDirectory,leads,cases]);
-  function aggregateCost(kind:"acquisition"|"labor"|"payment"|"fixed"){
-    if(!globalSuperView){ if(kind==="acquisition")return acquisitionCostForRange(leads,activeSettings,start,end); if(kind==="labor")return laborCostForRange(cases,installments,activeSettings,start,end); if(kind==="payment")return paymentFeesForRange(cases,installments,activeSettings,start,end); return fixedCostForRange(activeSettings,start,end); }
-    return firmIds.reduce((sum,firmId)=>{const s=settingsForFirm(settingsByFirm,firmId); const fl=leads.filter(x=>x._lawFirmId===firmId); const fc=cases.filter(x=>x._lawFirmId===firmId); const fi=installments.filter(x=>x._lawFirmId===firmId || fc.some(c=>c.id===x.caseId)); if(kind==="acquisition")return sum+acquisitionCostForRange(fl,s,start,end); if(kind==="labor")return sum+laborCostForRange(fc,fi,s,start,end); if(kind==="payment")return sum+paymentFeesForRange(fc,fi,s,start,end); return sum+fixedCostForRange(s,start,end);},0);
-  }
-  const acquisitionCost=aggregateCost("acquisition"), laborCost=aggregateCost("labor"), paymentFees=aggregateCost("payment"), fixedCost=aggregateCost("fixed");
+  const {acquisitionCost,laborCost,paymentFees,fixedCost}=useMemo(()=>{
+    if(!globalSuperView) return {
+      acquisitionCost:acquisitionCostForRange(leads,activeSettings,start,end),
+      laborCost:laborCostForRange(cases,installments,activeSettings,start,end),
+      paymentFees:paymentFeesForRange(cases,installments,activeSettings,start,end),
+      fixedCost:fixedCostForRange(activeSettings,start,end),
+    };
+    const firmLeads=groupByKey(leads,l=>l._lawFirmId);
+    const firmCases=groupByKey(cases,c=>c._lawFirmId);
+    const firmInstallments=groupRelatedRows(cases,installments,c=>c._lawFirmId,c=>c.id,i=>i.caseId,i=>i._lawFirmId);
+    return firmIds.reduce((total,firmId)=>{
+      const setting=settingsForFirm(settingsByFirm,firmId);
+      const fl=firmLeads.get(firmId)??[];
+      const fc=firmCases.get(firmId)??[];
+      const fi=firmInstallments.get(firmId)??[];
+      total.acquisitionCost+=acquisitionCostForRange(fl,setting,start,end);
+      total.laborCost+=laborCostForRange(fc,fi,setting,start,end);
+      total.paymentFees+=paymentFeesForRange(fc,fi,setting,start,end);
+      total.fixedCost+=fixedCostForRange(setting,start,end);
+      return total;
+    },{acquisitionCost:0,laborCost:0,paymentFees:0,fixedCost:0});
+  },[globalSuperView,leads,cases,installments,activeSettings,settingsByFirm,firmIds,start,end]);
   const contractNet=rangeCases.length? (contractSales-acquisitionCost-laborCost)/rangeCases.length:0;
   const cashProfit=cashSales-acquisitionCost-laborCost-paymentFees-fixedCost;
   const averageFee=moneyPer(contractSales,rangeCases.length);
@@ -99,37 +122,52 @@ export default function AnalyticsPage(){
   const currentDay=Math.max(1,Number(todayKey.slice(8,10))||1); const daysInCurrentMonth=Math.max(1,Number(currentMonth.end.slice(8,10))||30);
   const expectedContractsByToday=contractTarget*(currentDay/daysInCurrentMonth); const projectedMonthContracts=Math.round((rangeCases.length/currentDay)*daysInCurrentMonth);
   const remainingDays=Math.max(1,daysInCurrentMonth-currentDay+1); const requiredContractsPerDay=Math.max(0,(contractTarget-rangeCases.length)/remainingDays); const targetProgress=contractTarget>0?pct(rangeCases.length,contractTarget):0;
-  const totalStandardFee=rangeCases.reduce((sum,c)=>{const setting=settingsForFirm(settingsByFirm,c._lawFirmId,activeSettings);return sum+(standardFeeAt(setting,c.caseType,c.contractDate)?.baseFee??c.contractAmount)},0);
-  const totalDiscount=rangeCases.reduce((sum,c)=>{const setting=settingsForFirm(settingsByFirm,c._lawFirmId,activeSettings);const standard=standardFeeAt(setting,c.caseType,c.contractDate)?.baseFee??c.contractAmount;return sum+Math.max(0,standard-c.contractAmount)},0);
+  const {totalStandardFee,totalDiscount}=useMemo(()=>rangeCases.reduce((total,c)=>{
+    const setting=settingsForFirm(settingsByFirm,c._lawFirmId,activeSettings);
+    const standard=standardFeeAt(setting,c.caseType,c.contractDate)?.baseFee??c.contractAmount;
+    total.totalStandardFee+=standard;
+    total.totalDiscount+=Math.max(0,standard-c.contractAmount);
+    return total;
+  },{totalStandardFee:0,totalDiscount:0}),[rangeCases,settingsByFirm,activeSettings]);
   const discountRate=pct(totalDiscount,totalStandardFee);
 
   const activeCap=activeSettings.activeDbCap; const neglectDays=activeSettings.neglectedDays;
-  const activeLeads=leads.filter(l=>!terminalLead(l));
+  const activeLeads=useMemo(()=>leads.filter(l=>!terminalLead(l)),[leads]);
   const neglected=activeLeads.filter(l=>daysSince(lastActivityAt(l))>=(globalSuperView?settingsForFirm(settingsByFirm,l._lawFirmId).neglectedDays:neglectDays));
   const overCap=useMemo(()=>{const m=new Map<string,{count:number,cap:number}>();for(const l of activeLeads){const key=`${l._lawFirmId??"firm"}::${l.assignedStaff}`;const cap=globalSuperView?settingsForFirm(settingsByFirm,l._lawFirmId).activeDbCap:activeCap;const row=m.get(key)??{count:0,cap};row.count+=1;row.cap=cap;m.set(key,row)}return Array.from(m.entries()).filter(([,row])=>row.count>row.cap);},[activeLeads,activeCap,globalSuperView,settingsByFirm]);
-  const overdueNow=installments.filter(i=>i.status==="연체"||i.status==="실패");
+  const overdueNow=useMemo(()=>installments.filter(i=>i.status==="연체"||i.status==="실패"),[installments]);
   const docDelay=cases.filter(c=>c.status==="진행중"&&c.stage==="서류준비"&&daysSince(c.stageUpdatedAt)>=14);
 
   const allStaff=useMemo(()=>Array.from(new Set([...workStaffNames,...leads.map(l=>l.assignedStaff),...cases.map(c=>c.assignedStaff)].filter(Boolean))).sort((a,b)=>a.localeCompare(b,"ko")),[workStaffNames,leads,cases]);
   const staffRows=useMemo(()=>{
+    const staffKey=createStaffScopeKey(globalSuperView);
+    const staffLeads=groupByKey(rangeLeads,staffKey);
+    const staffCases=groupByKey(rangeCases,staffKey);
+    const allStaffCases=groupByKey(cases,staffKey);
+    const staffInstallments=groupRelatedRows(cases,installments,staffKey,c=>c.id,i=>i.caseId);
+    const staffActiveLeads=groupByKey(activeLeads,staffKey);
+    const firmLeadGroups=groupByKey(rangeLeads,l=>l._lawFirmId);
+    const firmAcquisitionCosts=new Map<string|undefined,number>();
     const keys=new Map<string,{label:string,firmId?:string,staff:string}>();
     for(const staff of allStaff) if(!globalSuperView)keys.set(staff,{label:staff,staff});
     if(globalSuperView){for(const l of leads){const key=`${l._lawFirmId??"none"}::${l.assignedStaff}`;keys.set(key,{label:`${l._lawFirmName??"로펌"} · ${l.assignedStaff}`,firmId:l._lawFirmId,staff:l.assignedStaff})}for(const c of cases){const key=`${c._lawFirmId??"none"}::${c.assignedStaff}`;keys.set(key,{label:`${c._lawFirmName??"로펌"} · ${c.assignedStaff}`,firmId:c._lawFirmId,staff:c.assignedStaff})}}
     return Array.from(keys.values()).map(k=>{
-      const fl=rangeLeads.filter(l=>l.assignedStaff===k.staff&&(!globalSuperView||l._lawFirmId===k.firmId));
-      const fc=rangeCases.filter(c=>c.assignedStaff===k.staff&&(!globalSuperView||c._lawFirmId===k.firmId));
-      const allFc=cases.filter(c=>c.assignedStaff===k.staff&&(!globalSuperView||c._lawFirmId===k.firmId));
-      const fi=installments.filter(i=>allFc.some(c=>c.id===i.caseId));
+      const key=staffKey({assignedStaff:k.staff,_lawFirmId:k.firmId});
+      const fl=staffLeads.get(key)??[];
+      const fc=staffCases.get(key)??[];
+      const allFc=allStaffCases.get(key)??[];
+      const fi=staffInstallments.get(key)??[];
       const setting=settingsForFirm(settingsByFirm,k.firmId,activeSettings);
       const cash=cashByStaff(allFc,fi,start,end).get(k.staff)??0;
       const comp=staffCompensationForRange(k.staff,allFc,fi,setting,start,end);
-      const firmLeadRows=rangeLeads.filter(l=>!globalSuperView||l._lawFirmId===k.firmId);
-      const firmAcq=acquisitionCostForRange(firmLeadRows,setting,start,end);
+      const firmLeadRows=globalSuperView?(firmLeadGroups.get(k.firmId)??[]):rangeLeads;
+      if(!firmAcquisitionCosts.has(k.firmId))firmAcquisitionCosts.set(k.firmId,acquisitionCostForRange(firmLeadRows,setting,start,end));
+      const firmAcq=firmAcquisitionCosts.get(k.firmId)!;
       const allocatedAcq=firmLeadRows.length?firmAcq*(fl.length/firmLeadRows.length):0;
       const prod=moneyPer(fc.reduce((x,c)=>x+c.contractAmount,0),fl.length);
       const speeds=fl.map(firstActivityMinutes).filter((x):x is number=>x!==undefined);
       const contacts=fl.reduce((x,l)=>x+contactCount(l),0);
-      const active=activeLeads.filter(l=>l.assignedStaff===k.staff&&(!globalSuperView||l._lawFirmId===k.firmId)).length;
+      const active=staffActiveLeads.get(key)?.length??0;
       const standardTotal=fc.reduce((sum,c)=>sum+(standardFeeAt(setting,c.caseType,c.contractDate)?.baseFee??c.contractAmount),0);
       const discountTotal=fc.reduce((sum,c)=>sum+Math.max(0,(standardFeeAt(setting,c.caseType,c.contractDate)?.baseFee??c.contractAmount)-c.contractAmount),0);
       const simpleInstallments=fc.filter(c=>c.paymentMethod==="단순분납").length;
@@ -144,9 +182,14 @@ export default function AnalyticsPage(){
     }).sort((a,b)=>b.contribution-a.contribution);
   },[allStaff,globalSuperView,leads,cases,rangeLeads,rangeCases,installments,settingsByFirm,activeSettings,start,end,activeLeads]);
 
-  const contactSpeeds=rangeLeads.map(firstActivityMinutes).filter((x):x is number=>x!==undefined); const avgContacts=rangeLeads.length?rangeLeads.reduce((s,l)=>s+contactCount(l),0)/rangeLeads.length:0;
-  const connected=rangeLeads.filter(successfulContact).length, consult=rangeLeads.filter(consultStarted).length, completed=rangeLeads.filter(consultCompleted).length;
-  const shortClosed=rangeLeads.filter(l=>terminalLead(l)&&contactCount(l)<=2&&!l.convertedClientId).length;
+  const {contactSpeeds,avgContacts,connected,consult,completed,shortClosed}=useMemo(()=>({
+    contactSpeeds:rangeLeads.map(firstActivityMinutes).filter((x):x is number=>x!==undefined),
+    avgContacts:rangeLeads.length?rangeLeads.reduce((s,l)=>s+contactCount(l),0)/rangeLeads.length:0,
+    connected:rangeLeads.filter(successfulContact).length,
+    consult:rangeLeads.filter(consultStarted).length,
+    completed:rangeLeads.filter(consultCompleted).length,
+    shortClosed:rangeLeads.filter(l=>terminalLead(l)&&contactCount(l)<=2&&!l.convertedClientId).length,
+  }),[rangeLeads]);
 
   const channelRows=useMemo(()=>{
     type R={key:string,label:string,firmId?:string,leads:DbLead[],spend:number};const map=new Map<string,R>();
@@ -156,13 +199,28 @@ export default function AnalyticsPage(){
     return Array.from(map.values()).map(r=>{const ids=new Set(r.leads.map(l=>l.id));const cc=rangeCases.filter(c=>c.fromLeadId&&ids.has(c.fromLeadId));const won=r.leads.filter(l=>!!l.convertedClientId).length;const conn=r.leads.filter(successfulContact).length;return{...r,db:r.leads.length,won,revenue:cc.reduce((x,c)=>x+c.contractAmount,0),cpl:moneyPer(r.spend,r.leads.length),cpa:moneyPer(r.spend,won),connRate:pct(conn,r.leads.length)}}).sort((a,b)=>b.revenue-a.revenue);
   },[rangeLeads,rangeCases,settingsByFirm,activeSettings,globalSuperView,start,end]);
 
-  const allLedger=useMemo(()=>rangeCases.map(c=>{const client=clients.find(x=>x.id===c.clientId);const s=settingsForFirm(settingsByFirm,c._lawFirmId,activeSettings);const std=standardFeeAt(s,c.caseType,c.contractDate);const fees=installments.filter(i=>i.caseId===c.id&&i.status==="완료").reduce((sum,i)=>sum+paymentFeeFor(c.paymentMethod,i.amount,effectiveFinancialConfig(s,(i.paidDate||c.contractDate).slice(0,7))),0);const overdue=installments.some(i=>i.caseId===c.id&&(i.status==="연체"||i.status==="실패"));const status=c.paidAmount>=c.contractAmount&&c.contractAmount>0?"완납":overdue?"연체":"분납 중";return{case:c,client,standard:std?.baseFee??0,discount:Math.max(0,(std?.baseFee??c.contractAmount)-c.contractAmount),fee:fees,net:Math.max(0,c.paidAmount-fees),status};}),[rangeCases,clients,settingsByFirm,activeSettings,installments]);
+  const clientsById=useMemo(()=>firstByKey(clients,c=>c.id),[clients]);
+  const installmentsByCase=useMemo(()=>groupByKey(installments,i=>i.caseId),[installments]);
+  const allLedger=useMemo(()=>rangeCases.map(c=>{
+    const client=clientsById.get(c.clientId);
+    const s=settingsForFirm(settingsByFirm,c._lawFirmId,activeSettings);
+    const std=standardFeeAt(s,c.caseType,c.contractDate);
+    const caseInstallments=installmentsByCase.get(c.id)??[];
+    const fees=caseInstallments.filter(i=>i.status==="완료").reduce((sum,i)=>sum+paymentFeeFor(c.paymentMethod,i.amount,effectiveFinancialConfig(s,(i.paidDate||c.contractDate).slice(0,7))),0);
+    const overdue=caseInstallments.some(i=>i.status==="연체"||i.status==="실패");
+    const status=c.paidAmount>=c.contractAmount&&c.contractAmount>0?"완납":overdue?"연체":"분납 중";
+    return{case:c,client,standard:std?.baseFee??0,discount:Math.max(0,(std?.baseFee??c.contractAmount)-c.contractAmount),fee:fees,net:Math.max(0,c.paidAmount-fees),status};
+  }),[rangeCases,clientsById,settingsByFirm,activeSettings,installmentsByCase]);
   const ledger=useMemo(()=>allLedger.filter(r=>staffFilter==="전체"||r.case.assignedStaff===staffFilter),[allLedger,staffFilter]);
 
   async function exportXlsx(){const XLSX=await import("xlsx");const rows=ledger.map(r=>({수임일:r.case.contractDate,의뢰인이름:r.client?.name??"-",담당상담사:r.case.assignedStaff,사건유형:r.case.caseType,납부방식:r.case.paymentMethod,기준수임료:r.standard,계약금액:r.case.contractAmount,할인액:r.discount,실입금액:r.case.paidAmount,수수료:r.fee,실수령액:r.net,상태:r.status}));const staff=Array.from(new Set(ledger.map(x=>x.case.assignedStaff))).map(name=>{const rr=ledger.filter(x=>x.case.assignedStaff===name);return{상담사:name,계약건수:rr.length,계약총액:rr.reduce((s,x)=>s+x.case.contractAmount,0),총실입금매출:rr.reduce((s,x)=>s+x.case.paidAmount,0),수수료비용:rr.reduce((s,x)=>s+x.fee,0),실수령매출:rr.reduce((s,x)=>s+x.net,0),미입금잔액:rr.reduce((s,x)=>s+Math.max(0,x.case.contractAmount-x.case.paidAmount),0)}});const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"계약별 원장");XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(staff),"상담사별 합계");XLSX.writeFile(wb,`계약원장_${start}_${end}.xlsx`);}
   function exportLedgerCsv(){downloadCsv(ledger.map(r=>({수임일:r.case.contractDate,의뢰인이름:r.client?.name??"-",담당상담사:r.case.assignedStaff,사건유형:r.case.caseType,납부방식:r.case.paymentMethod,기준수임료:r.standard,계약금액:r.case.contractAmount,할인액:r.discount,실입금액:r.case.paidAmount,수수료:r.fee,실수령액:r.net,상태:r.status})),`계약원장_${start}_${end}.csv`)}
 
-  const stageRows=useMemo(()=>Array.from(new Set(cases.map(c=>c.stage))).map(stage=>({stage,count:cases.filter(c=>c.stage===stage&&c.status!=="취하").length})).sort((a,b)=>b.count-a.count),[cases]);
+  const stageRows=useMemo(()=>{
+    const counts=new Map<(typeof cases)[number]["stage"],number>();
+    for(const c of cases)counts.set(c.stage,(counts.get(c.stage)??0)+(c.status!=="취하"?1:0));
+    return Array.from(counts,([stage,count])=>({stage,count})).sort((a,b)=>b.count-a.count);
+  },[cases]);
   const selfInstallments=rangeCases.filter(c=>c.paymentMethod==="단순분납").length;
   const latePaid=rangePaid.filter(i=>i.paidDate&&i.paidDate>i.dueDate).length; const overdueDue=overdueNow.filter(i=>inDateRange(i.dueDate,start,end)).length; const overdueRecovery=pct(latePaid,latePaid+overdueDue);
 

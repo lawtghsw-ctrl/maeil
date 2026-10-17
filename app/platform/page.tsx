@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, Building2, Database, Eye, FileWarning, Plus, RefreshCcw, ShieldCheck, UsersRound, type LucideIcon } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import DemoFirmSetup from "@/components/platform/DemoFirmSetup";
 
 const PlatformPerformance = dynamic(() => import("@/components/analytics/PlatformPerformance"), { loading: () => <div role="status" className="rounded-2xl border bg-white p-8 text-center text-sm text-slate-400">판매 성과를 불러오는 중입니다.</div> });

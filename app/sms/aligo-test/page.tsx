@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 export default function AligoTestPage(){
   const {profile,superAdminFirmScope}=useStore();
   const lawFirmId=profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;

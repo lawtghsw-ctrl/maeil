@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { Building2, ChevronLeft, Eye, ShieldCheck } from "lucide-react";
-import { AppStoreProvider, useStore } from "@/lib/store";
+import { AppStoreProvider, useStoreSession } from "@/lib/store";
 import { permissionForPath } from "@/lib/permissions";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
@@ -11,7 +11,7 @@ import { authJson } from "@/lib/platform/client";
 
 function ProtectedApp({ children }: { children: ReactNode }) {
   const pathname = usePathname(); const router = useRouter();
-  const { isAdmin, can, profile, superAdminFirmScope, exitSuperAdminFirmScope } = useStore();
+  const { isAdmin, can, profile, superAdminFirmScope, exitSuperAdminFirmScope } = useStoreSession();
   const role = profile?.platformRole ?? "staff";
   const rule = permissionForPath(pathname);
   const permissionAllowed = !rule || (rule.adminOnly ? isAdmin : !rule.permission || can(rule.permission));

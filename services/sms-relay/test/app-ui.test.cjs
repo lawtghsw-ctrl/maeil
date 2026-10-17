@@ -86,7 +86,7 @@ function harness(options = {}) {
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: module.exports, console, Date, Math, Map, AbortController, Headers, crypto: require('node:crypto').webcrypto, fetch: fetchMock, confirm: () => options.confirm !== false,
     document: documentMock, window: documentMock, setInterval(fn, ms) { assert.equal(ms,12000); const id=++intervalId;intervals.set(id,fn);return id; }, clearInterval(id) {intervals.delete(id);},
-    require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; throw Error(name); } });
+    require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store, useStoreSession: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; throw Error(name); } });
   const props = { initialDraft: options.draft ?? draft(), onDraftChange: (value) => snapshots.push(value) };
   const render = () => finalRuntime.render(module.exports.SmsFirmWorkspace, props);
   const flush = async () => { for (let i = 0; i < 4; i++) { await new Promise(setImmediate); render(); } };

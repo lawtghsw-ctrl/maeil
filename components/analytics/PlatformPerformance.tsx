@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, BarChart3, Building2, CalendarDays, Download, Info, RefreshCw, Search, TrendingUp, WalletCards, X } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import {
   performanceMonthNow,
   summarizePlatformMonth,

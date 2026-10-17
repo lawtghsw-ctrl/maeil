@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, KeyRound, Plus, RefreshCw, Search, ShieldCheck, UserCog, UserRoundCheck, UsersRound } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import { createClient } from "@/lib/supabase/client";
 import {
   ALL_PERMISSION_KEYS,

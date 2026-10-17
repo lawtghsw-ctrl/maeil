@@ -3,7 +3,7 @@
 // 상담메모는 별도 버튼/팝업으로 숨기지 않고 상담일지 하단에 항상 보이도록 배치합니다.
 // 왼쪽에서 바로 입력하고, 아래에는 최신순 메모를 짧은 내부 스크롤로 확인할 수 있습니다.
 import { useState, type ChangeEvent } from "react";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import type { MemoLogEntry, MemoLogTag } from "@/lib/types";
 import { Button } from "@/components/ui/Primitives";
 import { SectionCard, compactTextareaClass } from "./shared";

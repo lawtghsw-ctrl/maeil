@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { KeyRound, ShieldCheck } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 
 export default function AccountPage() {
   const { profile, currentUser } = useStore();

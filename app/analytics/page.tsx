@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { BarChart3, FileSpreadsheet } from "lucide-react";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import { isManagerProfile } from "@/lib/management-analytics";
 import type { LawyerDraftState } from "@/lib/performance/lawyers";
 import { authJson } from "@/lib/platform/client";

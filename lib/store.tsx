@@ -12,10 +12,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { useStoreFieldState } from "./store-state";
 import type { User } from "@supabase/supabase-js";
+import { usePathname } from "next/navigation";
+import { CORE_STORE_TABLES, ENTITY_STORE_TABLES, createStoreRefreshQueue, retainEqual, routeStoreTable, type StoreEntityTable, type StoreRefreshBatch } from "./store-refresh";
 import type {
   BoardPost,
   CaseRecord,
@@ -163,21 +167,34 @@ interface AppStoreValue {
 }
 
 const AppStoreContext = createContext<AppStoreValue | null>(null);
+export type AppStoreSession = Pick<AppStoreValue,
+  "loading" | "syncError" | "currentUser" | "profile" | "staffDirectory" | "workStaffNames" | "firmDirectory" |
+  "superAdminFirmScope" | "enterSuperAdminFirmScope" | "exitSuperAdminFirmScope" | "isAdmin" | "currentStaff" | "can" | "reloadData" | "signOut">;
+const AppStoreSessionContext = createContext<AppStoreSession | null>(null);
+
+interface StoreReadScope {
+  userId: string;
+  profileRow: unknown;
+  firmId?: string;
+  firmNames: Map<string, string>;
+  directory: AppUserProfile[];
+}
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const configured = hasSupabaseEnv();
   const supabase = useMemo(() => (configured ? createClient() : null), [configured]);
 
-  const [clients, setClients] = useState<Client[]>([]);
-  const [cases, setCases] = useState<CaseRecord[]>([]);
-  const [installments, setInstallments] = useState<Installment[]>([]);
-  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
-  const [leads, setLeads] = useState<DbLead[]>([]);
-  const [posts, setPosts] = useState<BoardPost[]>([]);
-  const [caseDocuments, setCaseDocuments] = useState<DocumentState>({});
-  const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
-  const [settlementRates, setSettlementRates] = useState<SettlementRateMap>(() => defaultSettlementRates());
-  const [minLivingCostTable, setMinLivingCostTable] = useState<MinLivingCostTable>(() => defaultMinLivingCostTable());
+  const dataVersions = useRef<Record<string, number>>({});
+  const [clients, setClients, readClients] = useStoreFieldState<Client[]>([], dataVersions, "app_clients");
+  const [cases, setCases, readCases] = useStoreFieldState<CaseRecord[]>([], dataVersions, "app_cases");
+  const [installments, setInstallments, readInstallments] = useStoreFieldState<Installment[]>([], dataVersions, "app_installments");
+  const [scheduleItems, setScheduleItems, readScheduleItems] = useStoreFieldState<ScheduleItem[]>([], dataVersions, "app_schedule_items");
+  const [leads, setLeads, readLeads] = useStoreFieldState<DbLead[]>([], dataVersions, "app_leads");
+  const [posts, setPosts, readPosts] = useStoreFieldState<BoardPost[]>([], dataVersions, "app_board_posts");
+  const [caseDocuments, setCaseDocuments, readCaseDocuments] = useStoreFieldState<DocumentState>({}, dataVersions, "firm_settings");
+  const [changeLog, setChangeLog, readChangeLog] = useStoreFieldState<ChangeLogEntry[]>([], dataVersions, "app_change_logs");
+  const [settlementRates, setSettlementRates, readSettlementRates] = useStoreFieldState<SettlementRateMap>(() => defaultSettlementRates(), dataVersions, "firm_settings");
+  const [minLivingCostTable, setMinLivingCostTable, readMinLivingCostTable] = useStoreFieldState<MinLivingCostTable>(() => defaultMinLivingCostTable(), dataVersions, "firm_settings");
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<AppUserProfile | null>(null);
   const [staffDirectory, setStaffDirectory] = useState<AppUserProfile[]>([]);
@@ -191,9 +208,35 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return null;
     }
   });
+  const selectedScopeRef = useRef(superAdminFirmScope);
+  selectedScopeRef.current = superAdminFirmScope;
   const [loading, setLoading] = useState(true);
+  const [hasShownContent, setHasShownContent] = useState(false);
+  useEffect(() => { if (!loading) setHasShownContent(true); }, [loading]);
   const [syncError, setSyncError] = useState<string | null>(configured ? null : "Supabase 환경변수가 설정되지 않았습니다.");
   const currentUserId = currentUser?.id;
+  const pathname = usePathname() ?? "/";
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const readScopeRef = useRef<StoreReadScope | null>(null);
+  const loadedExtrasRef = useRef(new Set<string>());
+  const [readyExtras, setReadyExtras] = useState<readonly string[]>([]);
+  const [readScopeKey, setReadScopeKey] = useState("");
+  const runRefreshRef = useRef<(batch: StoreRefreshBatch) => Promise<void>>(async () => {});
+  const providerMounted = useRef(true);
+  useEffect(() => { providerMounted.current = true; return () => { providerMounted.current = false; }; }, []);
+  const refreshQueue = useMemo(() => createStoreRefreshQueue(
+    batch => runRefreshRef.current(batch),
+    error => setSyncError(error instanceof Error ? error.message : "Supabase 데이터 로딩에 실패했습니다.")
+  ), [supabase]);
+  const clearBusinessData = useCallback(() => {
+    setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]);
+    setStaffDirectory([]); setFirmDirectory([]); setCaseDocuments({}); setSettlementRates(defaultSettlementRates()); setMinLivingCostTable(defaultMinLivingCostTable());
+  }, []);
+  const invalidateScope = useCallback(() => {
+    refreshQueue.invalidate(); readScopeRef.current = null; loadedExtrasRef.current.clear();
+    setReadyExtras([]); setReadScopeKey(""); setLoading(true); clearBusinessData();
+  }, [clearBusinessData, refreshQueue]);
 
   const actorName = profile?.displayName || profile?.staffName || currentUser?.email || "시스템";
   const currentStaff = profile?.platformRole === "super_admin" ? undefined : profile?.staffName;
@@ -215,13 +258,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem("lawpower_super_firm_scope", JSON.stringify(firm));
     }
+    const selected = selectedScopeRef.current;
+    if (selected?.id === firm.id && selected.name === firm.name && selected.firmCode === firm.firmCode && selected.status === firm.status) return;
+    selectedScopeRef.current = firm;
+    invalidateScope();
     setSuperAdminFirmScope(firm);
-  }, []);
+  }, [invalidateScope]);
 
   const exitSuperAdminFirmScope = useCallback(() => {
     if (typeof window !== "undefined") window.sessionStorage.removeItem("lawpower_super_firm_scope");
+    if (selectedScopeRef.current === null) return;
+    selectedScopeRef.current = null;
+    invalidateScope();
     setSuperAdminFirmScope(null);
-  }, []);
+  }, [invalidateScope]);
   const can = useCallback(
     (permission: PermissionKey) => {
       if (!profile?.isActive) return false;
@@ -286,201 +336,214 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [supabase]
   );
 
-  const reloadData = useCallback(async () => {
-    if (!supabase) {
-      setLoading(false);
-      return;
+  const applyEntityRows = useCallback((table: StoreEntityTable, rows: unknown[], versions: Record<string, number>) => {
+    if ((dataVersions.current[table] ?? 0) !== (versions[table] ?? 0)) return;
+    switch (table) {
+      case "app_leads": readLeads(p => retainEqual(p, (rows as DbLead[]).sort((a,b) => b.receivedAt.localeCompare(a.receivedAt)))); break;
+      case "app_clients": readClients(p => retainEqual(p, rows as Client[])); break;
+      case "app_cases": readCases(p => retainEqual(p, rows as CaseRecord[])); break;
+      case "app_installments": readInstallments(p => retainEqual(p, rows as Installment[])); break;
+      case "app_schedule_items": readScheduleItems(p => retainEqual(p, rows as ScheduleItem[])); break;
+      case "app_board_posts": readPosts(p => retainEqual(p, rows as BoardPost[])); break;
+      case "app_change_logs": readChangeLog(p => retainEqual(p, (rows as ChangeLogEntry[]).sort((a,b) => b.at.localeCompare(a.at)))); break;
     }
-
+    if (table === "app_board_posts" || table === "app_change_logs") {
+      loadedExtrasRef.current.add(table);
+      setReadyExtras(p => p.includes(table) ? p : [...p,table]);
+    }
+  }, []);
+  const applySettings = useCallback((rows: {key:string;value:unknown}[] | null, directory: AppUserProfile[], versions: Record<string, number>) => {
+    if ((dataVersions.current.firm_settings ?? 0) !== (versions.firm_settings ?? 0)) return;
+    const settings = new Map((rows ?? []).map(row => [row.key,row.value]));
+    const defaults = defaultSettlementRates(directory.map(row => row.staffName).filter(Boolean) as string[]);
+    const rates = settings.get("settlement_rates") as SettlementRateMap | undefined;
+    readSettlementRates(p => retainEqual(p, rates ? {...defaults,...rates} : defaults));
+    readMinLivingCostTable(p => retainEqual(p, (settings.get("min_living_cost") as MinLivingCostTable | undefined) ?? defaultMinLivingCostTable()));
+    readCaseDocuments(p => retainEqual(p, (settings.get("case_documents") as DocumentState | undefined) ?? {}));
+  }, []);
+  const bootstrapData = useCallback(async (batch: StoreRefreshBatch) => {
+    if (!supabase) { if (batch.isCurrent()) setLoading(false); return; }
     try {
-      setSyncError(null);
-      const { data: userData, error: userError } = await supabase.auth.getUser();
+      const {data:userData,error:userError} = await supabase.auth.getUser();
+      if (!batch.isCurrent()) return;
       if (userError) throw userError;
       const user = userData.user;
-      setCurrentUser(user ?? null);
-      if (!user) {
-        setLoading(false);
-        return;
+      if (readScopeRef.current && readScopeRef.current.userId !== user?.id) {
+        readScopeRef.current=null; loadedExtrasRef.current.clear(); setReadyExtras([]); setReadScopeKey(""); clearBusinessData(); setLoading(true);
       }
-
-      // Resolve identity before fetching business tables. SUPER_ADMIN must never
-      // download all firms' operational CRM rows into the browser store.
-      const { data: p, error: profileError } = await supabase
-        .from("profiles")
-        .select("id,email,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (profileError) throw profileError;
-
-      if (!p || p.is_active === false) {
-        setProfile(p ? {
-          id: p.id,
-          email: p.email ?? user.email ?? undefined,
-          displayName: p.display_name || user.email || "사용자",
-          role: p.role === "admin" ? "admin" : "staff",
-          platformRole: p.platform_role || "staff",
-          lawFirmId: p.law_firm_id || undefined,
-          staffName: asStaffName(p.staff_name || p.display_name),
-          isActive: false,
-          isWorkStaff: p.is_work_staff !== false,
-          permissions: (p.permissions ?? {}) as PermissionMap,
-        } : null);
-        setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
-        setSyncError(p ? "비활성 계정입니다. 관리자에게 계정 활성화를 요청해주세요." : "사용자 프로필이 없습니다. Supabase 초기 SQL을 확인해주세요.");
-        await supabase.auth.signOut();
-        if (typeof window !== "undefined") window.location.replace("/login");
-        return;
-      }
-
-      const resolvedProfile: AppUserProfile = {
-        id: p.id,
-        email: p.email ?? user.email ?? undefined,
-        displayName: p.display_name || user.email || "사용자",
-        role: p.role === "admin" ? "admin" : "staff",
-        platformRole: p.platform_role || "staff",
-        lawFirmId: p.law_firm_id || undefined,
-        staffName: asStaffName(p.staff_name || p.display_name),
-        isActive: true,
-        isWorkStaff: p.is_work_staff !== false,
-        permissions: (p.permissions ?? {}) as PermissionMap,
-      };
-      setProfile(resolvedProfile);
-
-      const { data: activeUser, error: activeError } = await supabase.rpc("is_active_user");
-      if (activeError || activeUser !== true) {
-        setLeads([]); setClients([]); setCases([]); setInstallments([]); setScheduleItems([]); setPosts([]); setChangeLog([]); setStaffDirectory([]);
-        setSyncError("소속 로펌이 이용중지 상태이거나 사용할 수 없는 계정입니다.");
-        await supabase.auth.signOut();
-        if (typeof window !== "undefined") window.location.replace("/login");
-        return;
-      }
-
-      const { data: firmRows, error: firmError } = await supabase
-        .from("law_firms")
-        .select("id,firm_code,name,status")
-        .order("name");
-      if (firmError) throw firmError;
-      const firms: LawFirmSummary[] = (firmRows ?? []).map((firm: any) => ({
-        id: firm.id, firmCode: String(firm.firm_code), name: firm.name, status: firm.status === "suspended" ? "suspended" : "active",
-      }));
-      setFirmDirectory(firms);
-      const firmNames = new Map(firms.map((firm) => [firm.id, firm.name]));
-
-      let targetFirmId = resolvedProfile.lawFirmId;
-      if (resolvedProfile.platformRole === "super_admin" && superAdminFirmScope?.id) {
-        const scopedFirm = firms.find((firm) => firm.id === superAdminFirmScope.id);
-        if (!scopedFirm) {
-          exitSuperAdminFirmScope();
-          throw new Error("선택한 로펌 정보를 찾지 못했습니다.");
-        }
-        if (
-          scopedFirm.name !== superAdminFirmScope.name ||
-          scopedFirm.firmCode !== superAdminFirmScope.firmCode ||
-          scopedFirm.status !== superAdminFirmScope.status
-        ) enterSuperAdminFirmScope(scopedFirm);
-        targetFirmId = scopedFirm.id;
-      }
-
-      const globalMode = resolvedProfile.platformRole === "super_admin" && !targetFirmId;
-      if (!globalMode && !targetFirmId) throw new Error("소속 로펌을 확인할 수 없습니다.");
-
-      const [
-        loadedLeads, loadedClients, loadedCases, loadedInstallments, loadedSchedule, loadedPosts, loadedChanges, directoryRes, firmSettingsRes,
-      ] = await Promise.all([
-        fetchEntityTable<DbLead>("app_leads", globalMode ? undefined : targetFirmId, firmNames),
-        fetchEntityTable<Client>("app_clients", globalMode ? undefined : targetFirmId, firmNames),
-        fetchEntityTable<CaseRecord>("app_cases", globalMode ? undefined : targetFirmId, firmNames),
-        fetchEntityTable<Installment>("app_installments", globalMode ? undefined : targetFirmId, firmNames),
-        fetchEntityTable<ScheduleItem>("app_schedule_items", globalMode ? undefined : targetFirmId, firmNames),
-        fetchEntityTable<BoardPost>("app_board_posts", globalMode ? undefined : targetFirmId, firmNames),
-        fetchEntityTable<ChangeLogEntry>("app_change_logs", globalMode ? undefined : targetFirmId, firmNames),
-        globalMode
-          ? supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name")
-          : supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id", targetFirmId!).eq("is_work_staff", true).order("display_name"),
-        globalMode
-          ? Promise.resolve({ data: null, error: null })
-          : supabase.from("firm_settings").select("key,value").eq("law_firm_id", targetFirmId!),
+      setCurrentUser(p => retainEqual(p,user ?? null));
+      if (!user) { readScopeRef.current=null; setProfile(null); clearBusinessData(); return; }
+      // These reads are independent after identity verification.
+      const [profileResult,activeResult,firmResult] = await Promise.all([
+        supabase.from("profiles").select("id,email,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("id",user.id).maybeSingle(),
+        supabase.rpc("is_active_user"),
+        supabase.from("law_firms").select("id,firm_code,name,status").order("name"),
       ]);
-      if (directoryRes.error) throw directoryRes.error;
-
-      setLeads(loadedLeads.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)));
-      setClients(loadedClients);
-      setCases(loadedCases);
-      setInstallments(loadedInstallments);
-      setScheduleItems(loadedSchedule);
-      setPosts(loadedPosts);
-      setChangeLog(loadedChanges.sort((a, b) => b.at.localeCompare(a.at)));
-
-      const directory: AppUserProfile[] = (directoryRes.data ?? []).map((row: any) => ({
-        id: row.id,
-        displayName: row.display_name || row.staff_name || "사용자",
-        role: row.role === "admin" ? "admin" : "staff",
-        platformRole: row.platform_role || "staff",
-        lawFirmId: row.law_firm_id || undefined,
-        staffName: asStaffName(row.staff_name || row.display_name),
-        isActive: row.is_active !== false,
-        isWorkStaff: row.is_work_staff !== false,
-        permissions: (row.permissions ?? {}) as PermissionMap,
-      }));
-      setStaffDirectory(directory);
-
-      if (globalMode) {
-        setSettlementRates(defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]));
-        setMinLivingCostTable(defaultMinLivingCostTable());
-        setCaseDocuments({});
-      } else {
-        const { data: firmSettingsData, error: firmSettingsError } = firmSettingsRes;
-        if (firmSettingsError) throw firmSettingsError;
-        const firmSettings = new Map((firmSettingsData ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
-        const rates = firmSettings.get("settlement_rates") as SettlementRateMap | undefined;
-        const living = firmSettings.get("min_living_cost") as MinLivingCostTable | undefined;
-        const docs = firmSettings.get("case_documents") as DocumentState | undefined;
-        const rateDefaults = defaultSettlementRates(directory.map((item) => item.staffName).filter(Boolean) as string[]);
-        setSettlementRates(rates ? { ...rateDefaults, ...rates } : rateDefaults);
-        setMinLivingCostTable(living ?? defaultMinLivingCostTable());
-        setCaseDocuments(docs ?? {});
+      if (!batch.isCurrent()) return;
+      const {data:p,error:profileError}=profileResult;
+      if (profileError) throw profileError;
+      if (!p || p.is_active===false || activeResult.error || activeResult.data!==true) {
+        readScopeRef.current=null; setProfile(null); clearBusinessData();
+        setSyncError(!p ? "사용자 프로필이 없습니다. Supabase 초기 SQL을 확인해주세요."
+          : p.is_active === false ? "비활성 계정입니다. 관리자에게 계정 활성화를 요청해주세요."
+          : "소속 로펌이 이용중지 상태이거나 사용할 수 없는 계정입니다.");
+        await supabase.auth.signOut();
+        if (batch.isCurrent() && typeof window!=="undefined") window.location.replace("/login");
+        return;
       }
-    } catch (err) {
-      setSyncError(err instanceof Error ? err.message : "Supabase 데이터 로딩에 실패했습니다.");
-    } finally {
-      setLoading(false);
+      const resolvedProfile: AppUserProfile={
+        id:p.id,email:p.email ?? user.email ?? undefined,displayName:p.display_name || user.email || "사용자",
+        role:p.role==="admin" ? "admin" : "staff",platformRole:p.platform_role || "staff",lawFirmId:p.law_firm_id || undefined,
+        staffName:asStaffName(p.staff_name || p.display_name),isActive:true,isWorkStaff:p.is_work_staff!==false,permissions:(p.permissions ?? {}) as PermissionMap,
+      };
+      const identityFirm = resolvedProfile.platformRole === "super_admin" && superAdminFirmScope?.id ? superAdminFirmScope.id : resolvedProfile.lawFirmId;
+      if (readScopeRef.current && readScopeRef.current.firmId !== identityFirm) {
+        readScopeRef.current=null; loadedExtrasRef.current.clear(); setReadyExtras([]); setReadScopeKey(""); clearBusinessData(); setLoading(true);
+      }
+      // A directory failure must not leave an old role/permission map active.
+      setProfile(previous=>retainEqual(previous,resolvedProfile));
+      if (firmResult.error) throw firmResult.error;
+      const firms:LawFirmSummary[]=(firmResult.data ?? []).map((firm:any)=>({
+        id:firm.id,firmCode:String(firm.firm_code),name:firm.name,status:firm.status==="suspended" ? "suspended" : "active",
+      }));
+      const firmNames=new Map(firms.map(firm=>[firm.id,firm.name]));
+      let targetFirmId=resolvedProfile.lawFirmId;
+      if (resolvedProfile.platformRole==="super_admin" && superAdminFirmScope?.id) {
+        const scopedFirm=firms.find(firm=>firm.id===superAdminFirmScope.id);
+        if (!scopedFirm) { exitSuperAdminFirmScope(); throw new Error("선택한 로펌 정보를 찾지 못했습니다."); }
+        if (scopedFirm.name!==superAdminFirmScope.name || scopedFirm.firmCode!==superAdminFirmScope.firmCode || scopedFirm.status!==superAdminFirmScope.status) {
+          enterSuperAdminFirmScope(scopedFirm); return;
+        }
+        targetFirmId=scopedFirm.id;
+      }
+      const globalMode=resolvedProfile.platformRole==="super_admin" && !targetFirmId;
+      if (!globalMode && !targetFirmId) throw new Error("소속 로펌을 확인할 수 없습니다.");
+      if (readScopeRef.current && readScopeRef.current.firmId !== (globalMode ? undefined : targetFirmId)) {
+        readScopeRef.current=null; loadedExtrasRef.current.clear(); setReadyExtras([]); setReadScopeKey(""); clearBusinessData(); setLoading(true);
+      }
+      setFirmDirectory(previous=>retainEqual(previous,firms));
+      const routeTable=routeStoreTable(pathnameRef.current);
+      const tables=ENTITY_STORE_TABLES.filter(table=>CORE_STORE_TABLES.includes(table as typeof CORE_STORE_TABLES[number]) || loadedExtrasRef.current.has(table) || table===routeTable);
+      const versions={...dataVersions.current};
+      const [entities,directoryRes,settingsRes]=await Promise.all([
+        Promise.all(tables.map(async table=>[table,await fetchEntityTable<unknown>(table,globalMode ? undefined : targetFirmId,firmNames)] as const)),
+        globalMode
+          ? supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff",true).order("display_name")
+          : supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id",targetFirmId!).eq("is_work_staff",true).order("display_name"),
+        globalMode ? Promise.resolve({data:null,error:null}) : supabase.from("firm_settings").select("key,value").eq("law_firm_id",targetFirmId!),
+      ]);
+      if (!batch.isCurrent()) return;
+      if (directoryRes.error) throw directoryRes.error;
+      const directory:AppUserProfile[]=(directoryRes.data ?? []).map((row:any)=>({
+        id:row.id,displayName:row.display_name || row.staff_name || "사용자",role:row.role==="admin" ? "admin" : "staff",
+        platformRole:row.platform_role || "staff",lawFirmId:row.law_firm_id || undefined,
+        staffName:asStaffName(row.staff_name || row.display_name),isActive:row.is_active!==false,isWorkStaff:row.is_work_staff!==false,permissions:(row.permissions ?? {}) as PermissionMap,
+      }));
+      entities.forEach(([table,rows])=>applyEntityRows(table,rows,versions));
+      setStaffDirectory(previous=>retainEqual(previous,directory));
+      readScopeRef.current={userId:user.id,profileRow:p,firmId:globalMode ? undefined : targetFirmId,firmNames,directory};
+      setReadScopeKey(`${user.id}:${globalMode ? "global" : targetFirmId}`);
+      // Preserve the original partial-success behavior: a settings read error
+      // must not discard valid business data or prevent realtime recovery.
+      if (settingsRes.error) throw settingsRes.error;
+      applySettings(settingsRes.data,directory,versions);
+      setSyncError(null);
+    } finally { if (batch.isCurrent()) setLoading(false); }
+  },[applyEntityRows,applySettings,clearBusinessData,enterSuperAdminFirmScope,exitSuperAdminFirmScope,fetchEntityTable,supabase,superAdminFirmScope]);
+
+  const refreshTables=useCallback(async(batch:StoreRefreshBatch)=>{
+    const scope=readScopeRef.current;
+    if (!supabase || !scope || batch.full) { await bootstrapData(batch); return; }
+    // Fresh profile and suspension checks on every batch; RLS also applies to
+    // every entity SELECT. Cached identity never grants access to a table.
+    const [profileResult,activeResult]=await Promise.all([
+      supabase.from("profiles").select("id,email,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("id",scope.userId).maybeSingle(),
+      supabase.rpc("is_active_user"),
+    ]);
+    if (!batch.isCurrent()) return;
+    if (profileResult.error) throw profileResult.error;
+    if (activeResult.error || activeResult.data!==true || retainEqual(scope.profileRow,profileResult.data)!==scope.profileRow) { await bootstrapData(batch); return; }
+    const routeTable=routeStoreTable(pathnameRef.current);
+    const tables=[...batch.tables].filter((table):table is StoreEntityTable=>ENTITY_STORE_TABLES.includes(table as StoreEntityTable)
+      && (CORE_STORE_TABLES.includes(table as typeof CORE_STORE_TABLES[number]) || loadedExtrasRef.current.has(table) || table===routeTable));
+    // Re-read the affected whole table so deletes/RLS-invisible rows disappear.
+    // Preserve the original query's server row cap and response order.
+    const versions={...dataVersions.current};
+    const [entities,settings]=await Promise.all([
+      Promise.all(tables.map(async table=>[table,await fetchEntityTable<unknown>(table,scope.firmId,scope.firmNames)] as const)),
+      batch.tables.has("firm_settings") && scope.firmId ? supabase.from("firm_settings").select("key,value").eq("law_firm_id",scope.firmId) : Promise.resolve(null),
+    ]);
+    if (!batch.isCurrent()) return;
+    entities.forEach(([table,rows])=>applyEntityRows(table,rows,versions));
+    if (settings?.error) throw settings.error;
+    if (settings) applySettings(settings.data,scope.directory,versions);
+    setSyncError(null);
+  },[applyEntityRows,applySettings,bootstrapData,fetchEntityTable,supabase]);
+  runRefreshRef.current=refreshTables;
+  const reloadData=useCallback(()=>refreshQueue.enqueue({full:true}),[refreshQueue]);
+  useEffect(()=>{
+    invalidateScope(); void reloadData();
+    return ()=>refreshQueue.invalidate();
+  },[supabase,superAdminFirmScope?.id,superAdminFirmScope?.name,superAdminFirmScope?.firmCode,superAdminFirmScope?.status,invalidateScope,refreshQueue,reloadData]);
+  useEffect(()=>{
+    const table=routeStoreTable(pathname);
+    if (table && readScopeKey && !loadedExtrasRef.current.has(table)) {
+      const scopeAtStart=readScopeRef.current;
+      const isCurrent=refreshQueue.checkpoint();
+      void refreshQueue.enqueue({tables:[table]}).finally(()=>{
+        const current=readScopeRef.current;
+        if (!providerMounted.current || !isCurrent() || current?.userId!==scopeAtStart?.userId || current?.firmId!==scopeAtStart?.firmId) return;
+        // Show a read error rather than a permanent spinner; next visit retries.
+        setReadyExtras(previous=>previous.includes(table) ? previous : [...previous,table]);
+      });
     }
-  }, [enterSuperAdminFirmScope, exitSuperAdminFirmScope, fetchEntityTable, supabase, superAdminFirmScope]);
-
-  useEffect(() => {
-    void reloadData();
-  }, [reloadData]);
-
-  useEffect(() => {
-    if (!supabase || !currentUserId) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const scheduleReload = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void reloadData(), 180);
+  },[pathname,readScopeKey,refreshQueue]);
+  useEffect(()=>{
+    if (!supabase) return;
+    let alive=true;
+    let account=currentUserId;
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{
+      if (!alive || event==="INITIAL_SESSION") return;
+      const nextAccount=session?.user.id;
+      if (event==="SIGNED_OUT" || (account && nextAccount && account!==nextAccount)) {
+        invalidateScope(); clearBusinessData(); setProfile(null); setCurrentUser(null);
+      }
+      // Never call auth methods while Supabase's auth callback lock is held.
+      if (event==="SIGNED_OUT" || (nextAccount && nextAccount!==account)) {
+        account=nextAccount; queueMicrotask(()=>{if(providerMounted.current) void reloadData();});
+      }
+    });
+    return ()=>{alive=false;subscription.unsubscribe();};
+  },[clearBusinessData,currentUserId,invalidateScope,reloadData,supabase]);
+  useEffect(()=>{
+    if (!supabase || !readScopeKey) return;
+    const scope=readScopeRef.current;
+    if (!scope) return;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    let alive=true; let full=false;
+    const changed=new Set<string>();
+    const schedule=(table:string)=>{
+      if(!alive)return;
+      if ((table==="app_board_posts" || table==="app_change_logs") && !loadedExtrasRef.current.has(table) && routeStoreTable(pathnameRef.current)!==table) return;
+      if(["profiles","law_firms","app_settings"].includes(table)) full=true; else changed.add(table);
+      if(timer)clearTimeout(timer);
+      timer=setTimeout(()=>{void refreshQueue.enqueue({full,tables:[...changed]});full=false;changed.clear();},180);
     };
-
-    const channel = supabase.channel("lawpower-live");
-    for (const table of [
-      "app_leads",
-      "app_clients",
-      "app_cases",
-      "app_installments",
-      "app_schedule_items",
-      "app_board_posts",
-      "app_change_logs",
-      "app_settings",
-      "firm_settings",
-      "profiles",
-    ]) {
-      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleReload);
+    const channel=supabase.channel(`lawpower-live:${readScopeKey}`);
+    for(const table of [...ENTITY_STORE_TABLES,"app_settings","firm_settings","profiles","law_firms"]){
+      const filter=scope.firmId && table!=="app_settings" ? `${table==="law_firms" ? "id" : "law_firm_id"}=eq.${scope.firmId}` : undefined;
+      for(const event of ["INSERT","UPDATE"] as const) channel.on("postgres_changes",{event,schema:"public",table,...(filter?{filter}:{})},()=>schedule(table));
+      // Supabase cannot tenant-filter DELETE events; fresh scoped reads are safe
+      // even if RLS strips the old payload down to its primary key.
+      channel.on("postgres_changes",{event:"DELETE",schema:"public",table},()=>schedule(table));
     }
-    channel.subscribe();
-
-    return () => {
-      if (timer) clearTimeout(timer);
-      void supabase.removeChannel(channel);
-    };
-  }, [supabase, currentUserId, reloadData]);
+    if(scope.firmId)channel.on("postgres_changes",{event:"UPDATE",schema:"public",table:"profiles",filter:`id=eq.${scope.userId}`},()=>schedule("profiles"));
+    let subscribedOnce=false;
+    channel.subscribe(status=>{if(status==="SUBSCRIBED"){if(subscribedOnce)schedule("profiles");subscribedOnce=true;}});
+    const onFocus=()=>{if(document.visibilityState==="visible")schedule("profiles");};
+    window.addEventListener("focus",onFocus);document.addEventListener("visibilitychange",onFocus);
+    return ()=>{alive=false;if(timer)clearTimeout(timer);window.removeEventListener("focus",onFocus);document.removeEventListener("visibilitychange",onFocus);void supabase.removeChannel(channel);};
+  },[readScopeKey,refreshQueue,supabase]);
 
   const saveEntity = useCallback(
     async (table: string, entity: { id: string; _lawFirmId?: string; _lawFirmName?: string }) => {
@@ -1119,21 +1182,31 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     ]
   );
 
+  const sessionValue = useMemo<AppStoreSession>(() => ({
+    loading, syncError, currentUser, profile, staffDirectory, workStaffNames, firmDirectory,
+    superAdminFirmScope, enterSuperAdminFirmScope, exitSuperAdminFirmScope, isAdmin, currentStaff, can, reloadData, signOut,
+  }), [loading, syncError, currentUser, profile, staffDirectory, workStaffNames, firmDirectory,
+    superAdminFirmScope, enterSuperAdminFirmScope, exitSuperAdminFirmScope, isAdmin, currentStaff, can, reloadData, signOut]);
+  const routeTable = routeStoreTable(pathname);
+  const waitingForRoute = !!readScopeKey && !!routeTable && !readyExtras.includes(routeTable);
   return (
+    <AppStoreSessionContext.Provider value={sessionValue}>
     <AppStoreContext.Provider value={value}>
-      {loading ? (
+      {(loading || waitingForRoute) && (
         <div className="grid min-h-screen place-items-center bg-[#f6f8fb] text-sm font-semibold text-slate-500">데이터를 불러오는 중...</div>
-      ) : (
-        <>
+      )}
+      {(hasShownContent || !loading) && (
+        <div style={{ display: loading || waitingForRoute ? "none" : "contents" }} aria-hidden={loading || waitingForRoute || undefined}>
           {syncError && (
             <div className="fixed left-1/2 top-3 z-[200] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700 shadow-lg">
               데이터 동기화 오류: {syncError}
             </div>
           )}
           {children}
-        </>
+        </div>
       )}
     </AppStoreContext.Provider>
+    </AppStoreSessionContext.Provider>
   );
 }
 
@@ -1141,4 +1214,10 @@ export function useStore(): AppStoreValue {
   const ctx = useContext(AppStoreContext);
   if (!ctx) throw new Error("useStore는 AppStoreProvider 내부에서만 사용할 수 있습니다.");
   return ctx;
+}
+
+export function useStoreSession(): AppStoreSession {
+  const context = useContext(AppStoreSessionContext);
+  if (!context) throw new Error("useStoreSession은 AppStoreProvider 내부에서만 사용할 수 있습니다.");
+  return context;
 }

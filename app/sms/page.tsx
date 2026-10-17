@@ -6,7 +6,7 @@ import {
   Phone, Plus, RefreshCw, Send, Settings2, Trash2, UploadCloud, X
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 import DeliveryControls, { validDeliveryState, type DeliveryState } from "@/components/sms/DeliveryControls";
 
 type Tab = "send" | "history" | "automation" | "settings";

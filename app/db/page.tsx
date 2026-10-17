@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import {
@@ -649,6 +649,249 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
   );
 }
 
+type LeadRowProps = {
+  lead: DbLead; globalSuperView: boolean; todayIso: string;
+  can: ReturnType<typeof useStore>["can"]; workStaffNames: StaffName[]; canOpenConsultation: boolean;
+  updateLead: ReturnType<typeof useStore>["updateLead"];
+  onOpenConsultation: (lead: DbLead) => void; onOpenMemo: (lead: DbLead) => void;
+  onConvert: (lead: DbLead) => void; onDelete: (lead: DbLead) => void;
+};
+
+// CSS 반응형 트리를 유지해 화면 너비가 바뀌어도 메모 팝오버와 입력 DOM을 보존합니다.
+// 행과 무관한 모달·안내 상태 변경에서는 같은 행의 렌더링을 건너뜁니다.
+const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete }: LeadRowProps) {
+  return (
+    <div className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-base font-bold text-slate-900">{lead.name}</span>
+            {globalSuperView && <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span>}
+            <CallWarningBadge lead={lead} todayIso={todayIso} />
+          </div>
+          <a href={`tel:${lead.phone.replace(/[^0-9+]/g, "")}`} className="mt-1 inline-block text-sm font-semibold text-blue-700">
+            {lead.phone}
+          </a>
+          <div className="mt-1 text-[11px] text-slate-400">{fmtDate(lead.receivedAt)}</div>
+        </div>
+      </div>
+      <LeadTags lead={lead} />
+      <select
+        value={lead.applicationType ?? ""}
+        disabled={!can("db.edit_basic")}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+          updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
+        }
+        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
+      >
+        <option value="">상담 후 방향 미지정</option>
+        {CONSULT_DIRECTIONS.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+      <select
+        value={lead.assignedStaff}
+        disabled={!can("db.change_assignee")}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
+        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
+      >
+        {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>담당 {lead.assignedStaff} (기존)</option>}
+        {workStaffNames.map((s) => (
+          <option key={s} value={s}>
+            담당 {s}
+          </option>
+        ))}
+      </select>
+      <select
+        value={effectiveStage(lead)}
+        disabled={!can("db.change_stage")}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+          const detailStage = e.target.value as DbDetailStage;
+          void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
+        }}
+        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
+      >
+        {DB_DETAIL_STAGE_TRACKS.map((track) => (
+          <optgroup key={track} label={track}>
+            {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+          </optgroup>
+        ))}
+      </select>
+      {can("db.manage_reservation") && (
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
+          <ReservationDateTimeEditor
+            value={lead.reservationAt}
+            disabled={!can("db.manage_reservation")}
+            onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
+          />
+        </label>
+      )}
+      <div>
+        <div className="mb-1 text-xs font-semibold text-slate-500">상담일지 메모</div>
+        {canOpenConsultation ? <LeadMemoCell lead={lead} onOpenConsultation={() => onOpenMemo(lead)} /> : <span className="text-xs text-slate-300">권한없음</span>}
+      </div>
+      {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
+        <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700">
+          <ShieldAlert size={13} className="shrink-0" />
+          상담일지 필수 항목 미입력 — 임시 전환 허용
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          variant="secondary"
+          className="px-2.5 py-1.5"
+          disabled={!canOpenConsultation}
+          onClick={() => onOpenConsultation(lead)}
+        >
+          <ClipboardList size={14} />
+          {can("db.edit_consultation") ? "상담일지 작성" : "상담일지 조회"}
+        </Button>
+        {lead.convertedClientId && lead.convertedCaseId ? (
+          <Link href={`/cases/${lead.convertedCaseId}`} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+            계약관리로 이동
+          </Link>
+        ) : lead.convertedClientId ? (
+          can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => onConvert(lead)}>
+            계약 생성
+          </Button> : null
+        ) : (
+          can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => onConvert(lead)}>
+            고객 전환
+          </Button> : null
+        )}
+        {can("db.delete") && (
+          <Button variant="danger" className="px-2.5 py-1.5" onClick={() => onDelete(lead)}>
+            <Trash2 size={14} />
+            삭제
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+});
+
+const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete }: LeadRowProps) {
+  return (
+    <tr className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
+      {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
+      <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(lead.receivedAt)}</td>
+      <td className="px-4 py-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold text-slate-900">{lead.name}</span>
+          <CallWarningBadge lead={lead} todayIso={todayIso} />
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-slate-500">{lead.phone}</td>
+      <td className="min-w-[200px] max-w-[240px] px-4 py-3">
+        <LeadTags lead={lead} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <select
+          value={lead.applicationType ?? ""}
+          disabled={!can("db.edit_basic")}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+            updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
+          }
+          className="min-w-[100px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+        >
+          <option value="">미지정</option>
+          {CONSULT_DIRECTIONS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <select
+          value={lead.assignedStaff}
+          disabled={!can("db.change_assignee")}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
+          className="min-w-[90px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+        >
+          {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>{lead.assignedStaff} (기존)</option>}
+          {workStaffNames.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-3">
+        <select
+          value={effectiveStage(lead)}
+          disabled={!can("db.change_stage")}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+            const detailStage = e.target.value as DbDetailStage;
+            void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
+          }}
+          className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
+        >
+          {DB_DETAIL_STAGE_TRACKS.map((track) => (
+            <optgroup key={track} label={track}>
+              {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      </td>
+      <td className="min-w-[320px] px-4 py-3">
+        <ReservationDateTimeEditor
+          value={lead.reservationAt}
+          disabled={!can("db.manage_reservation")}
+          onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
+          compact
+        />
+      </td>
+      <td className="min-w-[220px] px-4 py-3">
+        {canOpenConsultation ? <LeadMemoCell lead={lead} onOpenConsultation={() => onOpenMemo(lead)} /> : <span className="text-xs text-slate-300">권한없음</span>}
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-right">
+        <div className="flex flex-col items-end gap-1.5">
+          {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
+            <span className="flex items-center gap-1 whitespace-normal rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+              <ShieldAlert size={11} className="shrink-0" />
+              필수항목 미입력 · 전환가능
+            </span>
+          )}
+          <div className="flex items-center justify-end gap-1.5">
+            <Button
+              variant="secondary"
+              className="px-2.5 py-1.5"
+              disabled={!canOpenConsultation}
+              onClick={() => onOpenConsultation(lead)}
+            >
+              <ClipboardList size={14} />
+              상담일지
+            </Button>
+            {lead.convertedClientId && lead.convertedCaseId ? (
+              <Link href={`/cases/${lead.convertedCaseId}`} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                계약관리로 이동
+              </Link>
+            ) : lead.convertedClientId ? (
+              can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => onConvert(lead)}>
+                계약 생성
+              </Button> : null
+            ) : (
+              can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => onConvert(lead)}>
+                고객 전환
+              </Button> : null
+            )}
+            {can("db.delete") && (
+              <Button variant="danger" className="px-2.5 py-1.5" onClick={() => onDelete(lead)}>
+                <Trash2 size={14} />
+                삭제
+              </Button>
+            )}
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
 export default function DbManagementPage() {
   const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, isAdmin, can, profile, superAdminFirmScope } = useStore();
   const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
@@ -707,11 +950,16 @@ export default function DbManagementPage() {
 
   // v27.10 임시 운영: 필수 상담항목이 비어 있어도 고객 전환을 허용합니다.
   // 필수항목 체크 표시는 계속 보여주되, 전환 자체를 막지는 않습니다.
-  function tryConvert(lead: DbLead) {
+  const tryConvert = useCallback((lead: DbLead) => {
     setBlockedNotice(null);
     const clientId = convertLeadToClient(lead.id);
     if (clientId) setJustConverted(lead.id);
-  }
+  }, [convertLeadToClient]);
+
+  const openConsultation = useCallback((lead: DbLead) => {
+    setBlockedNotice(null);
+    setConsultTarget(lead);
+  }, []);
 
   // 검색 중에는 원본 데이터가 바뀔 때만 검색 문자열과 사건 연결을 계산합니다.
   // 검색을 비우면 캐시를 해제하며, 입력 글자마다 전체 사건을 다시 순회하지 않습니다.
@@ -771,38 +1019,31 @@ export default function DbManagementPage() {
     [stageUniverse, stageFilter]
   );
 
-  const timeCounts = useMemo(() => {
-    const map: Partial<Record<ConsultTimeSlot, number>> = {};
-    for (const l of baseRows) {
-      const category = leadTimeCategory(l);
-      if (category) map[category] = (map[category] ?? 0) + 1;
+  const { timeCounts, debtCounts, incomeCounts, pivotCategories } = useMemo(() => {
+    const timeCounts: Partial<Record<ConsultTimeSlot, number>> = {};
+    const debtCounts: Partial<Record<DebtRange, number>> = {};
+    const incomeCounts: Partial<Record<IncomeRange, number>> = {};
+    const pivotCategories = new Map<DbLead, { time: ConsultTimeSlot | undefined; debt: DebtRange | undefined; income: IncomeRange | undefined }>();
+    for (const lead of baseRows) {
+      const time = leadTimeCategory(lead), debt = leadDebtCategory(lead), income = leadIncomeCategory(lead);
+      if (time) timeCounts[time] = (timeCounts[time] ?? 0) + 1;
+      if (debt) debtCounts[debt] = (debtCounts[debt] ?? 0) + 1;
+      if (income) incomeCounts[income] = (incomeCounts[income] ?? 0) + 1;
+      pivotCategories.set(lead, { time, debt, income });
     }
-    return map;
-  }, [baseRows]);
-  const debtCounts = useMemo(() => {
-    const map: Partial<Record<DebtRange, number>> = {};
-    for (const l of baseRows) {
-      const category = leadDebtCategory(l);
-      if (category) map[category] = (map[category] ?? 0) + 1;
-    }
-    return map;
-  }, [baseRows]);
-  const incomeCounts = useMemo(() => {
-    const map: Partial<Record<IncomeRange, number>> = {};
-    for (const l of baseRows) {
-      const category = leadIncomeCategory(l);
-      if (category) map[category] = (map[category] ?? 0) + 1;
-    }
-    return map;
+    return { timeCounts, debtCounts, incomeCounts, pivotCategories };
   }, [baseRows]);
 
   const rows = useMemo(() => {
     return baseRows
-      .filter((l) => timeFilter === "전체" || leadTimeCategory(l) === timeFilter)
-      .filter((l) => debtFilter === "전체" || leadDebtCategory(l) === debtFilter)
-      .filter((l) => incomeFilter === "전체" || leadIncomeCategory(l) === incomeFilter)
+      .filter((lead) => {
+        const category = pivotCategories.get(lead)!;
+        return (timeFilter === "전체" || category.time === timeFilter)
+          && (debtFilter === "전체" || category.debt === debtFilter)
+          && (incomeFilter === "전체" || category.income === incomeFilter);
+      })
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
-  }, [baseRows, timeFilter, debtFilter, incomeFilter]);
+  }, [baseRows, pivotCategories, timeFilter, debtFilter, incomeFilter]);
 
   const visibleRows = useMemo(() => pageRows(rows, page, 10), [rows, page]);
 
@@ -1010,120 +1251,7 @@ export default function DbManagementPage() {
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
-          {visibleRows.map((lead) => (
-            <div key={lead.id} className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-base font-bold text-slate-900">{lead.name}</span>
-                    {globalSuperView && <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span>}
-                    <CallWarningBadge lead={lead} todayIso={todayIso} />
-                  </div>
-                  <a href={`tel:${lead.phone.replace(/[^0-9+]/g, "")}`} className="mt-1 inline-block text-sm font-semibold text-blue-700">
-                    {lead.phone}
-                  </a>
-                  <div className="mt-1 text-[11px] text-slate-400">{fmtDate(lead.receivedAt)}</div>
-                </div>
-              </div>
-              <LeadTags lead={lead} />
-              <select
-                value={lead.applicationType ?? ""}
-                disabled={!can("db.edit_basic")}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                  updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
-                }
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
-              >
-                <option value="">상담 후 방향 미지정</option>
-                {CONSULT_DIRECTIONS.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={lead.assignedStaff}
-                disabled={!can("db.change_assignee")}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
-              >
-                {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>담당 {lead.assignedStaff} (기존)</option>}
-                {workStaffNames.map((s) => (
-                  <option key={s} value={s}>
-                    담당 {s}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={effectiveStage(lead)}
-                disabled={!can("db.change_stage")}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                  const detailStage = e.target.value as DbDetailStage;
-                  void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
-                }}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
-              >
-                {DB_DETAIL_STAGE_TRACKS.map((track) => (
-                  <optgroup key={track} label={track}>
-                    {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-              {can("db.manage_reservation") && (
-                <label className="block">
-                  <span className="mb-1 block text-xs font-semibold text-amber-700">예약일시</span>
-                  <ReservationDateTimeEditor
-                    value={lead.reservationAt}
-                    disabled={!can("db.manage_reservation")}
-                    onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
-                  />
-                </label>
-              )}
-              <div>
-                <div className="mb-1 text-xs font-semibold text-slate-500">상담일지 메모</div>
-                {canOpenConsultation ? <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} /> : <span className="text-xs text-slate-300">권한없음</span>}
-              </div>
-              {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
-                <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700">
-                  <ShieldAlert size={13} className="shrink-0" />
-                  상담일지 필수 항목 미입력 — 임시 전환 허용
-                </div>
-              )}
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button
-                  variant="secondary"
-                  className="px-2.5 py-1.5"
-                  disabled={!canOpenConsultation}
-                  onClick={() => {
-                    setBlockedNotice(null);
-                    setConsultTarget(lead);
-                  }}
-                >
-                  <ClipboardList size={14} />
-                  {can("db.edit_consultation") ? "상담일지 작성" : "상담일지 조회"}
-                </Button>
-                {lead.convertedClientId && lead.convertedCaseId ? (
-                  <Link href={`/cases/${lead.convertedCaseId}`} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
-                    계약관리로 이동
-                  </Link>
-                ) : lead.convertedClientId ? (
-                  can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
-                    계약 생성
-                  </Button> : null
-                ) : (
-                  can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
-                    고객 전환
-                  </Button> : null
-                )}
-                {can("db.delete") && (
-                  <Button variant="danger" className="px-2.5 py-1.5" onClick={() => setDeleteTarget(lead)}>
-                    <Trash2 size={14} />
-                    삭제
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
+          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget}/>)}
         </div>
 
         {/* 데스크톱: 테이블 */}
@@ -1139,125 +1267,7 @@ export default function DbManagementPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((lead) => (
-                <tr key={lead.id} className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
-                  {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(lead.receivedAt)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-semibold text-slate-900">{lead.name}</span>
-                      <CallWarningBadge lead={lead} todayIso={todayIso} />
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-500">{lead.phone}</td>
-                  <td className="min-w-[200px] max-w-[240px] px-4 py-3">
-                    <LeadTags lead={lead} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <select
-                      value={lead.applicationType ?? ""}
-                      disabled={!can("db.edit_basic")}
-                      onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                        updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
-                      }
-                      className="min-w-[100px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
-                    >
-                      <option value="">미지정</option>
-                      {CONSULT_DIRECTIONS.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <select
-                      value={lead.assignedStaff}
-                      disabled={!can("db.change_assignee")}
-                      onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
-                      className="min-w-[90px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
-                    >
-                      {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>{lead.assignedStaff} (기존)</option>}
-                      {workStaffNames.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3">
-                    <select
-                      value={effectiveStage(lead)}
-                      disabled={!can("db.change_stage")}
-                      onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                        const detailStage = e.target.value as DbDetailStage;
-                        void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
-                      }}
-                      className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
-                    >
-                      {DB_DETAIL_STAGE_TRACKS.map((track) => (
-                        <optgroup key={track} label={track}>
-                          {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="min-w-[320px] px-4 py-3">
-                    <ReservationDateTimeEditor
-                      value={lead.reservationAt}
-                      disabled={!can("db.manage_reservation")}
-                      onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
-                      compact
-                    />
-                  </td>
-                  <td className="min-w-[220px] px-4 py-3">
-                    {canOpenConsultation ? <LeadMemoCell lead={lead} onOpenConsultation={() => setConsultTarget(lead)} /> : <span className="text-xs text-slate-300">권한없음</span>}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <div className="flex flex-col items-end gap-1.5">
-                      {!lead.convertedClientId && !checkConsultationRequired(lead.applicationType, lead.consultation).ok && (
-                        <span className="flex items-center gap-1 whitespace-normal rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
-                          <ShieldAlert size={11} className="shrink-0" />
-                          필수항목 미입력 · 전환가능
-                        </span>
-                      )}
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="secondary"
-                          className="px-2.5 py-1.5"
-                          disabled={!canOpenConsultation}
-                          onClick={() => {
-                            setBlockedNotice(null);
-                            setConsultTarget(lead);
-                          }}
-                        >
-                          <ClipboardList size={14} />
-                          상담일지
-                        </Button>
-                        {lead.convertedClientId && lead.convertedCaseId ? (
-                          <Link href={`/cases/${lead.convertedCaseId}`} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
-                            계약관리로 이동
-                          </Link>
-                        ) : lead.convertedClientId ? (
-                          can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
-                            계약 생성
-                          </Button> : null
-                        ) : (
-                          can("db.convert") ? <Button className="px-2.5 py-1.5" onClick={() => tryConvert(lead)}>
-                            고객 전환
-                          </Button> : null
-                        )}
-                        {can("db.delete") && (
-                          <Button variant="danger" className="px-2.5 py-1.5" onClick={() => setDeleteTarget(lead)}>
-                            <Trash2 size={14} />
-                            삭제
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget}/>)}
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={globalSuperView ? 11 : 10} className="px-4 py-10 text-center text-slate-400">

@@ -19,7 +19,7 @@ import {
   Radio,
 } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
-import { useStore } from "@/lib/store";
+import { useStoreSession as useStore } from "@/lib/store";
 
 function fmtDateTime(value?: string | null) {
   if (!value) return "-";
