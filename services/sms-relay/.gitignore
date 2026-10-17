@@ -1,0 +1,8 @@
+relay.env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+node_modules/

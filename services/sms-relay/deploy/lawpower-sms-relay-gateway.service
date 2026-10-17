@@ -1,0 +1,47 @@
+# lawpower-sms-relay deployment v1; independent of the distro nginx.service.
+[Unit]
+Description=LawPower HTTPS test relay gateway
+After=network-online.target lawpower-sms-relay.service
+Wants=network-online.target
+Requires=lawpower-sms-relay.service
+ConditionPathExists=/etc/lawpower-sms-relay/nginx.conf
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+RuntimeDirectory=lawpower-sms-relay-gateway
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/sbin/nginx -t -q -c /etc/lawpower-sms-relay/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/lawpower-sms-relay/nginx.conf -g "daemon off;"
+ExecReload=/usr/sbin/nginx -t -q -c /etc/lawpower-sms-relay/nginx.conf
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGQUIT
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=128M
+TasksMax=64
+LimitNOFILE=2048
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

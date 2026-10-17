@@ -1,0 +1,64 @@
+# lawpower-sms-relay deployment v1
+# Standalone config: never includes or replaces /etc/nginx/nginx.conf or sites.
+user lawpower-sms-relay;
+worker_processes 1;
+pid /run/lawpower-sms-relay-gateway/nginx.pid;
+# Proxy error messages can contain arbitrary request URIs; do not persist them.
+# Diagnose startup/config failures with nginx -t and systemd unit exit status.
+error_log /dev/null crit;
+events { worker_connections 256; }
+http {
+    access_log off;
+    server_tokens off;
+    default_type application/json;
+    client_max_body_size 4k;
+    client_body_buffer_size 8k;
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    send_timeout 15s;
+    keepalive_timeout 15s;
+    client_body_temp_path /tmp/lawpower-sms-relay-body;
+    proxy_temp_path /tmp/lawpower-sms-relay-proxy;
+    limit_req_zone $binary_remote_addr zone=relay_per_ip:1m rate=1r/s;
+    server {
+        # No public clear-text listener. Cert issuance is a separate operator step.
+        listen 443 ssl;
+        server_name __SERVER_NAME__;
+        ssl_certificate __CERT_PATH__;
+        ssl_certificate_key __KEY_PATH__;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache shared:relay_tls:1m;
+        ssl_session_timeout 10m;
+        if ($host != "__SERVER_NAME__") { return 444; }
+        add_header X-Content-Type-Options nosniff always;
+        location = /health {
+            if ($request_method != GET) { return 405; }
+            limit_req zone=relay_per_ip burst=5 nodelay;
+            limit_req_status 429;
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host "127.0.0.1";
+            proxy_connect_timeout 2s;
+            proxy_read_timeout 5s;
+            proxy_buffering off;
+        }
+        location = /v1/aligo/test {
+            if ($request_method != POST) { return 405; }
+            limit_req zone=relay_per_ip burst=5 nodelay;
+            limit_req_status 429;
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host "127.0.0.1";
+            proxy_set_header Authorization $http_authorization;
+            proxy_set_header Idempotency-Key $http_idempotency_key;
+            proxy_connect_timeout 2s;
+            proxy_send_timeout 5s;
+            proxy_read_timeout 15s;
+            proxy_request_buffering off;
+            proxy_buffering off;
+        }
+        location / { return 404; }
+    }
+}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { AligoTestRelayError, requestAligoTest } from "@/lib/sms/aligo-test-relay";
 
 export const dynamic = "force-dynamic";
 const permittedSenders: Record<string,string> = {
@@ -36,13 +37,12 @@ export async function POST(req: NextRequest) {
     .eq("law_firm_id",firmId).eq("phone",sender).eq("is_active",true).eq("is_registered",true).maybeSingle();
   if (senderError) return NextResponse.json({error:`발신번호 조회 오류: ${senderError.message}`},{status:403});
   if (!registered || registered.staff_name.trim() !== permittedSenders[sender]) return NextResponse.json({error:"선택한 로펌에서 이 담당자 발신번호를 찾지 못했습니다. 로펌 선택 상태를 확인해주세요."},{status:403});
-  const key=process.env.ALIGO_API_KEY,userId=process.env.ALIGO_USER_ID;
-  if(!key || !userId) return NextResponse.json({error:"알리고 환경변수가 없습니다."},{status:503});
-  const form=new URLSearchParams({key,user_id:userId,sender,receiver,msg:"[로파워] API 연결 테스트입니다. 실제 발송되지 않습니다.",testmode_yn:"Y"});
   try {
-    const response=await fetch("https://apis.aligo.in/send/",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form.toString(),cache:"no-store",signal:AbortSignal.timeout(12000)});
-    const data=await response.json() as {result_code?:number;message?:string;msg_id?:number|string};
-    const ok=response.ok && Number(data.result_code)>0;
-    return NextResponse.json({ok,testMode:true,actualDelivery:false,providerCode:data.result_code??null,providerMessage:data.message??"",messageId:data.msg_id??null},{status:ok?200:502});
-  }catch{return NextResponse.json({error:"알리고 연결에 실패했습니다.",actualDelivery:false},{status:502});}
+    const result = await requestAligoTest(sender, receiver);
+    return NextResponse.json(result, { status: result.ok ? 200 : 502 });
+  } catch (error) {
+    const status = error instanceof AligoTestRelayError ? error.status : 502;
+    const message = error instanceof AligoTestRelayError ? error.message : "알리고 연결에 실패했습니다.";
+    return NextResponse.json({ error: message, actualDelivery: false }, { status });
+  }
 }

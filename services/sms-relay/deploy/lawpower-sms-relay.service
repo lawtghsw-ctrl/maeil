@@ -1,0 +1,46 @@
+# lawpower-sms-relay deployment v1; owned file, do not merge into another unit.
+[Unit]
+Description=LawPower Aligo test-only loopback relay
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=lawpower-sms-relay
+Group=lawpower-sms-relay
+WorkingDirectory=/opt/lawpower-sms-relay/app
+EnvironmentFile=/etc/lawpower-sms-relay/relay.env
+# Pin the bind address after EnvironmentFile, even if the file has other values.
+ExecStart=/usr/bin/env RELAY_HOST=127.0.0.1 RELAY_PORT=8787 /opt/lawpower-sms-relay/node/bin/node --max-old-space-size=128 /opt/lawpower-sms-relay/app/src/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=256M
+MemorySwapMax=128M
+TasksMax=128
+LimitNOFILE=2048
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
