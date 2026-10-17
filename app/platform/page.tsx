@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import { Activity, BarChart3, Building2, Database, Download, Eye, FileWarning, Plus, Radio, RefreshCcw, ShieldCheck, TrendingUp, UsersRound, WalletCards } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
 import { useStore } from "@/lib/store";
@@ -84,7 +83,10 @@ export default function PlatformPage() {
   async function enterFirm(f:Firm){try{await authJson('/api/platform/firm-view',{method:'POST',body:JSON.stringify({lawFirmId:f.id,action:'enter'})})}catch{}enterSuperAdminFirmScope({id:f.id,firmCode:f.firm_code,name:f.name,status:f.status});window.location.href='/'}
 
   function changeMonth(next:string){setMonth(next);void load(next)}
-  function downloadProfit(){if(!analytics)return;const wb=XLSX.utils.book_new();
+  async function downloadProfit(){if(!analytics)return;
+    try {
+    const XLSX = await import("xlsx");
+    const wb=XLSX.utils.book_new();
     const t=analytics.totals;
     const summary=[["로파워 플랫폼 손익 회의자료"],["조회월",analytics.month],["청구매출",t.billingRevenue],["등록 광고비",t.adSpend],["순이익",t.profit],["이익률",t.margin/100],["공급 DB",t.supplied],["과금 DB",t.billable],["과금률",t.billableRate/100],["수임전환",t.converted],["공급 대비 수임률",t.conversionRate/100],["DB 원가",t.dbCost],["평균 판매가",t.avgSalePrice]];
     const ws1=XLSX.utils.aoa_to_sheet(summary);ws1['!cols']=[{wch:24},{wch:22}];XLSX.utils.book_append_sheet(wb,ws1,"플랫폼요약");
@@ -93,6 +95,9 @@ export default function PlatformPage() {
     const ws3=XLSX.utils.json_to_sheet(analytics.trend.map(r=>({월:r.month,"공급 DB":r.supplied,"과금 DB":r.billable,"수임전환":r.converted,"수임률(%)":r.conversionRate,"청구매출":r.billingRevenue,"광고비":r.adSpend,"순이익":r.profit})));XLSX.utils.book_append_sheet(wb,ws3,"월별추이");
     const ws4=XLSX.utils.aoa_to_sheet([["산식","기준"],["청구매출",analytics.basis.revenue],["등록 광고비",analytics.basis.adSpend],["수임전환",analytics.basis.conversion]]);ws4['!cols']=[{wch:20},{wch:90}];XLSX.utils.book_append_sheet(wb,ws4,"산식기준");
     XLSX.writeFile(wb,`로파워_플랫폼손익_${analytics.month}.xlsx`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "엑셀 파일을 생성하지 못했습니다. 다시 시도해주세요.");
+    }
   }
 
   const tabs:[Tab,string][]=[["overview","통합현황"],["profit","플랫폼 손익"],["supply","DB 공급관리"],["integration","연동 모니터링"],["activity","전체 활동로그"]];

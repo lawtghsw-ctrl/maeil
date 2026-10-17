@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import * as XLSX from "xlsx";
 import {
   BookOpen, CheckCircle2, Clock3, ImagePlus, MessageSquareText,
   Phone, Plus, RefreshCw, Send, Settings2, Trash2, UploadCloud, X
@@ -171,7 +170,7 @@ export default function SmsCenterPage() {
 
   async function parseAddressFile(file: File) {
     try {
-      const buf = await file.arrayBuffer();
+      const [buf, XLSX] = await Promise.all([file.arrayBuffer(), import("xlsx")]);
       const wb = XLSX.read(buf, { type:"array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header:1, defval:"" });

@@ -10,6 +10,7 @@ import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, 
 import { fmtDate, fmtWon } from "@/lib/format";
 import { Plus, Trash2 } from "lucide-react";
 import { CaseDetailPopup } from "@/components/cases/CaseDetailPopup";
+import { countByKey, firstByKey } from "@/lib/list-indexes";
 
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
@@ -32,10 +33,12 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
   const [contractAmount, setContractAmount] = useState("");
   const [contractDate, setContractDate] = useState(todayIso());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("단순분납");
+  const clientsById = useMemo(() => firstByKey(clients, (client) => client.id), [clients]);
+  const caseCountsByClient = useMemo(() => countByKey(cases, (record) => record.clientId), [cases]);
 
   function chooseClient(id: string) {
     setClientId(id);
-    const client = clients.find((item) => item.id === id);
+    const client = clientsById.get(id);
     if (client?.assignedStaff) setAssignedStaff(client.assignedStaff);
     if (client?.applicationType) setCaseType(client.applicationType);
   }
@@ -57,7 +60,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
       contractDate,
       paidAmount: 0,
       paymentMethod,
-      fromLeadId: clients.find((item) => item.id === clientId)?.fromLeadId,
+      fromLeadId: clientsById.get(clientId)?.fromLeadId,
     });
     onClose();
     router.push(`/cases/${id}`);
@@ -71,7 +74,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
           <Select className="mt-1 w-full" value={clientId} onChange={(e) => chooseClient(e.target.value)}>
             <option value="">고객 선택</option>
             {clients.map((client) => {
-              const count = cases.filter((record) => record.clientId === client.id).length;
+              const count = caseCountsByClient.get(client.id) ?? 0;
               return <option key={client.id} value={client.id}>{client.name} · {client.phone}{count ? ` · 기존계약 ${count}건` : ""}</option>;
             })}
           </Select>
@@ -125,6 +128,8 @@ export default function CasesPage() {
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
   const [page, setPage] = useState(1);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const clientsById = useMemo(() => firstByKey(clients, (client) => client.id), [clients]);
+  const installmentCountsByCase = useMemo(() => countByKey(installments, (item) => item.caseId), [installments]);
 
   async function handleDelete(caseId: string, clientName: string, caseNumber: string) {
     if (!can("cases.delete") || deletingId) return;
@@ -143,7 +148,7 @@ export default function CasesPage() {
   const rows = useMemo(() => {
     const scopedCases = can("cases.view_all") ? cases : cases.filter((record) => !!currentStaff && record.assignedStaff === currentStaff);
     return scopedCases
-      .map((c) => ({ c, client: clients.find((cl) => cl.id === c.clientId) }))
+      .map((c) => ({ c, client: clientsById.get(c.clientId) }))
       .filter(({ c, client }) => {
         if (typeFilter !== "전체" && c.caseType !== typeFilter) return false;
         if (statusFilter !== "전체" && c.status !== statusFilter) return false;
@@ -155,7 +160,9 @@ export default function CasesPage() {
         return true;
       })
       .sort((a, b) => (a.c.contractDate < b.c.contractDate ? 1 : -1));
-  }, [can, cases, clients, currentStaff, query, typeFilter, statusFilter]);
+  }, [can, cases, clientsById, currentStaff, query, typeFilter, statusFilter]);
+
+  const visibleRows = useMemo(() => pageRows(rows, page, 10), [rows, page]);
 
   return (
     <>
@@ -211,7 +218,7 @@ export default function CasesPage() {
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 사건이 없습니다.</div>}
-          {pageRows(rows, page, 10).map(({ c, client }) => {
+          {visibleRows.map(({ c, client }) => {
             const receivable = Math.max(0, c.contractAmount - c.paidAmount);
             return (
               <div key={c.id} className="p-4 hover:bg-slate-50">
@@ -230,7 +237,7 @@ export default function CasesPage() {
                   {can("cases.view_finance") && <div className="grid grid-cols-2 gap-1 text-sm">
                     <span className="text-slate-500">총 수임료 {fmtWon(c.contractAmount)}</span>
                     <span className="text-slate-500">납부금액 {fmtWon(c.paidAmount)}</span>
-                    <span className="text-slate-500">납부회차 {(c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length) || 0}회</span>
+                    <span className="text-slate-500">납부회차 {(c.installmentCount ?? installmentCountsByCase.get(c.id)) || 0}회</span>
                     {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
                   </div>}
                 </div>
@@ -257,7 +264,7 @@ export default function CasesPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRows(rows, page, 10).map(({ c, client }) => {
+              {visibleRows.map(({ c, client }) => {
                 const receivable = Math.max(0, c.contractAmount - c.paidAmount);
                 return (
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -270,7 +277,7 @@ export default function CasesPage() {
                     <td className="px-4 py-3 text-slate-900">{can("cases.view_finance") ? fmtWon(c.contractAmount) : "권한없음"}</td>
                     <td className="px-4 py-3 text-slate-700">{can("cases.view_finance") ? fmtWon(c.paidAmount) : "-"}</td>
                     <td className="px-4 py-3 text-slate-500">
-                      {can("cases.view_finance") ? `${c.installmentCount ?? installments.filter((item) => item.caseId === c.id).length}회` : "-"}
+                      {can("cases.view_finance") ? `${c.installmentCount ?? installmentCountsByCase.get(c.id) ?? 0}회` : "-"}
                     </td>
                     <td className="px-4 py-3">
                       {can("cases.view_finance") ? (receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>) : <span className="text-slate-300">-</span>}

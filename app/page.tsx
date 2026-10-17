@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CalendarClock, CheckCircle2, CircleDollarSign, FileSignature, PhoneCall, PhoneMissed, UserPlus } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { firstByKey } from "@/lib/list-indexes";
 import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, type DbLead } from "@/lib/types";
 import { checkCallWarning, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
 import {
@@ -34,6 +35,8 @@ function settingsForFirm(map:Record<string,ManagementSettings>,firmId?:string,fa
 
 export default function DashboardPage(){
   const {clients,cases,installments,scheduleItems,leads,isAdmin,currentStaff,can,profile,superAdminFirmScope,workStaffNames,firmDirectory}=useStore();
+  const caseById=useMemo(()=>firstByKey(cases,c=>c.id),[cases]);
+  const clientById=useMemo(()=>firstByKey(clients,client=>client.id),[clients]);
   const manager=isManagerProfile(profile);const {globalSuperView,activeSettings,settingsByFirm}=useManagementSettings(profile,superAdminFirmScope,workStaffNames);
   const init=monthRange();const[start,setStart]=useState(init.start);const[end,setEnd]=useState(init.end);const[paymentMonth,setPaymentMonth]=useState(init.start.slice(0,7));const[hearingMonth,setHearingMonth]=useState(init.start.slice(0,7));const today=kstDateStr();
   const topLeads=useMemo(()=>isAdmin||can("dashboard.company_metrics")?leads:leads.filter(l=>!!currentStaff&&l.assignedStaff===currentStaff),[isAdmin,can,leads,currentStaff]);
@@ -81,9 +84,9 @@ export default function DashboardPage(){
     return kind?[{kind,lead}]:[];
   }).slice(0,20);
   const overdue=installments.filter(i=>i.status==="연체"||i.status==="실패");
-  const paymentItems:CalendarItem[]=installments.filter(i=>i.dueDate.startsWith(paymentMonth)).map(i=>{const c=cases.find(x=>x.id===i.caseId);const client=c?clients.find(x=>x.id===c.clientId):undefined;return{id:i.id,date:i.dueDate,label:client?.name??"-",sub:can("dashboard.finance")?`${i.seq===1?"계약금":`${i.seq-1}회차`} · ${fmtWon(i.amount)}`:(i.seq===1?"계약금":`${i.seq-1}회차`),done:i.status==="완료",status:i.status,amount:can("dashboard.finance")?i.amount:0}});
+  const paymentItems=useMemo<CalendarItem[]>(()=>installments.filter(i=>i.dueDate.startsWith(paymentMonth)).map(i=>{const c=caseById.get(i.caseId);const client=c?clientById.get(c.clientId):undefined;return{id:i.id,date:i.dueDate,label:client?.name??"-",sub:can("dashboard.finance")?`${i.seq===1?"계약금":`${i.seq-1}회차`} · ${fmtWon(i.amount)}`:(i.seq===1?"계약금":`${i.seq-1}회차`),done:i.status==="완료",status:i.status,amount:can("dashboard.finance")?i.amount:0}}),[installments,paymentMonth,caseById,clientById,can]);
   const paymentSummary=useMemo(()=>{const rows=installments.filter(i=>i.dueDate.startsWith(paymentMonth));const done=rows.filter(i=>i.status==="완료").reduce((s,i)=>s+i.amount,0);const expected=rows.filter(i=>i.status!=="완료").reduce((s,i)=>s+i.amount,0);return{paid:done,expected,total:done+expected}},[installments,paymentMonth]);
-  const hearingItems:CalendarItem[]=scheduleItems.filter(s=>s.date.startsWith(hearingMonth)).map(s=>{const c=s.caseId?cases.find(x=>x.id===s.caseId):undefined;const client=c?clients.find(x=>x.id===c.clientId):undefined;return{id:s.id,date:s.date,label:client?.name??"-",sub:`${s.type} · ${s.title}`,done:s.done,amount:0}});
+  const hearingItems=useMemo<CalendarItem[]>(()=>scheduleItems.filter(s=>s.date.startsWith(hearingMonth)).map(s=>{const c=s.caseId?caseById.get(s.caseId):undefined;const client=c?clientById.get(c.clientId):undefined;return{id:s.id,date:s.date,label:client?.name??"-",sub:`${s.type} · ${s.title}`,done:s.done,amount:0}}),[scheduleItems,hearingMonth,caseById,clientById]);
 
   const topCards=[[UserPlus,"당일신규 DB",top.newToday,"문자인사 완료"],[PhoneMissed,"컨택 필요 DB",top.contact,"단계별 컨택 대상"],[CalendarClock,"재통화약속 DB",top.recall,"예약 일정"],[PhoneCall,"상담중 DB",top.consulting,"현재 상담 단계"],[CheckCircle2,"상담완료 DB",top.completed,"후속 단계 포함"],[FileSignature,"계약건",periodCases.length,can("dashboard.finance")?fmtWon(contractSales):"선택 기간"]] as const;
 

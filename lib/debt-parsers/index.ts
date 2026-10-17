@@ -6,8 +6,6 @@
 // 남겨 Preview에서 사용자가 직접 채우도록 함).
 import { detectFileKind } from "./detectProvider";
 import type { ParsedDebtItem } from "./normalizeDebt";
-import { parseCsvText } from "./providers/genericCsv";
-import { parseExcelFile } from "./providers/genericExcel";
 import { parseCredit4uHtml } from "./providers/credit4uHtml";
 
 export type { ParsedDebtItem } from "./normalizeDebt";
@@ -33,13 +31,20 @@ export async function parseDebtFile(file: File): Promise<DebtParseResult> {
       };
     }
     if (kind === "excel") {
-      const buffer = await file.arrayBuffer();
+      // SheetJS는 파일을 가져올 때만 로드하고, 파일 읽기와 동시에 준비합니다.
+      const [buffer, { parseExcelFile }] = await Promise.all([
+        file.arrayBuffer(),
+        import("./providers/genericExcel"),
+      ]);
       const items = parseExcelFile(buffer, file.name);
       if (items.length === 0) return { ok: false, items: [], message: UNRECOGNIZED_MESSAGE };
       return { ok: true, items };
     }
     if (kind === "csv") {
-      const text = await file.text();
+      const [text, { parseCsvText }] = await Promise.all([
+        file.text(),
+        import("./providers/genericCsv"),
+      ]);
       const items = parseCsvText(text, file.name);
       if (items.length === 0) return { ok: false, items: [], message: UNRECOGNIZED_MESSAGE };
       return { ok: true, items };

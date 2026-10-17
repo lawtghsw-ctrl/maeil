@@ -193,6 +193,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   });
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(configured ? null : "Supabase 환경변수가 설정되지 않았습니다.");
+  const currentUserId = currentUser?.id;
 
   const actorName = profile?.displayName || profile?.staffName || currentUser?.email || "시스템";
   const currentStaff = profile?.platformRole === "super_admin" ? undefined : profile?.staffName;
@@ -384,7 +385,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!globalMode && !targetFirmId) throw new Error("소속 로펌을 확인할 수 없습니다.");
 
       const [
-        loadedLeads, loadedClients, loadedCases, loadedInstallments, loadedSchedule, loadedPosts, loadedChanges, directoryRes,
+        loadedLeads, loadedClients, loadedCases, loadedInstallments, loadedSchedule, loadedPosts, loadedChanges, directoryRes, firmSettingsRes,
       ] = await Promise.all([
         fetchEntityTable<DbLead>("app_leads", globalMode ? undefined : targetFirmId, firmNames),
         fetchEntityTable<Client>("app_clients", globalMode ? undefined : targetFirmId, firmNames),
@@ -396,6 +397,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         globalMode
           ? supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff", true).order("display_name")
           : supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id", targetFirmId!).eq("is_work_staff", true).order("display_name"),
+        globalMode
+          ? Promise.resolve({ data: null, error: null })
+          : supabase.from("firm_settings").select("key,value").eq("law_firm_id", targetFirmId!),
       ]);
       if (directoryRes.error) throw directoryRes.error;
 
@@ -425,7 +429,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setMinLivingCostTable(defaultMinLivingCostTable());
         setCaseDocuments({});
       } else {
-        const { data: firmSettingsData, error: firmSettingsError } = await supabase.from("firm_settings").select("key,value").eq("law_firm_id", targetFirmId!);
+        const { data: firmSettingsData, error: firmSettingsError } = firmSettingsRes;
         if (firmSettingsError) throw firmSettingsError;
         const firmSettings = new Map((firmSettingsData ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
         const rates = firmSettings.get("settlement_rates") as SettlementRateMap | undefined;
@@ -448,7 +452,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [reloadData]);
 
   useEffect(() => {
-    if (!supabase || !currentUser) return;
+    if (!supabase || !currentUserId) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const scheduleReload = () => {
       if (timer) clearTimeout(timer);
@@ -476,7 +480,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (timer) clearTimeout(timer);
       void supabase.removeChannel(channel);
     };
-  }, [supabase, currentUser, reloadData]);
+  }, [supabase, currentUserId, reloadData]);
 
   const saveEntity = useCallback(
     async (table: string, entity: { id: string; _lawFirmId?: string; _lawFirmName?: string }) => {

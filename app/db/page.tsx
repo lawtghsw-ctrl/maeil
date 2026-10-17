@@ -35,6 +35,7 @@ import { ReservationDateTimeEditor } from "@/components/ui/ReservationDateTimeEd
 import { ConfirmDelete } from "@/components/ui/ConfirmDelete";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
 import { ClipboardList, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import { buildLeadSearchIndex } from "@/lib/list-indexes";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -712,6 +713,14 @@ export default function DbManagementPage() {
     if (clientId) setJustConverted(lead.id);
   }
 
+  // 검색 중에는 원본 데이터가 바뀔 때만 검색 문자열과 사건 연결을 계산합니다.
+  // 검색을 비우면 캐시를 해제하며, 입력 글자마다 전체 사건을 다시 순회하지 않습니다.
+  const hasSearchQuery = !!query.trim();
+  const leadSearchIndex = useMemo(
+    () => hasSearchQuery ? buildLeadSearchIndex(accessibleLeads, cases) : null,
+    [accessibleLeads, cases, hasSearchQuery]
+  );
+
   // 검색어·담당자까지 적용한 집합에서 유입경로 건수를 먼저 계산합니다.
   // 유입경로 버튼을 선택하면 진행단계 보드와 아래 고객리스트가 함께 해당 경로로 필터됩니다.
   const sourceUniverse = useMemo(() => {
@@ -725,46 +734,14 @@ export default function DbManagementPage() {
 
         // 이름/연락처/기초메모/상담메모/사건번호를 모두 한 검색창에서 부분검색합니다.
         // 같은 문자열(예: 전화번호 중간 1111)을 가진 고객이 여러 명이면 모두 남깁니다.
-        const memoLogText = (l.consultation?.memoLog ?? [])
-          .map((entry) => `${entry.text} ${entry.tag} ${entry.staff}`)
-          .join(" ");
-        const relatedCaseNumbers = cases
-          .filter(
-            (c) =>
-              c.fromLeadId === l.id ||
-              c.id === l.convertedCaseId ||
-              (!!l.convertedClientId && c.clientId === l.convertedClientId)
-          )
-          .map((c) => c.caseNumber)
-          .join(" ");
-        const searchable = [
-          l.name,
-          l.phone,
-          l.email ?? "",
-          l.adName ?? "",
-          l.debtRaw ?? "",
-          l.incomeRaw ?? "",
-          l.consultTime ?? "",
-          l.consultTimeRaw ?? "",
-          l.debtRange ?? "",
-          l.incomeRange ?? "",
-          l.assignedStaff ?? "",
-          effectiveStage(l),
-          l.memo ?? "",
-          l.consultation?.memo ?? "",
-          memoLogText,
-          relatedCaseNumbers,
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        if (searchable.includes(needle)) return true;
+        const searchable = leadSearchIndex!.get(l)!;
+        if (searchable.text.includes(needle)) return true;
         if (!compactNeedle) return false;
 
         // 하이픈/공백을 빼고도 비교해 0101111 또는 사건번호 일부 입력도 동작하게 합니다.
-        return searchable.replace(/[\s\-().]/g, "").includes(compactNeedle);
+        return searchable.compactText.includes(compactNeedle);
       });
-  }, [accessibleLeads, cases, canViewAllDb, staffFilter, query]);
+  }, [accessibleLeads, leadSearchIndex, canViewAllDb, staffFilter, query]);
 
   const sourceCounts = useMemo(() => {
     const map: Partial<Record<LeadSource, number>> = {};
@@ -826,6 +803,8 @@ export default function DbManagementPage() {
       .filter((l) => incomeFilter === "전체" || leadIncomeCategory(l) === incomeFilter)
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
   }, [baseRows, timeFilter, debtFilter, incomeFilter]);
+
+  const visibleRows = useMemo(() => pageRows(rows, page, 10), [rows, page]);
 
   // DB관리 상단 재무 요약. 담당자 버튼을 선택하면 해당 담당자의 계약만 집계하고,
   // 전체 상태에서는 전사 계약을 집계합니다. 계약금액/납부금/미수금을 한눈에 확인하도록
@@ -1031,7 +1010,7 @@ export default function DbManagementPage() {
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
-          {pageRows(rows, page, 10).map((lead) => (
+          {visibleRows.map((lead) => (
             <div key={lead.id} className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -1160,7 +1139,7 @@ export default function DbManagementPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRows(rows, page, 10).map((lead) => (
+              {visibleRows.map((lead) => (
                 <tr key={lead.id} className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
                   {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
                   <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(lead.receivedAt)}</td>

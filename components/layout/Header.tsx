@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEv
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { fmtDate, fmtWon } from "@/lib/format";
+import { firstByKey } from "@/lib/list-indexes";
 
 function kstDate(): string {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -159,6 +160,19 @@ export function Header() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const caseById = useMemo(() => firstByKey(cases, (record) => record.id), [cases]);
+  const clientById = useMemo(() => firstByKey(clients, (client) => client.id), [clients]);
+  const firstCaseByClientId = useMemo(() => firstByKey(cases, (record) => record.clientId), [cases]);
+  const caseNumbersByClientId = useMemo(() => {
+    const numbers = new Map<string, string[]>();
+    for (const record of cases) {
+      const values = numbers.get(record.clientId);
+      if (values) values.push(record.caseNumber);
+      else numbers.set(record.clientId, [record.caseNumber]);
+    }
+    return new Map(Array.from(numbers, ([clientId, values]) => [clientId, values.join(" ")]));
+  }, [cases]);
+
   const matches = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return [] as Array<{ id: string; kind: "lead" | "client"; name: string; phone: string; assignedStaff?: string; caseId?: string }>;
@@ -178,7 +192,7 @@ export function Header() {
       .map((lead) => ({ id: lead.id, kind: "lead" as const, name: lead.name, phone: lead.phone, assignedStaff: lead.assignedStaff }));
     const clientRows = clientScope
       .filter((client) => {
-        const caseNumbers = cases.filter((record) => record.clientId === client.id).map((record) => record.caseNumber).join(" ");
+        const caseNumbers = caseNumbersByClientId.get(client.id) ?? "";
         return includesNeedle(`${client.name} ${client.phone} ${caseNumbers}`);
       })
       .map((client) => ({
@@ -187,33 +201,33 @@ export function Header() {
         name: client.name,
         phone: client.phone,
         assignedStaff: client.assignedStaff,
-        caseId: cases.find((record) => record.clientId === client.id)?.id,
+        caseId: firstCaseByClientId.get(client.id)?.id,
       }));
 
     return [...leadRows, ...clientRows].slice(0, 10);
-  }, [q, leads, clients, cases, canViewAllLeads, isAdmin, can, currentStaff, profile?.staffName, profile?.displayName]);
+  }, [q, leads, clients, caseNumbersByClientId, firstCaseByClientId, canViewAllLeads, isAdmin, can, currentStaff, profile?.staffName, profile?.displayName]);
 
   const overdueAlerts = useMemo(
     () =>
       installments
         .filter((i) => (i.status === "연체" || i.status === "실패") && i.dueDate <= todayIso)
         .map((i) => {
-          const c = cases.find((x) => x.id === i.caseId);
-          const client = c ? clients.find((x) => x.id === c.clientId) : undefined;
+          const c = caseById.get(i.caseId);
+          const client = c ? clientById.get(c.clientId) : undefined;
           return { id: i.id, name: client?.name ?? "삭제된 고객", amount: i.amount, dueDate: i.dueDate, status: i.status };
         }),
-    [installments, cases, clients, todayIso]
+    [installments, caseById, clientById, todayIso]
   );
   const scheduleAlerts = useMemo(
     () =>
       scheduleItems
         .filter((s) => !s.done && s.date <= todayIso)
         .map((s) => {
-          const c = s.caseId ? cases.find((x) => x.id === s.caseId) : undefined;
-          const client = c ? clients.find((x) => x.id === c.clientId) : undefined;
+          const c = s.caseId ? caseById.get(s.caseId) : undefined;
+          const client = c ? clientById.get(c.clientId) : undefined;
           return { id: s.id, name: client?.name ?? "-", title: s.title, date: s.date, type: s.type };
         }),
-    [scheduleItems, cases, clients, todayIso]
+    [scheduleItems, caseById, clientById, todayIso]
   );
 
   // 최종관리자는 전체 예약을 보고, 직원계정에는 본인 담당 예약만 노출합니다.

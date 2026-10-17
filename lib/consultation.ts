@@ -444,9 +444,13 @@ export function checkCallWarning(
 ): CallWarningResult {
   const today = todayIso ?? kstDateStr();
   const threshold = Math.max(1, Math.trunc(noAnswerThreshold || 1));
-  const todays = (memoLog ?? []).filter((e) => kstDateStr(new Date(e.at)) === today);
-  const noAnswerCountToday = todays.filter(countsAsUnansweredContact).length;
-  const reachedToday = todays.some((e) => e.tag === "재통화");
+  let noAnswerCountToday = 0;
+  let reachedToday = false;
+  for (const entry of memoLog ?? []) {
+    if (kstDateStr(new Date(entry.at)) !== today) continue;
+    if (countsAsUnansweredContact(entry)) noAnswerCountToday += 1;
+    if (entry.tag === "재통화") reachedToday = true;
+  }
   const active = !reachedToday && noAnswerCountToday < threshold;
   return { active, noAnswerCountToday, reachedToday, threshold };
 }
@@ -470,12 +474,12 @@ export function checkPeriodicContactWarning(
 ): PeriodicContactWarningResult {
   const today = todayIso ?? kstDateStr();
   const interval = Math.max(1, Math.trunc(intervalDays || 1));
-  const contactDates = (memoLog ?? [])
-    .filter((entry) => entry.tag === "재통화" || countsAsUnansweredContact(entry))
-    .map((entry) => kstDateStr(new Date(entry.at)))
-    .filter(Boolean)
-    .sort();
-  const lastContactDate = contactDates[contactDates.length - 1];
+  let lastContactDate: string | undefined;
+  for (const entry of memoLog ?? []) {
+    if (entry.tag !== "재통화" && !countsAsUnansweredContact(entry)) continue;
+    const date = kstDateStr(new Date(entry.at));
+    if (date && (lastContactDate === undefined || date > lastContactDate)) lastContactDate = date;
+  }
   if (!lastContactDate) return { active: true, intervalDays: interval };
 
   const daysSinceLastContact = Math.max(0, isoDayNumber(today) - isoDayNumber(lastContactDate));
