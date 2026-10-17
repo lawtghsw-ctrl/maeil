@@ -21,13 +21,21 @@ export async function POST(req: NextRequest) {
   const p=profile as {platform_role?:string;role?:string;permissions?:Record<string,boolean>;law_firm_id?:string};
   const allowed=p.platform_role==="super_admin" || p.role==="admin" || p.role==="firm_admin" || p.permissions?.["sms.manage_settings"] === true;
   if(!allowed) return NextResponse.json({error:"문자 설정 권한이 없습니다."},{status:403});
-  let body:{sender?:unknown;receiver?:unknown}|null=null;
+  let body:{sender?:unknown;receiver?:unknown;lawFirmId?:unknown}|null=null;
   try {body=await req.json();}catch{return NextResponse.json({error:"JSON 요청이 필요합니다."},{status:400});}
   const sender=digits(body?.sender),receiver=digits(body?.receiver);
   if(!permittedSenders[sender] || !/^01[016789]\d{7,8}$/.test(receiver)) return NextResponse.json({error:"승인된 발신번호와 올바른 단일 수신번호만 사용할 수 있습니다."},{status:400});
+  // 슈퍼어드민은 프로필에 로펌 ID가 없을 수 있으므로 화면에서 선택한 로펌을 사용합니다.
+  // 일반 로펌 관리자는 브라우저가 전달한 로펌 ID를 신뢰하지 않고 자기 로펌만 조회합니다.
+  const requestedFirmId = typeof body?.lawFirmId === "string" ? body.lawFirmId.trim() : "";
+  const firmId = p.platform_role === "super_admin" ? requestedFirmId : (p.law_firm_id ?? "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(firmId)) {
+    return NextResponse.json({error:"문자발송 대상 로펌을 먼저 선택해주세요."},{status:400});
+  }
   const {data:registered,error:senderError}=await supabase.from("sms_sender_numbers").select("id,staff_name")
-    .eq("law_firm_id",p.law_firm_id).eq("phone",sender).eq("is_active",true).eq("is_registered",true).maybeSingle();
-  if(senderError || !registered || registered.staff_name!==permittedSenders[sender]) return NextResponse.json({error:"이 로펌에 승인된 담당자 발신번호가 등록되지 않았습니다."},{status:403});
+    .eq("law_firm_id",firmId).eq("phone",sender).eq("is_active",true).eq("is_registered",true).maybeSingle();
+  if (senderError) return NextResponse.json({error:`발신번호 조회 오류: ${senderError.message}`},{status:403});
+  if (!registered || registered.staff_name.trim() !== permittedSenders[sender]) return NextResponse.json({error:"선택한 로펌에서 이 담당자 발신번호를 찾지 못했습니다. 로펌 선택 상태를 확인해주세요."},{status:403});
   const key=process.env.ALIGO_API_KEY,userId=process.env.ALIGO_USER_ID;
   if(!key || !userId) return NextResponse.json({error:"알리고 환경변수가 없습니다."},{status:503});
   const form=new URLSearchParams({key,user_id:userId,sender,receiver,msg:"[로파워] API 연결 테스트입니다. 실제 발송되지 않습니다.",testmode_yn:"Y"});
