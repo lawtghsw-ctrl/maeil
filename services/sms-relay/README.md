@@ -148,3 +148,5 @@ live 업무 응답은 HTTP 200의 `state`로 구분합니다. `accepted`는 알�
 SQLite는 HMAC 해시·안전한 결과·접수 ID만 저장합니다. 문자·전화번호·이미지·제공자 비밀값은 저장하거나 기록하지 않습니다. `dispatch.sqlite.hmac-key`는 최초에만 0600으로 생성하며, DB/키 중 하나가 없거나 서로 다르면 시작을 거부합니다. 상태 디렉터리는 서비스 전용 0700입니다. DB·키·SQLite WAL/SHM을 함께 보존하고, 일관된 백업은 서비스를 정지한 상태에서 확보합니다. **원장을 삭제하거나 이전 발송 기록이 없는 백업으로 되돌리면 안 됩니다.** 원장 유실 시 실발송을 중단하고 복구해야 합니다.
 
 `deploy/lawpower-sms-worker.timer`는 작업 완료 10초 뒤 새 작업 확인을 요청합니다. `worker.curl`의 토큰은 root 0600 파일에서 systemd `LoadCredential`로 전달하며 명령행에 노출하지 않습니다. 고정 HTTPS `/api/sms/dispatch`에 최대 50초의 POST를 한 번 수행하고, curl 재시도·리다이렉트·응답 로그를 사용하지 않습니다. 타이머는 과거 실행 시각을 보충하지 않으며 설치기가 시작하거나 활성화하지 않습니다. 새 작업 선정과 과거 문자 제외는 앱 DB의 gate/epoch/created_at 검사가 담당합니다.
+
+worker는 `/opt/lawpower-sms-relay/bin/curl`을 실행합니다. 설치기는 기존 root 소유 시스템 curl을 별도 파일로 복사하여 `root:lawpower-sms-relay 0750`으로 설치하고, 원본 curl의 권한은 유지합니다. 전용 복사본은 원본과 내용이 같고 별도 inode여야 하며, 시스템 curl 업데이트 시 함께 검토하여 갱신합니다.

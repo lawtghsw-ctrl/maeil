@@ -36,6 +36,9 @@ Node.js는 [공식 v24.22.0 LTS 릴리스](https://nodejs.org/en/blog/release/v2
 | 영속 원장 | `/var/lib/lawpower-sms-relay`, `StateDirectoryMode=0700`; DB와 HMAC 키 보존 |
 | 작업 조회 | `lawpower-sms-worker.service` + `.timer`, 설치 시 시작·활성화 안 함 |
 | 작업 토큰 | `/etc/lawpower-sms-relay/worker.curl`, root 소유 `0600`, `LoadCredential` 전달 |
+| 작업 curl | `/opt/lawpower-sms-relay/bin/curl`, `root:lawpower-sms-relay` 소유 `0750`, 시스템 curl과 별도 파일 |
+
+Cafe24 이미지처럼 `/usr/bin/curl`이 root 전용 `0700`인 경우에도 시스템 파일 권한은 변경하지 않습니다. 설치기는 `command -v curl`의 실제 경로가 root 소유 일반 실행 파일인지 확인한 뒤 전용 경로로 복사하고, 내용 일치와 별도 inode를 확인합니다. 심볼릭 링크·하드 링크로 실행 권한을 우회하지 않습니다. 시스템 curl 업데이트 뒤 전용 복사본이 달라지면 자동 덮어쓰기 없이 중단하므로 운영자가 검토하여 함께 갱신합니다.
 
 환경 파일의 `RELAY_BEARER_TOKEN`은 충분히 긴 임의 토큰, `ALIGO_SENDER_ALLOWLIST`는 알리고에 등록된 발신번호 목록이어야 합니다. 통합이 `ALIGO_CREDENTIAL_SOURCE=request`를 사용하면 `ALIGO_API_KEY`와 `ALIGO_USER_ID`는 비워 두고 인증된 호출의 일회성 provider 필드로 받습니다. `server-env` 모드에서는 두 값을 서버에 입력합니다. 실비밀값을 명령 인자·메신저·Git·로그에 넣지 않습니다. 빈 예제 파일은 서버 시작에 실패하도록 되어 있습니다. 기존 테스트 경로의 테스트 플래그·고정 메시지·알리고 목적지는 변경할 수 없습니다. 새 실발송 경로는 별도 토큰과 승인 UUID를 사용하며, 상세 조건은 상위 README의 실발송 계약을 따릅니다.
 

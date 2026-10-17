@@ -172,6 +172,27 @@ install_node() {
     fi
 }
 
+install_worker_curl() {
+    local curl_command curl_source destination="$APP_ROOT/bin/curl"
+    curl_command="$(command -v curl)" || fail 'An installed system curl is required.'
+    [[ "$curl_command" == /* ]] || fail 'curl must resolve to a filesystem executable, not a shell function.'
+    curl_source="$(readlink -f -- "$curl_command")" || fail 'Cannot resolve the installed curl binary.'
+    [[ -f "$curl_source" && ! -L "$curl_source" && -x "$curl_source" && "$(stat -c %u "$curl_source")" == 0 ]] || fail 'Installed curl must be a root-owned regular executable.'
+    [[ "$curl_source" != "$destination" ]] || fail 'Resolve curl from the system installation, not the dedicated worker copy.'
+    ensure_directory "$APP_ROOT/bin" 755
+    [[ ! -L "$destination" ]] || fail 'Refusing symlink worker curl target.'
+    if [[ -e "$destination" ]]; then
+        [[ -f "$destination" && "$(stat -c %u "$destination")" == 0 && "$(stat -c %G "$destination")" == "$SERVICE_USER" && "$(stat -c %a "$destination")" == 750 && "$(stat -c %h "$destination")" == 1 ]] || fail 'Worker curl must be a separate root:lawpower-sms-relay 0750 regular file; not changed.'
+        [[ ! "$curl_source" -ef "$destination" ]] || fail 'Worker curl must not share the system binary inode.'
+        cmp -s -- "$curl_source" "$destination" || fail 'Worker curl differs from the installed system binary; review an explicit update.'
+    else
+        # Copy bytes into a separate inode. Never chmod/chown or hard-link system curl.
+        install -o root -g "$SERVICE_USER" -m 750 -- "$curl_source" "$destination"
+        cmp -s -- "$curl_source" "$destination" || fail 'Worker curl copy verification failed.'
+        [[ ! "$curl_source" -ef "$destination" && "$(stat -c %h "$destination")" == 1 ]] || fail 'Worker curl copy must have an independent inode.'
+    fi
+}
+
 install_application() {
     local source="$1" passwd_entry
     [[ -f "$source/src/server.mjs" && ! -L "$source/src" ]] || fail 'Source must contain src/server.mjs.'
@@ -186,6 +207,7 @@ install_application() {
         getent group "$SERVICE_USER" >/dev/null && fail 'Service group already exists without its user; not changed.'
         useradd --system --user-group --home-dir /nonexistent --no-create-home --shell "$(command -v nologin)" "$SERVICE_USER"
     fi
+    install_worker_curl
     if [[ -e "$APP_ROOT/app" || -L "$APP_ROOT/app" ]]; then
         [[ -d "$APP_ROOT/app/src" && ! -L "$APP_ROOT/app" && ! -L "$APP_ROOT/app/src" ]] || fail 'Unexpected existing application path.'
         diff -qr "$source/src" "$APP_ROOT/app/src" >/dev/null || fail 'Installed source differs; no files overwritten. Review an explicit upgrade separately.'

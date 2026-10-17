@@ -86,10 +86,22 @@ try {
   check('Worker is non-root, fixed HTTPS POST, bounded and has no retry or shell', () => {
     assert.match(worker, /^Type=oneshot$/m); assert.match(worker, /^User=lawpower-sms-relay$/m);
     assert.match(worker, /^LoadCredential=worker.curl:\/etc\/lawpower-sms-relay\/worker.curl$/m);
-    assert.match(worker, /ExecStart=\/usr\/bin\/curl --disable --config \$\{CREDENTIALS_DIRECTORY\}\/worker.curl --request POST --url https:\/\/maeil.vercel.app\/api\/sms\/dispatch /);
+    assert.match(worker, /ExecStart=\/opt\/lawpower-sms-relay\/bin\/curl --disable --config \$\{CREDENTIALS_DIRECTORY\}\/worker.curl --request POST --url https:\/\/maeil.vercel.app\/api\/sms\/dispatch /);
     assert.match(worker, /--max-time 50/); assert.match(worker, /--no-location/); assert.match(worker, /--output \/dev\/null/);
     assert.match(worker, /^Restart=no$/m); assert.match(worker, /^StandardOutput=null$/m); assert.match(worker, /^StandardError=null$/m);
     assert.doesNotMatch(worker, /--retry|ExecStart=.*(?:bash|sh -c)|Bearer [A-Za-z0-9_]+/);
+  });
+  check('Dedicated worker curl is a verified separate copy; system permissions are preserved', () => {
+    const copy = script.slice(script.indexOf('install_worker_curl() {'), script.indexOf('\ninstall_application() {'));
+    assert.match(copy, /command -v curl/); assert.match(copy, /readlink -f -- "\$curl_command"/);
+    assert.match(copy, /-f "\$curl_source" && ! -L "\$curl_source" && -x "\$curl_source"/);
+    assert.match(copy, /stat -c %u "\$curl_source"/);
+    assert.match(copy, /install -o root -g "\$SERVICE_USER" -m 750 -- "\$curl_source" "\$destination"/);
+    assert.match(copy, /cmp -s -- "\$curl_source" "\$destination"/);
+    assert.match(copy, /stat -c %h "\$destination"/);
+    assert.match(copy, /! "\$curl_source" -ef "\$destination"/);
+    const code = copy.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    assert.doesNotMatch(code, /(?:^|\n)\s*(?:chmod|chown|ln)\s/);
   });
   check('Worker timer runs after completion without overlap or missed-job catch-up', () => {
     assert.match(timer, /^OnActiveSec=10s$/m); assert.match(timer, /^OnUnitInactiveSec=10s$/m); assert.match(timer, /^Persistent=false$/m);

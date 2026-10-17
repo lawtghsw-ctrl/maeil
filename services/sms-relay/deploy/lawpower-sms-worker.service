@@ -12,7 +12,7 @@ Group=lawpower-sms-relay
 LoadCredential=worker.curl:/etc/lawpower-sms-relay/worker.curl
 # curl --disable prevents an unrelated .curlrc from adding redirects/retries.
 # The credential file contains only its Authorization header, never a URL.
-ExecStart=/usr/bin/curl --disable --config ${CREDENTIALS_DIRECTORY}/worker.curl --request POST --url https://maeil.vercel.app/api/sms/dispatch --header "Content-Type: application/json" --data "{}" --proto =https --tlsv1.2 --no-location --noproxy * --connect-timeout 5 --max-time 50 --silent --fail --output /dev/null
+ExecStart=/opt/lawpower-sms-relay/bin/curl --disable --config ${CREDENTIALS_DIRECTORY}/worker.curl --request POST --url https://maeil.vercel.app/api/sms/dispatch --header "Content-Type: application/json" --data "{}" --proto =https --tlsv1.2 --no-location --noproxy * --connect-timeout 5 --max-time 50 --silent --fail --output /dev/null
 TimeoutStartSec=55
 Restart=no
 UMask=0077
