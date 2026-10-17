@@ -3,6 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { readConfig, validProvider, BODY_LIMIT_BYTES, DUPLICATE_TTL_MS, DUPLICATE_CAPACITY, PHONE_PATTERN, RECEIVER_PATTERN } from "./config.mjs";
 import { createAligoSender } from "./aligo.mjs";
+import { createLiveHandler } from "./live.mjs";
 
 const BODY_TIMEOUT_MS = 10_000;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
@@ -54,8 +55,9 @@ function readBody(request) {
 }
 
 /** sendTest/now injection is local test scaffolding, never an HTTP or env option. */
-export function createRelayServer(config, { sendTest, now = Date.now } = {}) {
+export function createRelayServer(config, { sendTest, now = Date.now, sendLive, queryResults, dispatchStore } = {}) {
   const upstream = sendTest ? null : createAligoSender(config);
+  const live = createLiveHandler(config, { sendLive, queryResults, dispatchStore });
   const send = sendTest || upstream.send;
   const tokenHash = createHash("sha256").update(config.token).digest();
   const duplicates = new Map();
@@ -68,6 +70,7 @@ export function createRelayServer(config, { sendTest, now = Date.now } = {}) {
   }
   const server = http.createServer(async (request, response) => {
     try {
+      if (request.url === '/v1/aligo/send' || request.url === '/v1/aligo/results' || request.url === '/v1/aligo/ready') { await live.handle(request, response); return; }
       if (request.url === "/health") {
         if (request.method !== "GET") { rejectRequest(request, response, 405, "METHOD_NOT_ALLOWED", { Allow: "GET" }); return; }
         json(response, 200, { status: "ok", service: "lawpower-sms-test-relay", mode: "test" }); return;
@@ -127,7 +130,7 @@ export function createRelayServer(config, { sendTest, now = Date.now } = {}) {
   server.maxHeadersCount = 32;
   server.maxRequestsPerSocket = 100;
   server.on("clientError", (_error, socket) => { if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); });
-  server.on("close", () => upstream?.close());
+  server.on("close", () => { upstream?.close(); live.close(); });
   return server;
 }
 
@@ -137,7 +140,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const config = readConfig();
     const server = createRelayServer(config);
     server.on("error", () => { console.error("sms-relay: listener failed"); process.exitCode = 1; });
-    server.listen(config.port, config.host, () => console.info("sms-relay: test-only listener ready"));
+    server.listen(config.port, config.host, () => console.info("sms-relay: listener ready"));
     const stop = () => { server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 12_000).unref(); };
     process.on("SIGTERM", stop); process.on("SIGINT", stop);
   } catch { console.error("sms-relay: startup configuration invalid; inspect the required environment variable names in README.md"); process.exitCode = 1; }

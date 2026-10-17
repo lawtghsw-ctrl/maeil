@@ -1,0 +1,41 @@
+# Triggered only by the separately enabled timer. No HTTP or service retry.
+[Unit]
+Description=LawPower future SMS dispatch worker trigger
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/lawpower-sms-relay/worker.curl
+
+[Service]
+Type=oneshot
+User=lawpower-sms-relay
+Group=lawpower-sms-relay
+LoadCredential=worker.curl:/etc/lawpower-sms-relay/worker.curl
+# curl --disable prevents an unrelated .curlrc from adding redirects/retries.
+# The credential file contains only its Authorization header, never a URL.
+ExecStart=/usr/bin/curl --disable --config ${CREDENTIALS_DIRECTORY}/worker.curl --request POST --url https://maeil.vercel.app/api/sms/dispatch --header "Content-Type: application/json" --data "{}" --proto =https --tlsv1.2 --no-location --noproxy * --connect-timeout 5 --max-time 50 --silent --fail --output /dev/null
+TimeoutStartSec=55
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=64M
+TasksMax=16
+LimitNOFILE=64
+# Response content and curl diagnostics must never enter the journal.
+StandardOutput=null
+StandardError=null

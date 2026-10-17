@@ -1,9 +1,13 @@
+import { isAbsolute } from 'node:path';
+import { UUID_PATTERN } from './validation.mjs';
 export const BODY_LIMIT_BYTES = 4096;
 export const UPSTREAM_TIMEOUT_MS = 10_000;
 export const DUPLICATE_TTL_MS = 10 * 60_000;
 export const DUPLICATE_CAPACITY = 1000;
 export const PHONE_PATTERN = /^[0-9]{8,16}$/;
 export const RECEIVER_PATTERN = /^01[016789]\d{7,8}$/;
+// Live delivery preserves the existing app's single numeric recipient contract.
+export const LIVE_RECEIVER_PATTERN = /^[0-9]{9,11}$/;
 
 export function validProvider(provider) {
   return provider && typeof provider === "object" && !Array.isArray(provider) && Object.keys(provider).length === 2 &&
@@ -39,9 +43,29 @@ export function readConfig(env = process.env) {
   if (!senderValues.length || senderValues.length > 20 || senderValues.some((value) => !PHONE_PATTERN.test(value))) throw new Error("ALIGO_SENDER_ALLOWLIST must contain registered numeric senders.");
   const host = env.RELAY_HOST || "127.0.0.1";
   if (!["127.0.0.1", "::1"].includes(host)) throw new Error("RELAY_HOST must be a loopback address.");
+  const live = readLiveConfig(env, token);
   return Object.freeze({
-    token, apiKey, userId, credentialSource, allowedSenders: new Set(senderValues), host,
+    token, apiKey, userId, credentialSource, allowedSenders: new Set(senderValues), host, live,
     port: integer(env.RELAY_PORT, 8787, 1, 65535, "RELAY_PORT"),
     maxConcurrency: integer(env.RELAY_MAX_CONCURRENCY, 2, 1, 4, "RELAY_MAX_CONCURRENCY"),
   });
+}
+
+function boolean(env, key) {
+  if (env[key] === undefined || env[key] === '' || env[key] === 'false') return false;
+  if (env[key] !== 'true') throw new Error(`${key} must be true or false.`);
+  return true;
+}
+function readLiveConfig(env, testToken) {
+  if (!boolean(env, 'RELAY_LIVE_ENABLED')) return Object.freeze({ enabled: false });
+  const token = required(env, 'RELAY_LIVE_BEARER_TOKEN', 256);
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(token) || token === testToken) throw new Error('A separate RELAY_LIVE_BEARER_TOKEN is required.');
+  const approvalEpoch = required(env, 'RELAY_LIVE_APPROVAL_EPOCH', 36);
+  if (!UUID_PATTERN.test(approvalEpoch)) throw new Error('RELAY_LIVE_APPROVAL_EPOCH must be a UUID.');
+  const dbPath = env.RELAY_STATE_DB_PATH || '/var/lib/lawpower-sms-relay/dispatch.sqlite';
+  if (!isAbsolute(dbPath) || /[\x00-\x1f\x7f]/.test(dbPath)) throw new Error('RELAY_STATE_DB_PATH must be an absolute persistent path.');
+  const allowAllReceivers = boolean(env, 'RELAY_LIVE_ALLOW_ALL_RECEIVERS');
+  const values = (env.RELAY_LIVE_RECEIVER_ALLOWLIST || '').split(',').map(value => value.trim()).filter(Boolean);
+  if (values.length > 100 || values.some(value => !LIVE_RECEIVER_PATTERN.test(value)) || (!allowAllReceivers && !values.length)) throw new Error('A live receiver allowlist is required.');
+  return Object.freeze({ enabled: true, token, approvalEpoch: approvalEpoch.toLowerCase(), dbPath, allowAllReceivers, allowedReceivers: new Set(values) });
 }

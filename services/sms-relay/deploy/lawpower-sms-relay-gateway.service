@@ -1,6 +1,6 @@
 # lawpower-sms-relay deployment v1; independent of the distro nginx.service.
 [Unit]
-Description=LawPower HTTPS test relay gateway
+Description=LawPower HTTPS SMS relay gateway
 After=network-online.target lawpower-sms-relay.service
 Wants=network-online.target
 Requires=lawpower-sms-relay.service

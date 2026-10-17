@@ -203,6 +203,13 @@ install_application() {
     fi
     install_once "$SCRIPT_DIR/lawpower-sms-relay.service" /etc/systemd/system/lawpower-sms-relay.service 644
     install_once "$SCRIPT_DIR/lawpower-sms-relay-gateway.service" /etc/systemd/system/lawpower-sms-relay-gateway.service 644
+    install_once "$SCRIPT_DIR/lawpower-sms-worker.service" /etc/systemd/system/lawpower-sms-worker.service 644
+    install_once "$SCRIPT_DIR/lawpower-sms-worker.timer" /etc/systemd/system/lawpower-sms-worker.timer 644
+    if [[ -e "$CONFIG_ROOT/worker.curl" || -L "$CONFIG_ROOT/worker.curl" ]]; then
+        [[ -f "$CONFIG_ROOT/worker.curl" && ! -L "$CONFIG_ROOT/worker.curl" && "$(stat -c %u "$CONFIG_ROOT/worker.curl")" == 0 && "$(stat -c %a "$CONFIG_ROOT/worker.curl")" == 600 ]] || fail 'worker.curl must be a regular root-owned 0600 file; contents were not read or changed.'
+    else
+        install -o root -g root -m 600 "$SCRIPT_DIR/worker.curl.example" "$CONFIG_ROOT/worker.curl"
+    fi
     systemctl daemon-reload
 }
 

@@ -1,8 +1,8 @@
-# 로파워 알리고 테스트 중계 서버
+# 로파워 알리고 중계 서버
 
-Node.js 22/24의 내장 모듈만 사용하는 별도 중계 서버입니다. `npm install` 없이 실행합니다. 기존 어드민 코드나 데이터베이스를 포함하지 않습니다.
+Node.js 내장 모듈만 사용하는 별도 중계 서버입니다. `npm install` 없이 실행합니다. 테스트 전용 모드는 Node.js 22/24, 영속 SQLite를 사용하는 실발송 모드는 Node.js 24가 필요합니다. 기존 어드민의 업무 데이터베이스는 수정하지 않습니다.
 
-**테스트 전용입니다. 실제 문자 발송 기능과 전환 옵션이 없습니다.** 알리고 요청은 항상 `https://apis.aligo.in/send/`로 보내며 `testmode_yn=Y`를 서버가 강제합니다. 문구도 `[로파워] API 연결 테스트입니다. 실제 발송되지 않습니다.`로 고정합니다. 입력·환경변수로 URL, 문구, 테스트 플래그, 예약, 수신자 목록을 바꿀 수 없습니다.
+**기본값은 테스트 전용이며 실발송은 비활성입니다.** 기존 `/v1/aligo/test` 경로는 항상 `https://apis.aligo.in/send/`에 `testmode_yn=Y`를 강제하고 문구도 `[로파워] API 연결 테스트입니다. 실제 발송되지 않습니다.`로 고정합니다. 이 경로의 테스트 플래그·문구·URL·예약·수신자 목록은 바꿀 수 없습니다. 실발송은 별도 활성값·인증 토큰·승인 UUID·수신자 허용 목록·영속 원장이 필요한 `/v1/aligo/send` 경로로 분리합니다.
 
 알리고 공식 문서는 테스트 모드에서 실제 문자 전송과 과금 처리를 제외한다고 설명합니다. 이 중계 응답은 API 요청 접수 결과이며 휴대폰 수신 확인이 아닙니다. [알리고 문자 API 문서](https://smartsms.aligo.in/admin/api/spec.html)
 
@@ -34,7 +34,7 @@ node src/server.mjs
 
 현재 어드민과 연결할 때는 **`ALIGO_CREDENTIAL_SOURCE=request`**를 사용합니다. Vercel에 이미 있는 알리고 자격증명을 서버 간 HTTPS 본문으로 전달하므로, 운영 키를 꺼내서 VPS에 수동 복사할 필요가 없습니다. 이 모드에서는 VPS의 `ALIGO_API_KEY`와 `ALIGO_USER_ID`를 비워 둡니다. 전달된 자격증명은 한 번의 외부 요청에만 사용하고 파일·로그·응답·중복 캐시에 저장하지 않습니다.
 
-독립적으로 VPS 환경변수에 알리고 자격증명을 관리하는 구성은 `server-env`를 사용합니다. 이 모드는 요청 본문의 `provider` 필드를 거부합니다. 알 수 없는 자격증명 모드는 허용하지 않습니다.
+독립적으로 VPS 환경변수에 알리고 자격증명을 관리하는 구성은 `server-env`를 사용합니다. 이 모드의 테스트 경로는 요청 본문의 `provider` 필드를 거부합니다. 실발송 경로는 항상 인증된 요청의 `provider`를 받습니다. 알 수 없는 자격증명 모드는 허용하지 않습니다.
 
 ## HTTP 계약
 
@@ -115,3 +115,36 @@ sudo bash deploy/install-relay.sh --help
 환경 파일은 `sudoedit /etc/lawpower-sms-relay/relay.env`로 설정하고, 전용 서비스의 환경·인증서·HTTPS 도메인을 검토한 뒤 운영자가 서비스를 시작합니다. Node 서비스는 읽기 전용 파일시스템과 메모리 제한을 사용합니다. 로컬 상태 확인은 `curl --fail http://127.0.0.1:8787/health`로 할 수 있으며 알리고 호출을 발생시키지 않습니다. 외부 테스트 본문은 HTTPS를 통해서만 전달합니다.
 
 Node 앱은 런타임 패키지 설치가 필요 없습니다. HTTPS 프록시·OS 패키지·방화벽·SSH·인증서 설정은 배포 스크립트와 별도 운영 절차의 범위입니다. 기존 웹 서비스와 충돌한 경우 설치 스크립트의 중단 결과를 먼저 확인해야 합니다.
+
+## 명시적으로 승인한 새 문자만 실발송
+
+| 변수 | 의미 |
+| --- | --- |
+| `RELAY_LIVE_ENABLED` | 기본 `false`. 정확히 `true`일 때만 실발송 경로를 엽니다 |
+| `RELAY_LIVE_BEARER_TOKEN` | 테스트 토큰과 다른 무작위 URL-safe 32~256자 토큰 |
+| `RELAY_LIVE_APPROVAL_EPOCH` | 현재 승인에 대응하는 UUID. 새 dispatch는 정확히 일치해야 합니다 |
+| `RELAY_STATE_DB_PATH` | 기본 `/var/lib/lawpower-sms-relay/dispatch.sqlite`; 배포 unit이 이 경로로 고정합니다 |
+| `RELAY_LIVE_RECEIVER_ALLOWLIST` | 초기 실수신 확인을 명시적으로 허용한 번호들의 쉼표 목록. 기존 앱과 같은 단일 숫자 9~11자리 |
+| `RELAY_LIVE_ALLOW_ALL_RECEIVERS` | 기본 `false`. 전체 운영 수신자 허용을 별도로 승인한 후에만 `true` |
+
+`GET /v1/aligo/ready`는 실발송 Bearer로 인증하고, 열린 원장과 발신 허용 목록을 확인한 뒤 `{ready:true,approvalEpoch:UUID,testMode:false,retryable:false}`를 반환합니다. 알리고를 호출하지 않습니다. 실발송 비활성 상태에서는 live 경로가 `404`를 반환합니다.
+
+`POST /v1/aligo/send` 본문은 다음 필드만 허용합니다. 별도 `Idempotency-Key` 대신 **앱에서 한 번 생성하여 영속화한 attempt UUID**를 `dispatchId`로 사용합니다. 재요청 시 새 UUID를 발급하면 안 됩니다.
+
+```text
+{dispatchId: UUID, approvalEpoch: UUID, sender, receiver, message,
+ msgType: "SMS"|"LMS"|"MMS", title?: string,
+ images?: [{filename,contentType,base64}], provider:{key,userId}}
+```
+
+전체 JSON 최대 4MiB, 이미지 최대 3개·합계 2MiB이며 JPEG/PNG/GIF의 MIME·확장자·magic을 검사합니다. SMS 90바이트, LMS/MMS 2000바이트, 제목 44바이트를 EUC-KR 기준으로 검사합니다. 지원되지 않는 문자는 자동 치환하지 않고 거부합니다. URL·예약·다중 수신자·추가 필드는 허용하지 않습니다.
+
+원장에 dispatch를 `synchronous=FULL`로 **커밋한 뒤에만** 알리고를 한 번 호출합니다. 같은 ID와 입력은 저장 결과를 재사용하며, 문구·연락처·이미지·자격증명·승인값이 바뀌면 `409`입니다. 프로세스 중단·시간 초과·누락된 접수 ID는 `unknown`으로 남고 재전송하지 않습니다. 원장 장애도 재전송 근거로 취급하지 않습니다. 앱 DB의 활성 시각·승인 epoch 검사는 별도로 필요하며, 기존에 저장된 문자에 새 승인값이나 새 attempt를 부여해서는 안 됩니다.
+
+live 업무 응답은 HTTP 200의 `state`로 구분합니다. `accepted`는 알리고 접수이며 `actualDelivery:null`, `delivered`만 `actualDelivery:true`입니다. `rejected`/`failed`는 false, `pending`/`unknown`은 null입니다. 모든 응답은 `testMode:false,retryable:false`입니다. 입력/인증/권한/충돌은 400/401/403/409, 동시 처리 초과는 429, 원장 접근 불가는 503입니다.
+
+`POST /v1/aligo/results`는 `{dispatchId,approvalEpoch,provider}`만 받습니다. 원장에 저장한 mid를 고정 `https://apis.aligo.in/sms_list/`에서 조회하고, 최초 계정·수신자 해시와 일치하는 기록만 인정합니다. 문서화된 `발송완료`, `가입자없음`, `전송중`만 각각 delivered/failed/pending으로 처리하며 다른 값은 unknown입니다. 임의 mid·전화번호·URL 조회는 허용하지 않습니다. 확인 불가 후 재조회는 가능하지만 문자 자체는 다시 발송하지 않습니다. [알리고 공식 API 규격](https://smartsms.aligo.in/admin/api/spec.html)
+
+SQLite는 HMAC 해시·안전한 결과·접수 ID만 저장합니다. 문자·전화번호·이미지·제공자 비밀값은 저장하거나 기록하지 않습니다. `dispatch.sqlite.hmac-key`는 최초에만 0600으로 생성하며, DB/키 중 하나가 없거나 서로 다르면 시작을 거부합니다. 상태 디렉터리는 서비스 전용 0700입니다. DB·키·SQLite WAL/SHM을 함께 보존하고, 일관된 백업은 서비스를 정지한 상태에서 확보합니다. **원장을 삭제하거나 이전 발송 기록이 없는 백업으로 되돌리면 안 됩니다.** 원장 유실 시 실발송을 중단하고 복구해야 합니다.
+
+`deploy/lawpower-sms-worker.timer`는 작업 완료 10초 뒤 새 작업 확인을 요청합니다. `worker.curl`의 토큰은 root 0600 파일에서 systemd `LoadCredential`로 전달하며 명령행에 노출하지 않습니다. 고정 HTTPS `/api/sms/dispatch`에 최대 50초의 POST를 한 번 수행하고, curl 재시도·리다이렉트·응답 로그를 사용하지 않습니다. 타이머는 과거 실행 시각을 보충하지 않으며 설치기가 시작하거나 활성화하지 않습니다. 새 작업 선정과 과거 문자 제외는 앱 DB의 gate/epoch/created_at 검사가 담당합니다.

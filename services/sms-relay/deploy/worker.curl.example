@@ -1,0 +1,3 @@
+# root:root 0600; systemd LoadCredential reads this file without command-line secrets.
+# Keep only this Authorization header. No URLs, retries, redirects or output paths.
+header = "Authorization: Bearer REPLACE_WITH_WORKER_TOKEN"

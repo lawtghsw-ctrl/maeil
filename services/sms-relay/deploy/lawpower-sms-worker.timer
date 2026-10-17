@@ -1,0 +1,13 @@
+[Unit]
+Description=LawPower future SMS dispatch poll every ten seconds
+
+[Timer]
+OnActiveSec=10s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=lawpower-sms-worker.service
+
+[Install]
+WantedBy=timers.target

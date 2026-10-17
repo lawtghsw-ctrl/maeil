@@ -5,7 +5,7 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   // Browser session is not available for these external/public routes.
-  if (["/join", "/api/join", "/api/integrations/google-sheets/leads", "/api/integrations/meta/flush"].includes(pathname)) {
+  if (["/join", "/api/join", "/api/integrations/google-sheets/leads", "/api/integrations/meta/flush", "/api/sms/dispatch"].includes(pathname)) {
     return NextResponse.next({ request });
   }
 

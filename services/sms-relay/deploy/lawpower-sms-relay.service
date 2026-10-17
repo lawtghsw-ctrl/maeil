@@ -1,6 +1,6 @@
-# lawpower-sms-relay deployment v1; owned file, do not merge into another unit.
+# lawpower-sms-relay deployment v2; owned file, do not merge into another unit.
 [Unit]
-Description=LawPower Aligo test-only loopback relay
+Description=LawPower Aligo loopback relay with explicit live gate
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -12,8 +12,10 @@ User=lawpower-sms-relay
 Group=lawpower-sms-relay
 WorkingDirectory=/opt/lawpower-sms-relay/app
 EnvironmentFile=/etc/lawpower-sms-relay/relay.env
+StateDirectory=lawpower-sms-relay
+StateDirectoryMode=0700
 # Pin the bind address after EnvironmentFile, even if the file has other values.
-ExecStart=/usr/bin/env RELAY_HOST=127.0.0.1 RELAY_PORT=8787 /opt/lawpower-sms-relay/node/bin/node --max-old-space-size=128 /opt/lawpower-sms-relay/app/src/server.mjs
+ExecStart=/usr/bin/env RELAY_HOST=127.0.0.1 RELAY_PORT=8787 RELAY_STATE_DB_PATH=/var/lib/lawpower-sms-relay/dispatch.sqlite /opt/lawpower-sms-relay/node/bin/node --max-old-space-size=128 /opt/lawpower-sms-relay/app/src/server.mjs
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
