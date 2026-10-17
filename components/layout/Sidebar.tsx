@@ -29,7 +29,7 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
   const platformRole = profile?.platformRole ?? "staff";
   const isSuper = platformRole === "super_admin";
   const visible = useMemo(() => {
-    const rows = baseMenu.filter(([, , , permission]) => permission === "admin" ? isAdmin : can(permission));
+    const rows = baseMenu.filter(([, , , permission]) => permission === "admin" ? isAdmin : can(permission)).map((row): MenuItem => row[1] === "/analytics" ? [isSuper && !superAdminFirmScope ? "로펌 성과 · 통계" : "직원 · 변호사 성과", row[1], row[2], row[3]] : row);
     if (isSuper) rows.unshift(["로파워 플랫폼", "/platform", Building2, "admin"]);
     if (isSuper && superAdminFirmScope) rows.push(["로펌 설정/광고연동", `/firm/settings?lawFirmId=${encodeURIComponent(superAdminFirmScope.id)}`, Link2, "admin"]);
     else if (platformRole === "firm_admin") rows.push(["로펌 설정/직원초대", "/firm/settings", Link2, "admin"]);
