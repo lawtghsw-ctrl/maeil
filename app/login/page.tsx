@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 
 function LoginForm() {
@@ -67,7 +67,7 @@ function LoginForm() {
     <main className="grid min-h-screen place-items-center bg-[#f6f8fb] p-4">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
         <div className="mb-6 flex items-center gap-3">
-          <div className="grid size-11 place-items-center rounded-xl bg-blue-600 text-white"><ShieldCheck size={22} /></div>
+          <BrandLogo width={56} priority />
           <div><h1 className="text-xl font-black text-slate-900">로파워 로그인</h1><p className="text-xs text-slate-500">LawPower Multi-firm Admin</p></div>
         </div>
         {!configured ? (
