@@ -1,4 +1,5 @@
 import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, type CaseRecord, type DbLead } from "./types";
+import { activeMemoEntries } from "./consultation-memos";
 
 // Array.find returns the first match, including when legacy data repeats a key.
 export function firstByKey<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T> {
@@ -53,7 +54,7 @@ export function buildLeadSearchIndex(leads: readonly DbLead[], cases: readonly C
       .sort((a, b) => a - b)
       .map((position) => cases[position].caseNumber)
       .join(" ");
-    const memoLogText = (lead.consultation?.memoLog ?? [])
+    const memoLogText = activeMemoEntries(lead.consultation?.memoLog)
       .map((entry) => `${entry.text} ${entry.tag} ${entry.staff}`)
       .join(" ");
     const text = [

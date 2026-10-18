@@ -13,9 +13,9 @@ const text = node => typeof node === 'string' ? node : Array.isArray(node) ? nod
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 
 function harness(options = {}) {
-  const modules = new Map(), snapshots = [], downloads = [], saved = [], storage = new Map(); let pdfLoads = 0;
+  const modules = new Map(), snapshots = [], downloads = [], saved = [], storage = new Map(), timers = new Map(); let pdfLoads = 0, nextTimer = 0;
   const captures = {};
-  const window = { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, setTimeout: () => 1, clearTimeout() {}, addEventListener() {}, removeEventListener() {}, confirm: () => true };
+  const window = { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, setTimeout: callback => { timers.set(++nextTimer,callback); return nextTimer; }, clearTimeout: id => timers.delete(id), addEventListener() {}, removeEventListener() {}, confirm: () => true };
   function load(relative) {
     if (modules.has(relative)) return modules.get(relative).exports;
     const module = { exports: {} }; modules.set(relative, module);
@@ -42,6 +42,7 @@ function harness(options = {}) {
   let tree;
   return {
     snapshots, downloads, saved, captures, storage, get loads() { return pdfLoads; }, get tree() { return tree; },
+    flushDraft: () => { for (const [id,callback] of timers) { timers.delete(id); callback(); } },
     mount: async () => { await act(async () => { tree = Renderer.create(React.createElement(Component, props)); }); },
     update: async patch => { props = { ...props, ...patch }; await act(async () => tree.update(React.createElement(Component, props))); },
     button: () => tree.root.findAllByType('button').find(button => /PDF/.test(text(button))),
@@ -114,4 +115,49 @@ test('changing customers clears the prior unregistered memo and cannot export it
   assert.equal(h.snapshots[0].memoDraft.text, ''); assert.equal(h.saved.length, 0);
   assert.doesNotMatch(JSON.stringify(h.snapshots[0]), /첫 고객의 미등록 메모/);
   h.close();
+});
+
+test('editing an existing memo is immediately included in local draft, PDF and parent save before inline apply', async () => {
+  const original={id:'saved-memo',staff:'원작성자',at:'2026-10-17T00:00:00Z',tag:'부재중',text:'이전 내용'};
+  const attempts=[];
+  const h=harness({props:{initialConsultation:{memoLog:[original]},onSave:draft=>{attempts.push(draft);return false;}}});await h.mount();
+  const edit=h.tree.root.findAllByType('button').find(node=>node.props['aria-label']==='원작성자 메모 수정');
+  await act(async()=>edit.props.onClick());
+  for(const value of ['새','새로운','새로운 내용'])await act(async()=>h.tree.root.findAllByType('textarea').find(node=>node.props['aria-label']==='원작성자 메모 내용 수정').props.onChange({target:{value}}));
+  h.flushDraft();
+  const local=JSON.parse(h.storage.get('lawpower:consultation-draft:v1:synthetic-one'));
+  assert.equal(local.consultation.memoLog[0].text,'새로운 내용');assert.equal(local.consultation.memoLog[0].editHistory.length,1);
+  await act(async()=>h.button().props.onClick());
+  const output=h.snapshots[0].consultation.memoLog[0];assert.equal(output.text,'새로운 내용');assert.equal(output.at,original.at);assert.equal(output.staff,original.staff);assert.equal(output.tag,original.tag);assert.equal(output.editHistory.length,1);
+  const save=h.tree.root.findAllByType('button').find(node=>text(node)==='저장');await act(async()=>save.props.onClick());
+  assert.equal(attempts.length,1);assert.equal(attempts[0].memoLog[0].text,'새로운 내용');
+  assert.match(text(h.tree.toJSON()),/서버 저장에 실패/);
+  assert.equal(h.tree.root.findAllByType('textarea').find(node=>node.props['aria-label']==='원작성자 메모 내용 수정').props.value,'새로운 내용');
+  assert.equal(h.storage.has('lawpower:consultation-draft:v1:synthetic-one'),true);
+  h.close();
+});
+
+test('save-pending disables memo and drag actions, then failed save restores the same editable draft', async () => {
+  const pending=deferred();
+  const rows=['a','b'].map((id,pinOrder)=>({id,staff:id,at:'2026-10-17T00:00:00Z',tag:'일반',text:id,pinned:true,pinOrder}));
+  const h=harness({props:{initialConsultation:{memoLog:rows},onSave:()=>pending.promise}});await h.mount();
+  let request;await act(async()=>{request=h.tree.root.findAllByType('button').find(node=>text(node)==='저장').props.onClick();await Promise.resolve();});
+  assert.equal(h.tree.root.findByType('fieldset').props.disabled,true);
+  const pin=h.tree.root.findAllByType('input').find(node=>node.props['aria-label']==='a 메모 상단 고정');assert.equal(pin.props.disabled,true);
+  await act(async()=>pin.props.onChange({target:{checked:false}}));
+  assert.equal(h.tree.root.findAllByType('button').filter(node=>node.props.draggable).length,0);
+  await act(async()=>{pending.resolve(false);await request;});
+  assert.equal(h.tree.root.findByType('fieldset').props.disabled,false);
+  assert.equal(h.tree.root.findAllByType('input').find(node=>node.props['aria-label']==='a 메모 상단 고정').props.checked,true);
+  await act(async()=>h.button().props.onClick());assert.equal(h.snapshots[0].consultation.memoLog.length,2);assert.equal(h.snapshots[0].consultation.memoLog[0].pinned,true);h.close();
+});
+
+test('customer switch while editing never carries prior memo text or cancel snapshot into the next customer', async () => {
+  const original={id:'same',staff:'first',at:'2026-10-17T00:00:00Z',tag:'일반',text:'첫 고객'};
+  const h=harness({props:{initialConsultation:{memoLog:[original]}}});await h.mount();
+  await act(async()=>h.tree.root.findAllByType('button').find(node=>node.props['aria-label']==='first 메모 수정').props.onClick());
+  await act(async()=>h.tree.root.findAllByType('textarea').find(node=>node.props['aria-label']==='first 메모 내용 수정').props.onChange({target:{value:'첫 고객 편집'}}));
+  await h.update({resetKey:'synthetic-two',initialConsultation:{memoLog:[{...original,staff:'second',text:'둘째 고객'}]}});
+  assert.equal(h.tree.root.findAllByType('button').some(node=>text(node)==='편집 취소'),false);
+  await act(async()=>h.button().props.onClick());assert.equal(h.snapshots[0].consultation.memoLog[0].text,'둘째 고객');assert.doesNotMatch(JSON.stringify(h.snapshots[0]),/첫 고객/);h.close();
 });

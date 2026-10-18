@@ -75,6 +75,7 @@ function createHarness(source, options = {}) {
   const modules = new Map();
   let store;
   const requireMock = (name) => {
+    if (name === '@/lib/consultation-memos' || name === './consultation-memos') return load('lib/consultation-memos.ts');
     if (name === '@/components/sms/LeadSmsDialog' || name === '@/components/db/LeadWorkDialog') return { __esModule: true, default: () => null };
     if (name === 'react') return React;
     if (name === '@/components/ui/DateInput') return { DateInput: ({ onValueChange, onIncompleteChange, ...props }) => h('input', { ...props, type:'date', onChange:event=>onValueChange(event.target.value) }) };
@@ -212,6 +213,28 @@ test('memo popover remains open across parent rerenders and responsive branches 
     }
     equalPair(old,next);
   }finally{old.close();next.close();}
+});
+
+test('DB preview and search expose only active memo text, with pins first and original customer actions unchanged',()=>{
+  const currentPage=createHarness(current);
+  try {
+    const original=currentPage.store.leads[0], at='2026-10-17T00:10:00Z';
+    const log=[{id:'deleted',at,staff:'합성 작성자',tag:'부재중',text:'삭제메모고유검색어',deletedAt:at},
+      {id:'active',at,staff:'합성 작성자',tag:'일반',text:'현재메모고유검색어'},
+      {id:'pinned',at:'2026-10-01T00:00:00Z',staff:'합성 작성자',tag:'일반',text:'고정메모고유검색어',pinned:true,pinOrder:0}];
+    currentPage.store.leads=[{...original,consultation:{...original.consultation,memoLog:log}}];
+    currentPage.refresh();
+    const button=hostNodes(currentPage,'button').find(node=>hostText(node).includes('메모 2건'));
+    assert.ok(button);assert.match(hostText(button),/\[고정\] 고정메모고유검색어/);
+    renderer.act(()=>button.props.onClick());
+    const list=hostNodes(currentPage,'ul')[0];
+    assert.doesNotMatch(hostText(list),/삭제메모고유검색어/);
+    const visible=list.findAll(node=>node.type==='li');
+    assert.match(hostText(visible[0]),/고정메모고유검색어/);assert.match(hostText(visible[1]),/현재메모고유검색어/);
+    currentPage.set({query:'삭제메모고유검색어'});assert.equal(currentPage.snapshot().visibleIds.length,0);
+    currentPage.set({query:'현재메모고유검색어'});assert.deepEqual(currentPage.snapshot().visibleIds,[original.id]);
+    assert.deepEqual(currentPage.writes,[]);assert.deepEqual(log.map(entry=>entry.id),['deleted','active','pinned']);
+  } finally { currentPage.close(); }
 });
 
 test('new lead draft and search reset behaviors remain unchanged',()=>{

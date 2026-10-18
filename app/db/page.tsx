@@ -38,6 +38,7 @@ import { ConfirmDelete } from "@/components/ui/ConfirmDelete";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
 import { ClipboardList, MessageSquareText, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { buildLeadSearchIndex } from "@/lib/list-indexes";
+import { visibleMemoEntries } from "@/lib/consultation-memos";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -370,7 +371,7 @@ function StageBoard({
 function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsultation?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useClickOutside<HTMLDivElement>(() => setOpen(false));
-  const log = lead.consultation?.memoLog ?? [];
+  const log = visibleMemoEntries(lead.consultation?.memoLog);
   const latest = log[0];
 
   return (
@@ -382,8 +383,8 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
       >
         {latest ? (
           <>
-            <span className="line-clamp-2 text-slate-700">{latest.text || `[${latest.tag}]`}</span>
-            <span className="mt-0.5 block text-[10px] text-slate-400">메모 {log.length}건 · 최근 {fmtDateTime(latest.at)}</span>
+            <span className="line-clamp-2 text-slate-700">{latest.pinned ? "[고정] " : ""}{latest.text || `[${latest.tag}]`}</span>
+            <span className="mt-0.5 block text-[10px] text-slate-400">메모 {log.length}{latest.pinned ? "건 · 고정 " : "건 · 최근 "}{fmtDateTime(latest.at)}</span>
           </>
         ) : (
           <span className="text-slate-300">메모 없음</span>
@@ -398,6 +399,7 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
               {log.map((entry) => (
                 <li key={entry.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
                   <div className="flex flex-wrap items-center gap-1">
+                    {entry.pinned && <span className="text-[10px] font-bold text-blue-600">고정</span>}
                     <span className="font-semibold text-slate-900">{entry.staff}</span>
                     <span className="text-[10px] text-slate-400">{fmtDateTime(entry.at)}</span>
                     {entry.tag !== "일반" && (

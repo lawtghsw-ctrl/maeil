@@ -1,5 +1,6 @@
 import type { ConsultationInfo, ConsultDirection, DbDetailStage, MemoLogTag } from "./types";
 import type { RepaymentPlanResult } from "./consultation";
+import { visibleMemoEntries } from "./consultation-memos";
 
 export interface ConsultationPdfMemoDraft { text: string; tag: MemoLogTag; staff: string }
 export interface ConsultationPdfSnapshot {
@@ -113,7 +114,8 @@ export function consultationPdfSections(snapshot: ConsultationPdfSnapshot): Cons
   if (snapshot.finance) fields("계약 / 수납 요약", [["계약금액", won(snapshot.finance.contractAmount)], ["납부금액", won(snapshot.finance.paidAmount)], ["미수금액", won(snapshot.finance.outstandingAmount)]]);
   if (snapshot.memoDraft?.text.trim()) sections.push({ title: "작성 중 메모 (미등록)", head: ["작성자 / 태그", "현재 입력 내용"], widths: [40, 142], rows: [[`${snapshot.memoDraft.staff}\n${snapshot.memoDraft.tag === "재통화" ? "통화완료" : snapshot.memoDraft.tag}`, snapshot.memoDraft.text]] });
   if (c.memo) sections.push({ title: "기존 상담 메모", head: ["내용"], rows: [[c.memo]] });
-  sections.push({ title: `상담 메모 (${c.memoLog?.length ?? 0}건)`, head: ["작성자 / 일시 / 태그", "내용"], widths: [43, 139], rows: c.memoLog?.length ? c.memoLog.map(entry => [`${entry.staff}\n${consultationPdfDateTime(entry.at)}\n${entry.tag === "재통화" ? "통화완료" : entry.tag}`, entry.text || "(내용 없음)"]) : [["-", "등록된 메모 없음"]] });
+  const memoEntries = visibleMemoEntries(c.memoLog);
+  sections.push({ title: `상담 메모 (${memoEntries.length}건)`, head: ["작성자 / 일시 / 태그", "내용"], widths: [43, 139], rows: memoEntries.length ? memoEntries.map(entry => [`${entry.pinned ? "[고정] " : ""}${entry.staff}\n${consultationPdfDateTime(entry.at)}\n${entry.tag === "재통화" ? "통화완료" : entry.tag}`, entry.text || "(내용 없음)"]) : [["-", "등록된 메모 없음"]] });
   if (c.attachedFiles?.length) sections.push({ title: "첨부파일 목록 (파일 내용 미포함)", head: ["파일명", "크기", "첨부 일시"], widths: [112, 25, 45], rows: c.attachedFiles.map(file => [file.name, `${consultationPdfText(file.sizeKb)} KB`, consultationPdfDateTime(file.attachedAt)]) });
   return sections.map(section => ({ ...section, rows: section.rows.map(row => row.map(value => consultationPdfText(value))) }));
 }

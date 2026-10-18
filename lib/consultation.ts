@@ -8,6 +8,7 @@
 
 import type { AssetRow, ConsultationInfo, ConsultDirection, DebtRow, MemoLogEntry, RepaymentPlanInput } from "./types";
 import { ASSET_CATEGORIES, DEBT_CATEGORIES, SECURED_DEBT_CATEGORIES, UNSECURED_DEBT_CATEGORY } from "./types";
+import { activeMemoEntries } from "./consultation-memos";
 
 // 한국시간(KST=UTC+9) 기준 날짜 문자열 — "콜 관리 경고는 한국시간 00시 00분에 초기화"
 // 요청에 따라, 브라우저(서버)의 로컬 시간대와 무관하게 항상 KST 기준 자정에 맞춰
@@ -409,7 +410,7 @@ export function getConsultationCompletionStats(
     recentLoanInsurance.recentLoanUsage,
     recentLoanInsurance.insurancePremium,
     (consultation?.debts ?? []).some((d) => (d.amount || 0) > 0) || (consultation?.loanRecords ?? []).length > 0,
-    (consultation?.memoLog ?? []).length > 0,
+    activeMemoEntries(consultation?.memoLog).length,
   ];
 
   const totalCount = tracked.length;
@@ -446,7 +447,7 @@ export function checkCallWarning(
   const threshold = Math.max(1, Math.trunc(noAnswerThreshold || 1));
   let noAnswerCountToday = 0;
   let reachedToday = false;
-  for (const entry of memoLog ?? []) {
+  for (const entry of activeMemoEntries(memoLog)) {
     if (kstDateStr(new Date(entry.at)) !== today) continue;
     if (countsAsUnansweredContact(entry)) noAnswerCountToday += 1;
     if (entry.tag === "재통화") reachedToday = true;
@@ -475,7 +476,7 @@ export function checkPeriodicContactWarning(
   const today = todayIso ?? kstDateStr();
   const interval = Math.max(1, Math.trunc(intervalDays || 1));
   let lastContactDate: string | undefined;
-  for (const entry of memoLog ?? []) {
+  for (const entry of activeMemoEntries(memoLog)) {
     if (entry.tag !== "재통화" && !countsAsUnansweredContact(entry)) continue;
     const date = kstDateStr(new Date(entry.at));
     if (date && (lastContactDate === undefined || date > lastContactDate)) lastContactDate = date;

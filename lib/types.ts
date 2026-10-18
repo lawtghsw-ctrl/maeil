@@ -420,6 +420,13 @@ export interface MemoLogEntry {
   at: string; // ISO datetime
   text: string;
   tag: MemoLogTag;
+  editedAt?: string;
+  editedBy?: string;
+  editHistory?: { text: string; at: string; by: string }[];
+  deletedAt?: string;
+  deletedBy?: string;
+  pinned?: boolean;
+  pinOrder?: number;
 }
 
 export interface DbLead extends TenantStamped {

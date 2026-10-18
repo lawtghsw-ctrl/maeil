@@ -31,3 +31,12 @@ test('risk counts seven-day stage dwell, ignores newer notes, and excludes termi
  lead('invalid',{stageUpdatedAt:'invalid'}),lead('future',{stageUpdatedAt:at(-1)}),
  ]);const result=component();assert.deepEqual(Array.from(result.neglected,row=>row.id),['seven']);assert.equal(result.stageUnknown,2);assert.equal(result.activeLeads.length,4);});
 test('global manager risk applies each firm threshold while keeping unknown rows out',()=>{const stageUpdatedAt=new Date(now-7*86400000).toISOString();fixture([lead('a',{_lawFirmId:'a',stageUpdatedAt}),lead('b',{_lawFirmId:'b',stageUpdatedAt}),lead('missing',{_lawFirmId:'b'})],true);settings.settingsByFirm={a:{...settings.activeSettings,neglectedDays:3},b:{...settings.activeSettings,neglectedDays:10}};const result=component();assert.deepEqual(Array.from(result.neglected,row=>row.id),['a']);assert.equal(result.stageUnknown,1);assert.equal(result.top.contact,3);assert.equal(result.todos.length,3);});
+
+test('deleted greeting and contact memos cannot satisfy dashboard completed-contact indicators',()=>{
+ const at=new Date(now).toISOString();
+ const memo={id:'memo',at,text:'인사문자 발송 완료',tag:'재통화',staff:'합성담당자'};
+ fixture([lead('today',{receivedAt:at,consultation:{memoLog:[{...memo,deletedAt:at,deletedBy:'합성담당자'}]}})]);
+ let result=component();assert.equal(result.top.newToday,0);assert.equal(result.top.contact,1);
+ fixture([lead('today',{receivedAt:at,consultation:{memoLog:[{...memo,pinned:true,pinOrder:0}]}})]);
+ result=component();assert.equal(result.top.newToday,1);assert.equal(result.top.contact,0);
+});

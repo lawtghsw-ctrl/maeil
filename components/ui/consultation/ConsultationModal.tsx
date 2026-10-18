@@ -468,7 +468,7 @@ export function ConsultationModal({
       {readOnly && <div className="mb-1 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">조회 전용 권한입니다. 상담일지 내용은 확인할 수 있지만 수정·파일반영·예약변경·저장은 할 수 없습니다.</div>}
       {restoredDraftAt && !readOnly && <div className="mb-1 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">이전에 저장하지 못하고 닫힌 상담일지 임시본을 자동 복구했습니다. 내용을 확인한 뒤 [저장]을 눌러 서버에 반영해주세요.</div>}
       {saveError && <div className="mb-1 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saveError}</div>}
-      <fieldset disabled={readOnly} className="min-w-0 border-0 p-0 disabled:opacity-100">
+      <fieldset disabled={readOnly || savePending} className="min-w-0 border-0 p-0 disabled:opacity-100">
       <div className="space-y-1">
         <div className="flex min-h-8 flex-wrap items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
           <span className="shrink-0 whitespace-nowrap rounded bg-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">상담 후 방향</span>
@@ -579,7 +579,7 @@ export function ConsultationModal({
           </div>
 
           <div className="min-h-[190px] xl:col-start-1">
-            <ConsultationMemoSection key={resetKey} memoLog={memoLog} setMemoLog={setMemoLog} onDraftChange={captureMemoDraft} />
+            <ConsultationMemoSection key={resetKey} memoLog={memoLog} setMemoLog={setMemoLog} onDraftChange={captureMemoDraft} readOnly={readOnly || savePending} />
           </div>
           <div className="min-h-[190px] xl:col-span-2 xl:col-start-2">
             <DebtListSection loanRecords={loanRecords} setLoanRecords={setLoanRecords} setAttachedFiles={setAttachedFiles} />

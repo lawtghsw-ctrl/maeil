@@ -1,5 +1,6 @@
 import type { CaseRecord, Client, DbLead, Installment } from "../types";
 import { getRetainedLeadIds } from "./lead-retainer-conversion";
+import { activeMemoEntries } from "../consultation-memos";
 
 /** Read-only analytics. Period flows use KST calendar dates; current stock values
  * (activeDb/activeCases/outstanding/overdueAmount) are not historical snapshots.
@@ -230,7 +231,7 @@ export function buildFirmPerformanceReport(
       const day = trend.get(date!)!; day.db += 1; if (converted) day.converted += 1;
       increment(funnel, lead.detailStage || lead.status || "미지정");
     }
-    for (const memo of lead.consultation?.memoLog ?? []) {
+    for (const memo of activeMemoEntries(lead.consultation?.memoLog)) {
       const contact = memo.tag === "재통화" || memo.tag === "부재중" || (memo.tag === "일반" && !!memo.text?.trim());
       if (!contact) continue;
       const contactDate = kstPerformanceDate(memo.at);

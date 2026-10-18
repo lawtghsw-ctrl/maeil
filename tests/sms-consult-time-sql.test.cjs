@@ -39,8 +39,26 @@ test('offline PostgreSQL: slot migration preserves data and old waits, renders f
  await assert.rejects(()=>gate(true),/SMS_GATE_CHANGED/,'gate changes still require the version originally read');
  const enabledGate=await gate(true,g.epoch_id);
  assert.notEqual(enabledGate.epoch_id,g.epoch_id);
+ // Memo maintenance must stay inert even with automation ON and a current-epoch
+ // lead, so the duplicate guard cannot conceal an accidentally queued SMS.
+ const memoEntries=[{id:'newer',staff:'Staff',at:'2026-10-18T01:00:00Z',tag:'부재중',text:'newer note'},
+   {id:'older',staff:'Staff',at:'2026-10-17T01:00:00Z',tag:'부재중',text:'older note'}];
+ await db.query('insert into app_leads values($1,$2,$3)',['memo-maintenance',firm,JSON.stringify({name:'Memo fixture',phone:'01000000006',assignedStaff:'Staff',consultation:{memoLog:memoEntries}})]);
+ const memoSmsBefore=JSON.stringify((await db.query("select * from sms_delivery_jobs where lead_id='memo-maintenance' order by id")).rows);
+ const writeMemos=entries=>db.query("update app_leads set data=jsonb_set(data,'{consultation,memoLog}',$1::jsonb) where id='memo-maintenance'",[JSON.stringify(entries)]);
+ for (const entries of [
+   memoEntries.map(e=>e.id==='newer'?{...e,text:'corrected note',editedAt:'2026-10-18T02:00:00Z',editedBy:'Staff',editHistory:[{text:e.text,at:e.at,by:e.staff}]}:e),
+   memoEntries.map(e=>({...e,pinned:true,pinOrder:e.id==='older'?0:1})),
+   memoEntries.map(e=>({...e,pinned:true,pinOrder:e.id==='newer'?0:1})),
+   memoEntries.map(e=>e.id==='newer'?{...e,deletedAt:'2026-10-18T02:00:00Z',deletedBy:'Staff'}:e),
+   memoEntries,
+ ]) {
+   await writeMemos(entries);
+   assert.equal(JSON.stringify((await db.query("select * from sms_delivery_jobs where lead_id='memo-maintenance' order by id")).rows),memoSmsBefore,'edit, pin, reorder, soft-delete and restore create no SMS or modify existing jobs');
+ }
+ assert.equal((await db.query("select count(*)::int n from sms_delivery_jobs where lead_id='memo-maintenance' and source='absence'")).rows[0].n,0);
  await db.query("update app_leads set data=data||'{\"detailStage\":\"부재\"}' where id='old'");
- assert.equal((await db.query('select count(*)::int n from sms_delivery_jobs')).rows[0].n,2,'old leads are not adopted by a new epoch');
+ assert.equal((await db.query("select count(*)::int n from sms_delivery_jobs where lead_id is distinct from 'memo-maintenance'")).rows[0].n,2,'old leads are not adopted by a new epoch');
  await db.query('insert into app_leads values($1,$2,$3)',['fresh',firm,JSON.stringify({name:'Fresh',phone:'01000000003',assignedStaff:'Staff',consultTimeRaw:'토요일 오후 2시',receivedAt:'1999-01-01T00:00:00Z'})]);
  assert.equal((await db.query("select message from sms_delivery_jobs where lead_id='fresh'")).rows[0].message,'Fresh:토요일 오후 2시');
  await db.query("update app_leads set data=data||'{\"detailStage\":\"부재\",\"consultTime\":\"일요일 오전\"}' where id='fresh'");
