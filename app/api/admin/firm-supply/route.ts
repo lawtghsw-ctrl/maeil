@@ -4,6 +4,8 @@ import { performanceRange, resolvePerformanceFirmId } from "@/lib/performance/fi
 import { readFirmSupply } from "@/lib/firm-reporting-server";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 export async function GET(request: NextRequest) {
   try {
     const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin", "staff"]);
