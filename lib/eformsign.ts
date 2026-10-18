@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from "crypto";
+import type { EsignTemplate, FirmEsignConfig } from "@/lib/eformsign-config";
 
 export type EformsignAccess = {
   accessToken: string;
@@ -19,14 +20,8 @@ export type EformsignCreateInput = {
   message: string;
 };
 
-function requiredEnv(name: string) {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} 환경변수가 필요합니다.`);
-  return value;
-}
-
-function privateKeyFromEnv() {
-  const raw = requiredEnv("EFORMSIGN_PRIVATE_KEY").replace(/\\n/g, "\n").trim();
+function privateKeyFromConfig(value: string) {
+  const raw = value.replace(/\\n/g, "\n").trim();
   if (raw.includes("BEGIN")) return createPrivateKey(raw);
 
   const hex = raw.replace(/\s+/g, "");
@@ -40,20 +35,43 @@ function privateKeyFromEnv() {
   });
 }
 
-function signatureFor(executionTime: number) {
+function signatureFor(executionTime: number, privateKey: string) {
   return sign(
     "sha256",
     Buffer.from(String(executionTime), "utf8"),
-    { key: privateKeyFromEnv(), dsaEncoding: "der" }
+    { key: privateKeyFromConfig(privateKey), dsaEncoding: "der" }
   ).toString("hex");
 }
 
-async function requestToken(memberId: string): Promise<EformsignAccess> {
-  const apiKey = requiredEnv("EFORMSIGN_API_KEY");
+function providerOrigin(value: string) {
+  let url: URL; try { url = new URL(value); } catch { throw new Error("이폼사인 API 주소를 확인하지 못했습니다."); }
+  if (url.protocol !== "https:" || !url.hostname.endsWith(".eformsign.com") || url.port || url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) throw new Error("허용되지 않은 이폼사인 API 주소입니다.");
+  return url.origin;
+}
+async function providerFetch(url: string, init: RequestInit) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, { ...init, cache: "no-store", redirect: "error", signal: controller.signal });
+    const reader = response.body?.getReader();
+    const chunks: Uint8Array[] = []; let length = 0;
+    if (reader) for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      length += value.byteLength;
+      if (length > 1_048_576) { await reader.cancel(); throw new Error("Response too large"); }
+      chunks.push(value);
+    }
+    let body: any = {}; try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { /* Invalid provider JSON is handled as a failed response below. */ }
+    return { ok: response.ok, status: response.status, body };
+  }
+  catch { throw new Error("이폼사인 응답을 확인하지 못했습니다. 발송 요청 후에는 결과 확인 전 재발송하지 마세요."); }
+  finally { clearTimeout(timer); }
+}
+async function requestToken(memberId: string, config: FirmEsignConfig): Promise<EformsignAccess> {
+  const apiKey = config.apiKey;
   const executionTime = Date.now();
-  const signature = signatureFor(executionTime);
+  let signature: string; try { signature = signatureFor(executionTime, config.privateKey); } catch { throw new Error("이폼사인 서명키 형식을 확인해주세요."); }
 
-  const response = await fetch("https://service.eformsign.com/v2.0/api_auth/access_token", {
+  const response = await providerFetch("https://service.eformsign.com/v2.0/api_auth/access_token", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -64,31 +82,33 @@ async function requestToken(memberId: string): Promise<EformsignAccess> {
     cache: "no-store",
   });
 
-  const body: any = await response.json().catch(() => ({}));
+  const body = response.body;
   const accessToken = String(body?.oauth_token?.access_token || "").trim();
   const apiUrl = String(body?.api_key?.company?.api_url || "").trim().replace(/\/+$/, "");
   if (!response.ok || !accessToken || !apiUrl) {
-    const message = body?.ErrorMessage || body?.message || `HTTP ${response.status}`;
-    throw new Error(`이폼사인 Access Token 발급 실패: ${message}`);
+    throw new Error(`이폼사인 인증에 실패했습니다. 계정·API 키·서명키·멤버 권한을 확인해주세요. (HTTP ${response.status})`);
   }
+  const companyId = String(body?.api_key?.company?.company_id || "").trim();
+  if (config.companyId && companyId !== config.companyId) throw new Error("이폼사인 응답 회사가 이 로펌에 등록한 회사와 다릅니다.");
 
   return {
     accessToken,
-    apiUrl,
+    apiUrl: providerOrigin(apiUrl),
     memberId,
-    companyId: String(body?.api_key?.company?.company_id || "").trim() || undefined,
+    companyId: companyId || undefined,
   };
 }
 
-export async function getEformsignAccess(): Promise<EformsignAccess> {
-  const primary = process.env.EFORMSIGN_SENDER_MEMBER_ID?.trim();
-  const fallback = requiredEnv("EFORMSIGN_MEMBER_ID");
+export async function getEformsignAccess(config: FirmEsignConfig): Promise<EformsignAccess> {
+  const primary = config.senderMemberId?.trim();
+  const fallback = config.memberId?.trim();
+  if (!config.apiKey || !config.privateKey || !fallback) throw new Error("이 로펌의 이폼사인 연결정보가 부족합니다.");
   const candidates = [...new Set([primary, fallback].filter(Boolean) as string[])];
   let lastError: unknown;
 
   for (const memberId of candidates) {
     try {
-      return await requestToken(memberId);
+      return await requestToken(memberId, config);
     } catch (error) {
       lastError = error;
     }
@@ -113,7 +133,8 @@ function moneyText(value: string) {
 
 function dateParts(isoDate: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || "").trim());
-  if (!match) throw new Error("계약일 형식을 확인해주세요.");
+  const time = Date.parse(String(isoDate || "").trim());
+  if (!match || !Number.isFinite(time) || new Date(time).toISOString().slice(0, 10) !== match[0]) throw new Error("계약일 형식을 확인해주세요.");
   return { year: Number(match[1]), month: String(Number(match[2])), day: String(Number(match[3])) };
 }
 
@@ -156,8 +177,8 @@ export function eformsignStatusLabel(code: string) {
 }
 
 export async function getEformsignDocumentStatus(access: EformsignAccess, documentId: string) {
-  const response = await fetch(
-    `${access.apiUrl}/v2.0/api/documents/${encodeURIComponent(documentId)}`,
+  const response = await providerFetch(
+    `${providerOrigin(access.apiUrl)}/v2.0/api/documents/${encodeURIComponent(documentId)}`,
     {
       method: "GET",
       headers: {
@@ -167,28 +188,26 @@ export async function getEformsignDocumentStatus(access: EformsignAccess, docume
       cache: "no-store",
     }
   );
-  const body: any = await response.json().catch(() => ({}));
+  const body = response.body;
   if (!response.ok) {
-    const message = body?.ErrorMessage || body?.message || `HTTP ${response.status}`;
-    throw new Error(`이폼사인 문서상태 조회 실패: ${message}`);
+    throw new Error(`이폼사인 문서상태를 조회하지 못했습니다. 문서와 계정 권한을 확인해주세요. (HTTP ${response.status})`);
   }
   const statusCode = String(body?.current_status?.status_type || "").trim();
   return { statusCode, status: eformsignStatusLabel(statusCode), raw: body };
 }
 
-export async function createEformsignDocument(input: EformsignCreateInput) {
-  const access = await getEformsignAccess();
-  const templateId = requiredEnv("EFORMSIGN_TEMPLATE_ID");
+export function buildEformsignPayload(input: EformsignCreateInput, template: EsignTemplate) {
+  if (!template.templateId) throw new Error("이 로펌의 전자계약 템플릿이 등록되지 않았습니다.");
   const date = dateParts(input.contractDate);
 
   // 현재 템플릿의 연도(2026)는 문서 본문에 고정되어 있고 API 입력항목은 월/일만 존재합니다.
-  if (date.year !== 2026) {
-    throw new Error("현재 이폼사인 템플릿의 계약연도는 2026으로 고정되어 있습니다. 템플릿 연도 수정 후 발송해주세요.");
+  if (template.fixedYear !== null && date.year !== template.fixedYear) {
+    throw new Error(`현재 이폼사인 템플릿의 계약연도는 ${template.fixedYear}으로 고정되어 있습니다. 템플릿 연도 수정 후 발송해주세요.`);
   }
 
   const payload = {
     document: {
-      document_name: `사건위임약정서(개인회생) - ${input.name}`,
+      document_name: `${template.documentName} - ${input.name}`,
       comment: input.message || "계약서 확인 후 서명 부탁드립니다.",
       recipients: [
         {
@@ -208,23 +227,30 @@ export async function createEformsignDocument(input: EformsignCreateInput) {
         },
       ],
       fields: [
-        { id: "이름", value: input.name },
-        { id: "주소", value: input.address },
-        { id: "주민번호", value: input.residentNumber },
-        { id: "전화번호", value: input.phone },
-        { id: "채권자", value: input.creditorCount },
-        { id: "보수", value: moneyText(input.fee) },
-        { id: "월", value: date.month },
-        { id: "일", value: date.day },
-        { id: "갑_이름", value: input.signerName },
+        { id: template.fields.name, value: input.name },
+        { id: template.fields.address, value: input.address },
+        { id: template.fields.residentNumber, value: input.residentNumber },
+        { id: template.fields.phone, value: input.phone },
+        { id: template.fields.creditorCount, value: input.creditorCount },
+        { id: template.fields.fee, value: moneyText(input.fee) },
+        { id: template.fields.month, value: date.month },
+        { id: template.fields.day, value: date.day },
+        { id: template.fields.signerName, value: input.signerName },
+        ...(template.yearField ? [{ id: template.yearField, value: String(date.year) }] : []),
       ],
       select_group_name: "",
       notification: [],
     },
   };
+  return payload;
+}
 
-  const response = await fetch(
-    `${access.apiUrl}/v2.0/api/documents?template_id=${encodeURIComponent(templateId)}`,
+export async function createEformsignDocument(input: EformsignCreateInput, config: FirmEsignConfig, template: EsignTemplate, existingAccess?: EformsignAccess) {
+  const payload = buildEformsignPayload(input, template);
+  const access = existingAccess || await getEformsignAccess(config);
+
+  const response = await providerFetch(
+    `${providerOrigin(access.apiUrl)}/v2.0/api/documents?template_id=${encodeURIComponent(template.templateId)}`,
     {
       method: "POST",
       headers: {
@@ -235,10 +261,9 @@ export async function createEformsignDocument(input: EformsignCreateInput) {
       cache: "no-store",
     }
   );
-  const body: any = await response.json().catch(() => ({}));
+  const body = response.body;
   if (!response.ok) {
-    const message = body?.ErrorMessage || body?.message || `HTTP ${response.status}`;
-    throw new Error(`이폼사인 문서 발송 실패: ${message}`);
+    throw new Error(`이폼사인 문서 발송 응답을 확인해주세요. (HTTP ${response.status})`);
   }
 
   const documentId = String(body?.document?.id || body?.document_id || body?.id || "").trim();

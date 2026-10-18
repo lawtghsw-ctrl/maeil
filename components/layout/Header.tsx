@@ -6,7 +6,8 @@
 import { Bell, CalendarClock, ChevronDown, ChevronUp, Clock3, GripVertical, Inbox, PhoneCall, RefreshCcw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useStore } from "@/lib/store";
+import { useStore, useStoreSession } from "@/lib/store";
+import Link from "next/link";
 import { fmtDate, fmtWon } from "@/lib/format";
 import { firstByKey } from "@/lib/list-indexes";
 
@@ -143,6 +144,12 @@ function useDraggableFloatingPosition(storageKey: string, defaultTop: number, wi
 }
 
 export function Header() {
+  const { profile, superAdminFirmScope } = useStoreSession();
+  if (profile?.platformRole === "super_admin" && !superAdminFirmScope) return <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 pl-16 pr-4 backdrop-blur lg:px-7"><div><b className="text-sm text-slate-900">로파워 운영</b><span className="ml-3 hidden text-xs text-slate-400 sm:inline">전체 로펌 통합 관제</span></div><div className="flex items-center gap-3 text-xs"><Link href="/platform/contracts" className="font-bold text-blue-700">공급 계약 · 이행</Link><Link href="/platform/logs" className="text-slate-600">연동 · 로그</Link></div></header>;
+  return <>{profile?.platformRole === "super_admin" && superAdminFirmScope && <div role="status" className="bg-blue-50 px-4 py-1.5 pl-16 text-xs font-semibold text-blue-700 lg:pl-7">로파워 운영진으로 보는 중 · {superAdminFirmScope.name}</div>}<FirmHeader/></>;
+}
+
+function FirmHeader() {
   const { clients, installments, cases, scheduleItems, leads, isAdmin, currentStaff, profile, can } = useStore();
   const router = useRouter();
   const [noticeOpen, setNoticeOpen] = useState(false);

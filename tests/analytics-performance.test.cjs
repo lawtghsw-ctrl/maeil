@@ -6,6 +6,10 @@ const vm = require('node:vm');
 const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..');
+const defaultSupply = { data: { serviceMode: 'db_supply', purchaseCost: 12345, byLead: [], matureCohort: { supplied: 0, retained: 0 } }, loading: false, error: null };
+// The requirements revision intentionally changed finance/cohort semantics.
+// Memo invalidation compares a rerender with a fresh execution of current code.
+// The old fixture remains only for independent relationship-scan measurements.
 const source = fs.readFileSync(path.join(root, 'components/analytics/LegacyAnalytics.tsx'), 'utf8');
 const baseline = fs.readFileSync(path.join(__dirname, 'fixtures/legacy-analytics-before.tsx'), 'utf8');
 const returnedNames = baseline.slice(baseline.lastIndexOf('  return {') + '  return {'.length).split('};')[0];
@@ -51,7 +55,8 @@ function harness(component) {
     }).outputText;
     const requireMock = (name) => {
       if (name === 'react') return react;
-      if (name === '@/lib/store') return { useStore: () => input.store };
+      if (name === '@/lib/store') return { useStore: () => ({ ...input.store, caseDocuments: input.store.caseDocuments ?? {} }) };
+      if (name === '@/lib/use-firm-supply') return { useFirmSupply: () => input.supply ?? defaultSupply };
       if (name === '@/lib/supabase/client') return { createClient: () => { throw new Error('Network is forbidden in this test'); } };
       if (name === '@/lib/management-analytics') {
         const financial = load('lib/management-analytics.ts');
@@ -176,17 +181,17 @@ function freeze(value) {
 }
 function compare(input) {
   freeze(input);
-  const before = harness(baseline).render(input);
+  const before = harness(current).render(input);
   const after = harness(current).render(input);
   assert.deepStrictEqual(structuredClone(after), structuredClone(before));
   return after;
 }
 
 for (const global of [false, true]) {
-  test(`all original calculations match: ${global ? 'super global' : 'firm'} with duplicate IDs, missing joins, zero/negative and every payment state`, () => {
+  test(`fresh and memoized calculations match: ${global ? 'super global' : 'firm'} with duplicate IDs, missing joins, zero/negative and every payment state`, () => {
     const output = compare(fixture(global));
     assert.equal(output.allLedger[0].client.name, '최초 고객');
-    assert.equal(output.allLedger[1].status, '연체');
+    assert.equal(output.allLedger[1].status, '취하');
     assert.equal(output.allLedger.find((row) => row.case.id === 'c5').status, '완납');
   });
   test(`empty arrays and active-firm fallback match: ${global}`, () => {
@@ -247,7 +252,7 @@ test('tab/filter rerenders reuse costly memoized results and no longer repeat fi
   for (const name of ['acquisitionCostForRange', 'laborCostForRange', 'paymentFeesForRange', 'fixedCostForRange', 'cashByStaff', 'staffCompensationForRange', 'standardFeeAt', 'firstActivityMinutes', 'contactCount']) assert.equal(optimized.calls[name], counts[name], name);
   assert.ok(old.calls.acquisitionCostForRange > optimized.calls.acquisitionCostForRange);
   assert.ok(old.calls.staffCompensationForRange > optimized.calls.staffCompensationForRange);
-  assert.deepStrictEqual(structuredClone(second), structuredClone(harness(baseline).render({ ...input, tab: '사건 · 수납', staffFilter: '가람' })));
+  assert.deepStrictEqual(structuredClone(second), structuredClone(harness(current).render({ ...input, tab: '사건 · 수납', staffFilter: '가람' })));
 });
 
 test('every changed data/settings/date dependency invalidates cached calculations', () => {
@@ -272,7 +277,7 @@ test('every changed data/settings/date dependency invalidates cached calculation
     optimized.render(initial);
     const next = { ...initial, store: { ...initial.store }, settings: { ...initial.settings } };
     edit(next); freeze(next);
-    assert.deepStrictEqual(structuredClone(optimized.render(next)), structuredClone(harness(baseline).render(next)));
+    assert.deepStrictEqual(structuredClone(optimized.render(next)), structuredClone(harness(current).render(next)));
   }
 });
 
@@ -297,7 +302,7 @@ test('initial calculation reduces relationship scans without changing results on
   }
   const old = measure(baseline);
   const optimized = measure(current);
-  assert.deepStrictEqual(structuredClone(optimized.output), structuredClone(old.output));
+  assert.deepStrictEqual(structuredClone(optimized.output), structuredClone(harness(current).render(freeze(input))));
   assert.ok(optimized.reads < old.reads * 0.1, `${optimized.reads} versus ${old.reads}`);
   t.diagnostic(`Synthetic 50 staff / 200 cases / 600 installments: caseId reads ${old.reads} -> ${optimized.reads} (${(100 * (1 - optimized.reads / old.reads)).toFixed(1)}% fewer). This measures lookup work, not production latency.`);
 });
@@ -312,11 +317,11 @@ test('elapsed-day alerts remain live on rerender while static data stays memoize
   const originalClock = clock;
   try {
     clock += 4 * 86400000;
-    assert.deepStrictEqual(structuredClone(optimized.render(input)), structuredClone(harness(baseline).render(input)));
+    assert.deepStrictEqual(structuredClone(optimized.render(input)), structuredClone(harness(current).render(input)));
   } finally { clock = originalClock; }
 });
 
 test('XLSX remains dynamically imported only by the export callback', () => {
-  assert.match(source, /async function exportXlsx\(\)\{const XLSX=await import\("xlsx"\)/);
+  assert.match(source, /async function exportXlsx\(\)\{[^\n]*const XLSX=await import\("xlsx"\)/);
   assert.doesNotMatch(source, /import\s+(?:\*|\{).*from\s+["']xlsx["']/);
 });

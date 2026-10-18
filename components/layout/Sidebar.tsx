@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { Activity, Building2, FileSignature, Calculator, History, Inbox, KeyRound, LayoutDashboard, Link2, Menu, MessageSquareText, Percent, Scale, LogOut, UsersRound, X, type LucideIcon } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { Activity, ChevronDown, BriefcaseBusiness, ChartNoAxesCombined, FileCheck2, Megaphone, Settings2, Building2, FileSignature, Calculator, History, Inbox, KeyRound, LayoutDashboard, Link2, Menu, MessageSquareText, Percent, Scale, LogOut, UsersRound, X, type LucideIcon } from "lucide-react";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
 import { useStoreSession as useStore } from "@/lib/store";
+import { authJson } from "@/lib/platform/client";
 import type { PermissionKey } from "@/lib/permissions";
 
 type MenuItem = readonly [string, string, LucideIcon, PermissionKey | "admin"];
@@ -23,39 +24,63 @@ const baseMenu: MenuItem[] = [
   ["직원계정관리", "/staff-accounts", UsersRound, "admin"],
 ];
 
+const platformMenu = [
+  ["통합 관제 홈", "/platform", LayoutDashboard],
+  ["공급 계약 · 이행", "/platform/contracts", FileCheck2],
+  ["DB 원가 · 마진", "/platform/costs", ChartNoAxesCombined],
+  ["메타 광고 · 광고비", "/platform/advertising", Megaphone],
+  ["영업 파이프라인", "/platform/sales", BriefcaseBusiness],
+  ["로파워 정산설정", "/platform/settings", Settings2],
+  ["로펌 등록 · 관리", "/platform/firms", Building2],
+  ["연동 모니터링 · 로그", "/platform/logs", Activity],
+] as const;
+
 function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
   const router = useRouter();
+  const navId = useId();
   const { isAdmin, can, profile, superAdminFirmScope, firmDirectory, enterSuperAdminFirmScope, exitSuperAdminFirmScope } = useStore();
   const platformRole = profile?.platformRole ?? "staff";
   const isSuper = platformRole === "super_admin";
+  const global = isSuper && !superAdminFirmScope;
+  const [platformOpen, setPlatformOpen] = useState(true);
+  const [firmOpen, setFirmOpen] = useState(true);
+  const [scopeBusy, setScopeBusy] = useState(false);
+  const [scopeError, setScopeError] = useState("");
   const visible = useMemo(() => {
-    const rows = baseMenu.filter(([, , , permission]) => permission === "admin" ? isAdmin : can(permission)).map((row): MenuItem => row[1] === "/analytics" ? [isSuper && !superAdminFirmScope ? "로펌 성과 · 통계" : "직원 · 변호사 성과", row[1], row[2], row[3]] : row);
-    if (isSuper) rows.unshift(["로파워 플랫폼", "/platform", Building2, "admin"]);
+    const rows = baseMenu.filter(([, href, , permission]) => (!global || href === "/analytics") && (permission === "admin" ? isAdmin : can(permission))).map((row): MenuItem => row[1] === "/analytics" ? [global ? "전체 로펌 성과 · 통계" : "데이터집계", row[1], row[2], row[3]] : row);
     if (isSuper && superAdminFirmScope) rows.push(["로펌 설정/광고연동", `/firm/settings?lawFirmId=${encodeURIComponent(superAdminFirmScope.id)}`, Link2, "admin"]);
     else if (platformRole === "firm_admin") rows.push(["로펌 설정/직원초대", "/firm/settings", Link2, "admin"]);
-    rows.push(["내 계정", "/account", KeyRound, "admin"]);
     return rows;
-  }, [can, isAdmin, isSuper, platformRole, superAdminFirmScope]);
-
-  const best = visible.reduce<string | null>((current, [, href]) => {
-    const cleanHref = href.split("?")[0];
-    const matches = cleanHref === "/" ? pathname === "/" : pathname === cleanHref || pathname.startsWith(`${cleanHref}/`);
-    return matches && (current === null || cleanHref.length > current.length) ? cleanHref : current;
-  }, null);
-
-  function changeScope(value: string) {
-    if (!value) { exitSuperAdminFirmScope(); router.push("/"); router.refresh(); onNavigate?.(); return; }
+  }, [can, isAdmin, isSuper, global, platformRole, superAdminFirmScope]);
+  const isActive = (href: string) => { const clean = href.split("?")[0]; return clean === "/platform" ? pathname === "/platform" || (pathname === "/" && global) : clean === "/" ? pathname === "/" : pathname === clean || pathname.startsWith(`${clean}/`); };
+  async function changeScope(value: string) {
+    if (scopeBusy) return;
+    if (!value) { exitSuperAdminFirmScope(); router.push("/platform"); onNavigate?.(); return; }
     const firm = firmDirectory.find((item) => item.id === value); if (!firm) return;
-    enterSuperAdminFirmScope(firm); router.push("/"); router.refresh(); onNavigate?.();
+    setScopeBusy(true); setScopeError("");
+    try {
+      await authJson("/api/platform/firm-view", { method: "POST", body: JSON.stringify({lawFirmId: firm.id, action: "enter"}) });
+      enterSuperAdminFirmScope(firm); router.push("/"); setFirmOpen(true); onNavigate?.();
+    } catch (error) { setScopeError(error instanceof Error ? error.message : "로펌 화면을 열지 못했습니다."); }
+    finally { setScopeBusy(false); }
   }
-
-  return <nav className="flex-1 overflow-y-auto p-3">
+  const link = (label: string, href: string, Icon: LucideIcon) => <Link key={href} href={href} onClick={onNavigate} aria-current={isActive(href) ? "page" : undefined} className={cn("mb-1 flex min-h-10 items-center gap-2.5 rounded-lg py-2 pl-5 pr-2 text-xs font-semibold transition", isActive(href) ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950")}><Icon size={16} className="shrink-0"/>{label}</Link>;
+  return <nav className="flex-1 overflow-y-auto p-3" aria-label="주 메뉴">
     {isSuper && <div className={`mb-3 rounded-xl border p-3 ${superAdminFirmScope ? "border-blue-100 bg-blue-50" : "border-violet-100 bg-violet-50"}`}>
-      <div className={`text-[10px] font-black tracking-wider ${superAdminFirmScope ? "text-blue-500" : "text-violet-500"}`}>관리 범위</div>
-      <select value={superAdminFirmScope?.id ?? ""} onChange={(e) => changeScope(e.target.value)} className="mt-2 h-9 w-full rounded-lg border border-white bg-white px-2 text-xs font-bold text-slate-800 shadow-sm outline-none"><option value="">전체 로펌 통합보기</option>{firmDirectory.map((firm) => <option key={firm.id} value={firm.id}>{firm.name} · {firm.firmCode}</option>)}</select>
-      <div className="mt-2 text-[10px] leading-4 text-slate-500">{superAdminFirmScope ? `${superAdminFirmScope.name} 데이터만 표시 · 전체 수정 가능` : "모든 로펌 데이터 통합 표시 · 안전을 위해 조회 전용"}</div>
+      <label htmlFor={`${navId}-management-scope`} className="text-[10px] font-black tracking-wider text-violet-500">관리 범위</label>
+      <select id={`${navId}-management-scope`} disabled={scopeBusy} value={superAdminFirmScope?.id ?? ""} onChange={(e) => void changeScope(e.target.value)} className="mt-2 h-9 w-full rounded-lg border border-white bg-white px-2 text-xs font-bold text-slate-800 shadow-sm outline-none"><option value="">전체 로펌 통합보기</option>{firmDirectory.map((firm) => <option key={firm.id} value={firm.id}>{firm.name} · {firm.firmCode}</option>)}</select>
+      <div className="mt-2 text-[10px] leading-4 text-slate-500">{superAdminFirmScope ? `로파워 운영진으로 보는 중 · ${superAdminFirmScope.name}` : "계약 이행·원가·로펌 성과 통합 관제"}</div>
+      {scopeError && <p role="alert" className="mt-2 text-xs text-red-600">{scopeError}</p>}
     </div>}
-    {visible.map(([label, href, Icon]) => { const cleanHref = href.split("?")[0]; return <Link key={`${label}-${href}`} href={href} onClick={onNavigate} className={cn("mb-1 flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition", cleanHref === best ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950")}><Icon size={18}/>{label}</Link>; })}
+    {isSuper && <section className="mb-3">
+      <button type="button" aria-expanded={platformOpen} aria-controls={`${navId}-platform-navigation`} onClick={() => setPlatformOpen(value => !value)} className="mb-1 flex w-full items-center gap-2 rounded-xl bg-blue-50 px-3 py-3 text-sm font-bold text-blue-700"><Building2 size={18}/>로파워 운영<ChevronDown size={17} className={cn("ml-auto transition-transform", !platformOpen && "-rotate-90")}/></button>
+      <div id={`${navId}-platform-navigation`} hidden={!platformOpen}>{platformMenu.map(([label, href, Icon]) => link(label, href, Icon))}</div>
+    </section>}
+    <section className="mb-3">
+      <button type="button" aria-expanded={firmOpen} aria-controls={`${navId}-firm-navigation`} onClick={() => setFirmOpen(value => !value)} className="mb-1 flex w-full items-center gap-2 rounded-xl bg-slate-100 px-3 py-3 text-sm font-bold text-slate-800"><Scale size={18}/>로펌 운영<ChevronDown size={17} className={cn("ml-auto transition-transform", !firmOpen && "-rotate-90")}/></button>
+      <div id={`${navId}-firm-navigation`} hidden={!firmOpen}>{global && <p className="px-3 py-2 text-[11px] leading-5 text-slate-500">관리 범위에서 로펌을 선택하면 DB·계약·문자 등 해당 로펌의 업무 메뉴가 열립니다.</p>}{visible.map(([label, href, Icon]) => link(label, href, Icon))}</div>
+    </section>
+    {link("내 계정", "/account", KeyRound)}
   </nav>;
 }
 

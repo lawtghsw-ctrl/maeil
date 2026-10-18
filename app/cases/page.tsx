@@ -16,7 +16,7 @@ const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
 
 
-const PAYMENT_METHODS: PaymentMethod[] = ["단순분납", "로피분납", "신카할부완납", "캐피탈분납"];
+const PAYMENT_METHODS: PaymentMethod[] = ["일시완납", "단순분납", "로피분납", "신카할부완납", "캐피탈분납"];
 
 function todayIso() {
   const d = new Date();

@@ -144,9 +144,10 @@ export interface Client extends TenantStamped {
 // 결제수단 4종 — 회파산 업무매뉴얼 6장(비용구조 안내) 기준. 결제수단에 따라 정산금이
 // 달라지므로(정산요율은 store.tsx의 settlementRates에서 담당자별로 설정), 여기서는
 // 결제수단 종류와 설명만 정의합니다.
-export type PaymentMethod = "단순분납" | "로피분납" | "신카할부완납" | "캐피탈분납";
+export type PaymentMethod = "일시완납" | "단순분납" | "로피분납" | "신카할부완납" | "캐피탈분납";
 
 export const PAYMENT_METHOD_NOTE: Record<PaymentMethod, string> = {
+  일시완납: "수임료 전액 일시 납부",
   단순분납: "'로피' 지정일 결제 · 최대 6개월",
   로피분납: "계약금+대행비 40만원 선결제 후 잔액 최대 6개월 분납(연 5.2~6% 수준)",
   신카할부완납: "카드사 일반결제 할부로 전액 완납 · 구상권 청구 가능성 사전고지 필요",
@@ -445,6 +446,11 @@ export interface DbLead extends TenantStamped {
   incomeRange?: IncomeRange; // 광고 인스턴트 양식 — 실 월소득
   consultTime?: ConsultTimeSlot; // 광고 인스턴트 양식 — 상담가능시간
   consultation?: ConsultationInfo; // 상담일지 — DB 단계에서부터 작성 가능, 고객 전환 시 그대로 승계
+  stageUpdatedAt?: string;
+  invalidReason?: "대상 아님" | "연락처 오류" | "중복" | "본인 아님" | "기타";
+  nonContractReason?: "비용 부담" | "타사 계약" | "상담 거절" | "연락 두절" | "진행 보류" | "기타";
+  replacementRequestedAt?: string;
+  contactLog?: { id: string; at: string; staff: string; type: "phone" | "sms"; connected?: boolean; durationSeconds?: number; note?: string }[];
   convertedClientId?: string; // 고객관리로 전환된 경우 생성된 Client id
   convertedCaseId?: string;
 }
@@ -468,6 +474,8 @@ export interface CaseRecord extends TenantStamped {
   paidAmount: number; // 기납부액
   installmentCount?: number; // 납부 예정 총 회차(분납관리에서 직접 설정)
   paymentMethod: PaymentMethod;
+  feeStandardSnapshot?: { baseFee: number; minFee: number; approvalDiscountAmount: number; effectiveFrom: string; capturedAt: string };
+  discountApprovedBy?: string;
   docsSentAt?: string; // 서류제출안내문 발송일 (ISO date)
   memo?: string;
   fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id

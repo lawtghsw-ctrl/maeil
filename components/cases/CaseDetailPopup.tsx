@@ -6,6 +6,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
 import { PAYMENT_METHOD_NOTE } from "@/lib/types";
+import CaseProgressCard from "@/components/cases/CaseProgressCard";
 import { fmtWon } from "@/lib/format";
 import { CaseActionPanel, PriorityRepaymentGuideTable } from "@/components/cases/CaseActionModals";
 import { Button, Modal } from "@/components/ui/Primitives";
@@ -73,6 +74,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
   return <Modal open={true} title={`${client.name} · 계약 상세`} size="full" onClose={safeClose}
     headerExtra={<span className="text-xs font-semibold text-slate-500">{record.caseNumber}</span>}>
     <div className="space-y-3 pb-3">
+      <CaseProgressCard record={record}/>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
         <span><b>{record.caseType}</b> · {record.court} · 담당 {record.assignedStaff} · {client.phone}</span>
         <span className="text-slate-500">계약일 {record.contractDate} · 진행상태 {record.status}</span>

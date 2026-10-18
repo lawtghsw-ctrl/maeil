@@ -1,0 +1,60 @@
+"use client";
+import { PerformanceMetric, PerformancePanel } from "@/components/analytics/PerformanceCharts";
+import { OPERATIONS_DEFINITIONS } from "@/lib/platform/operations";
+import { OperationsFrame, OperationTable, cellClass, count, percent, secondaryClass, useOperations, won } from "./OperationsShared";
+
+function CostRows({ state }: { state: ReturnType<typeof useOperations> }) {
+  const data = state.data!;
+  return <OperationTable headings={["로펌", "공급 / 과금", "교체", "당시 평균단가", "청구매출", "수납 / 미수", "광고비", "CPL", "공급이익 / 마진"]}>
+    {data.report.firms.map(f => <tr key={f.firmId}><td className={cellClass + " font-semibold"}>{f.firmName}</td><td className={cellClass}>{count(f.supplied)} / {count(f.billable)}</td><td className={cellClass}>{count(f.replacements)} · {percent(f.replacementRate)}</td><td className={cellClass}>{won(f.averagePrice)}</td><td className={cellClass}>{won(f.revenue)}{f.missingPrices > 0 && <div className="mt-1 text-[10px] text-amber-700">단가 미확정 {f.missingPrices}건</div>}</td><td className={cellClass}>{won(f.paid)}<div className="mt-1 text-slate-400">{won(f.receivable)}</div></td><td className={cellClass}>{won(f.adSpend)}<div className="mt-1 text-[10px] text-slate-400">{({ operations_manual: "운영 수동입력", firm_settings: "로펌 정산입력", month_closing: "로펌 월마감", missing: "미등록", meta_actual: "Meta 조회기간 실제 지출", meta_incomplete: "Meta 기간 조회 필요", meta_ambiguous: "공유 계정 · 배분 미확정" })[f.adSource]}</div></td><td className={cellClass}>{won(f.cpl)}</td><td className={cellClass + (f.profit !== null && f.profit < 0 ? " text-rose-600" : " text-emerald-700")}>{won(f.profit)}<div className="mt-1">{percent(f.margin)}</div></td></tr>)}
+    {!data.report.firms.length && <tr><td colSpan={9} className="p-10 text-center text-slate-400">DB 판매 집계 대상 로펌이 없습니다.</td></tr>}
+  </OperationTable>;
+}
+function Trend({ state }: { state: ReturnType<typeof useOperations> }) {
+  const rows = state.data!.report.trend, max = Math.max(1, ...rows.flatMap(r => [r.revenue ?? 0, r.adSpend ?? 0, Math.abs(r.profit ?? 0)]));
+  return <div className="space-y-5 p-5"><div className="flex gap-4 text-xs text-slate-500"><span>🟣 청구매출</span><span>◻ 광고비</span><span>🟢 공급이익 · 음수는 붉은색</span></div>{rows.map(r => <div key={r.month} className="grid grid-cols-[60px_1fr] gap-4 text-xs"><span className="pt-1 font-semibold text-slate-600">{r.month}</span><div className="space-y-1.5">{[{ label: "청구", value: r.revenue, color: "bg-indigo-500" }, { label: "광고", value: r.adSpend, color: "bg-slate-300" }, { label: "이익", value: r.profit, color: (r.profit ?? 0) < 0 ? "bg-rose-500" : "bg-emerald-500" }].map(s => <div key={s.label} className="flex items-center gap-3"><div className="w-full rounded bg-slate-50"><div className={`h-2 rounded ${s.color}`} style={{ width: `${Math.abs(s.value ?? 0) / max * 100}%` }}/></div><span className="w-32 shrink-0 text-right text-[10px] text-slate-500">{s.label} {won(s.value)}</span></div>)}</div></div>)}</div>;
+}
+function csv(state: ReturnType<typeof useOperations>) { return [["월", "로펌", "공급", "과금", "무상교체", "당시평균단가", "청구매출", "수납", "미수", "광고비", "공급이익", "마진%"], ...(state.data?.report.firms ?? []).map(f => [state.month, f.firmName, f.supplied, f.billable, f.replacements, f.averagePrice, f.revenue, f.paid, f.receivable, f.adSpend, f.profit, f.margin])]; }
+function Definitions() { return <details className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500"><summary className="cursor-pointer font-semibold text-slate-700">집계 기준 보기</summary><ul className="mt-3 list-disc space-y-2 pl-5">{OPERATIONS_DEFINITIONS.map(text => <li key={text}>{text}</li>)}</ul></details>; }
+export function OpsHome() {
+  const state = useOperations(), r = state.data?.report, t = r?.totals;
+  return <OperationsFrame title="통합 관제 홈" description="공급 계약 이행과 로파워의 DB 판매 손익을 확인합니다. 원가·수납·목표는 각 입력 화면에서 관리합니다." state={state} exportRows={csv(state)}>{r && t && <>
+    {r.alerts.length > 0 && <div className="space-y-2">{r.alerts.map((a, i) => <div key={`${a.firmId}:${i}`} className={`rounded-xl border px-4 py-3 text-sm ${a.kind === "risk" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{a.message}</div>)}</div>}
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><PerformanceMetric label="활성 계약 로펌" value={`${r.activeFirmCount}곳`} caption={`조회월에 유효한 확정 계약 ${t.contractCount}건`}/><PerformanceMetric label="이번 달 공급" value={`${count(t.supplied)}건`} caption={`과금 ${count(t.billable)} · 무상 교체 ${count(t.replacements)}`}/><PerformanceMetric label="DB 청구매출" value={won(t.revenue)} caption="수임료와 분리 · 공급 당시 단가" dark/><PerformanceMetric label="공급이익" value={won(t.profit)} caption={`공급 마진 ${percent(t.margin)} · 광고비 ${won(t.adSpend)}`}/><PerformanceMetric label="잔여 약정액" value={won(r.remainingRevenue)} caption="계약 연결 원장 기준 잔여량 × 단가 · 실제 미수금과 구분"/><PerformanceMetric label="확인할 공급 계약" value={`${r.contracts.filter(p => p.status === "risk" || p.status === "warning").length}건`} caption="현재 속도 기반 예상 이행 · 98/90 기본 기준"/></div>
+    <PerformancePanel title="현재 손익과 월말 예상" description="현재 공급 속도와 동일 광고 효율을 유지한 단순 전망입니다. 영업 파이프라인은 포함하지 않습니다."><div className="grid gap-4 p-5 md:grid-cols-3"><PerformanceMetric label="영업이익 · 경과일 비용" value={won(r.operatingProfit)} caption={`등록 월 운영비 ${won(r.operatingCost)}`}/><PerformanceMetric label="월말 예상 매출" value={won(r.projectedRevenue)}/><PerformanceMetric label="월말 예상 영업이익" value={won(r.projectedOperatingProfit)}/></div></PerformancePanel>
+    <PerformancePanel title="향후 3개월 · 확정 공급계약 + 영업 전망" description="기간과 VAT 별도 금액이 확인된 제안만 단계별 확률을 적용합니다. 확정 공급계약이 연결된 로펌은 영업 제안을 중복 합산하지 않습니다. 이익은 저장한 목표 마진과 현재 비용 조건을 유지한 예상입니다."><OperationTable headings={["월", "확정 약정액", "가중 영업 예상", "예상 매출", "예상 공급이익", "예상 영업이익", "제안 미확정"]}>{r.forecastMonths.map(f => <tr key={f.month}><td className={cellClass}>{f.month}</td><td className={cellClass}>{won(f.committed)}</td><td className={cellClass}>{won(f.pipeline)}</td><td className={cellClass}>{won(f.projectedRevenue)}</td><td className={cellClass}>{won(f.projectedProfit)}</td><td className={cellClass}>{won(f.projectedOperatingProfit)}</td><td className={cellClass}>{f.pendingProposals}건</td></tr>)}</OperationTable></PerformancePanel>
+    <PerformancePanel title="공급 계약 이행" description="계약일부터 실제 달력일수로 일할합니다. 계약 연결 이전 공급은 자동으로 소급 배정하지 않습니다."><OperationTable headings={["로펌 / 상품", "월 약정", "기간", "누적 공급 / 현재 계획", "총 약정", "이행 / 예상", "필요 일 공급", "상태"]}>{r.contracts.map(p => <tr key={p.contract.id}><td className={cellClass + " font-semibold"}>{p.firmName}<div className="mt-1 font-normal text-slate-400">{p.contract.product}</div></td><td className={cellClass}>{count(p.contract.monthly_quantity)}</td><td className={cellClass}>{p.contract.start_date}<br/>{p.contract.end_date}</td><td className={cellClass}>{count(p.delivered)} / {count(p.expectedToDate)}</td><td className={cellClass}>{count(p.totalExpected)}</td><td className={cellClass}>{percent(p.fulfillment)} / {percent(p.forecast)}</td><td className={cellClass}>{count(p.neededPerDay)}</td><td className={cellClass}><span className={`rounded-full px-2 py-1 ${p.status === "risk" ? "bg-rose-50 text-rose-700" : p.status === "warning" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{({ normal: "정상", warning: "주의", risk: "위험", unregistered: "미확정" })[p.status]}</span></td></tr>)}{!r.contracts.length && <tr><td colSpan={8} className="p-10 text-center text-slate-400">등록된 공급 계약이 없습니다. 공급 계약·이행에서 등록해주세요.</td></tr>}</OperationTable></PerformancePanel>
+    <PerformancePanel title="6개월 손익 추이"><Trend state={state}/></PerformancePanel>
+    <PerformancePanel title="로펌별 상담 병목 · 컨택 기록 기준" description="선택 월 공급 DB를 중복 제거해 집계합니다. 부재율은 미연결 DB/전화시도 DB, 컨택율은 연결 DB/공급 DB, 상담진행률은 상담 도달 DB/공급 DB입니다. 유효한 전화 기록만 사용하며 과거 통화·메모는 추정하지 않습니다. 분모 30건 미만은 회색 참고값입니다.">
+      <OperationTable headings={["로펌", "부재율 · 미연결 / 전화시도 DB", "컨택율 · 연결 / 공급 DB", "상담진행률 · 상담 / 공급 DB", "첫 연락 중앙값", "60일 계약 / 공급 · 전환율", "현재 7일 이상 단계 체류", "상세"]}>
+        {r.firms.map(f => <tr key={f.firmId}>
+          <td className={cellClass}>{f.firmName}</td>
+          <td className={cellClass + ((f.phoneAttemptedDb ?? 0) < 30 ? " text-slate-400" : "")}>
+            {f.phoneAttemptedDb === undefined ? "마감 당시 미집계" : <>{f.unconnectedDb}/{f.phoneAttemptedDb} · {percent(f.absenceRate)}{f.unknownConnectionDb > 0 && <div className="text-[10px]">결과 미기록 {f.unknownConnectionDb}건</div>}</>}
+          </td>
+          <td className={cellClass + ((f.suppliedDb ?? 0) < 30 ? " text-slate-400" : "")}>
+            {f.suppliedDb === undefined ? "마감 당시 미집계" : <>{f.connectedDb}/{f.suppliedDb} · {percent(f.contactRate)}<div className="text-[10px]">전화 미기록 {f.suppliedDb - f.phoneAttemptedDb}건</div></>}
+          </td>
+          <td className={cellClass + ((f.suppliedDb ?? 0) < 30 ? " text-slate-400" : "")}>
+            {f.suppliedDb === undefined ? "마감 당시 미집계" : <>{f.consultedDb}/{f.suppliedDb} · {percent(f.consultationRate)}{f.missingConsultationDb > 0 && <div className="text-[10px]">단계 미확인 {f.missingConsultationDb}건</div>}</>}
+          </td>
+          <td className={cellClass}>{f.firstCallMedianMinutes === null ? "기록 미등록" : `${count(f.firstCallMedianMinutes)}분`}<div className="text-[10px] text-slate-400">표본 {f.firstCallSamples}건</div></td>
+          <td className={cellClass + (f.mature < 30 ? " text-slate-400" : " font-semibold")}>{f.converted}/{f.mature} · {percent(f.conversionRate)}{f.mature < 30 ? " · 참고" : ""}</td>
+          <td className={cellClass}>{f.stageRecordedDb === undefined ? "마감 당시 미집계" : <>{f.stageRecordedDb > 0 ? `${f.neglectedDb}건` : "기록 미등록"}<div className="text-[10px] text-slate-400">기록 {f.stageRecordedDb}건 · 확인 불가 {f.stageUnrecordedDb}건</div></>}</td>
+          <td className={cellClass}><button type="button" className={secondaryClass} disabled={Boolean(state.openingFirm)} onClick={() => void state.openFirm(f.firmId)}>로펌 관리자 화면</button></td>
+        </tr>)}
+      </OperationTable>
+      <p className="px-5 py-3 text-xs text-slate-400">단계 체류는 현재 진행 중인 DB 전체의 유효한 단계 변경 기록으로 판단합니다. 마감 월은 마감 시점 기준이며, 과거 단계 변경 미기록은 확인 불가입니다.</p>
+    </PerformancePanel>
+    <Definitions/>
+  </>}</OperationsFrame>;
+}
+export function OperationsCosts() {
+  const state = useOperations(), r = state.data?.report, t = r?.totals;
+  return <OperationsFrame title="DB 원가 · 마진" description="실제 공급 단가와 등록 광고비를 비교합니다. Meta 광고 실비와 수동 비용을 중복 합산하지 않습니다." state={state} exportRows={csv(state)}>{r && t && <>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><PerformanceMetric label="공급이익" value={won(t.profit)} dark caption={`마진 ${percent(t.margin)}`}/><PerformanceMetric label="청구 / 수납" value={won(t.revenue)} caption={`수납 ${won(t.paid)} · 미수 ${won(t.receivable)}`}/><PerformanceMetric label="광고비 / 평균 CPL" value={won(t.adSpend)} caption={`평균 CPL ${won(t.cpl)}`}/><PerformanceMetric label="무상 교체" value={`${count(t.replacements)}건`} caption={`${t.replacements}/${t.supplied + t.replacements} · ${percent(t.replacementRate)}`}/></div>
+    <PerformancePanel title="로펌별 DB 공급 손익" description="수납·광고비 미등록은 0원이 아닌 확인 필요로 표시됩니다."><CostRows state={state}/></PerformancePanel>
+    <PerformancePanel title="월별 매출 · 광고비 · 공급이익"><Trend state={state}/></PerformancePanel>
+    <PerformancePanel title="로펌 × 유입원 · 60일 경과 계약 전환" description="선택 공급월 기준입니다. 분모 30건 미만은 회색 참고값이며, 연결된 현재 계약을 확인할 수 없으면 비율을 표시하지 않습니다."><OperationTable headings={["로펌", "유입원", "계약 / 성숙 공급", "전환율"]}>{r.sources.map((s, i) => <tr key={`${s.firmName}:${s.source}:${i}`} className={s.denominator < 30 ? "text-slate-400" : "text-slate-700"}><td className={cellClass}>{s.firmName}</td><td className={cellClass} title={s.source === "미연결" ? undefined : s.source}>{s.sourceName || (s.source === "미연결" ? "미연결" : "등록명 확인 필요")}</td><td className={cellClass}>{s.numerator}/{s.denominator}</td><td className={cellClass}>{percent(s.rate)}{s.denominator < 30 && " · 표본 부족"}{s.missing > 0 && ` · 연결 미확인 ${s.missing}건`}</td></tr>)}{!r.sources.length && <tr><td colSpan={4} className="p-10 text-center text-slate-400">60일이 경과한 공급 자료가 없습니다.</td></tr>}</OperationTable></PerformancePanel><Definitions/>
+  </>}</OperationsFrame>;
+}

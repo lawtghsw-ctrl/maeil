@@ -8,6 +8,7 @@ import { CaseTypeBadge, InstallmentStatusBadge, StatusBadge } from "@/components
 import { CaseActionPanel, PriorityRepaymentGuideTable } from "@/components/cases/CaseActionModals";
 import { Button, Card } from "@/components/ui/Primitives";
 import { ArrowLeft, Trash2 } from "lucide-react";
+import CaseProgressCard from "@/components/cases/CaseProgressCard";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 // v22: 고객관리와 계약관리를 계약관리로 통합했습니다. 계약 상세는 고객/계약의 핵심 재무정보와
@@ -62,6 +63,7 @@ export default function CaseDetailPage() {
         )}
       </div>
 
+      <CaseProgressCard record={c}/>
       <Card className="p-5">
         <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center">
           <div>

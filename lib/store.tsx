@@ -91,6 +91,7 @@ export interface LawFirmSummary {
 }
 
 const DEFAULT_RATE_BY_METHOD: Record<PaymentMethod, number> = {
+  일시완납: 100,
   단순분납: 100,
   로피분납: 90,
   신카할부완납: 85,
@@ -293,7 +294,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const keys = Object.keys(patch) as Array<keyof DbLead>;
       if (!keys.length) return false;
       return keys.every((key) => {
-        if (key === "consultation") return can("db.edit_consultation");
+        if (key === "consultation" || key === "contactLog" || key === "invalidReason" || key === "nonContractReason" || key === "replacementRequestedAt") return can("db.edit_consultation");
         if (key === "detailStage" || key === "status") return can("db.change_stage");
         if (key === "assignedStaff") return can("db.change_assignee");
         if (key === "reservationAt") return can("db.manage_reservation");

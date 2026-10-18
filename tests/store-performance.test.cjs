@@ -87,9 +87,12 @@ async function emit(table,event,row){await act(async()=>fixture.emit(table,event
 const calls=table=>fixture.calls.filter(call=>call.table===table).length;
 let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++passed} ${name}`);}
 (async()=>{
-  await check('Original write callbacks and permission rules remain byte-for-byte equivalent',()=>{
+  await check('Original write callbacks and permission rules remain equivalent; new consultation fields use existing permission',()=>{
     const original=require('node:child_process').execFileSync('git',['show','6acb7b9:lib/store.tsx'],{cwd:root,encoding:'utf8'}).replaceAll('\r\n','\n');
-    const current=fs.readFileSync(path.join(root,'lib/store.tsx'),'utf8').replaceAll('\r\n','\n');
+    const source=fs.readFileSync(path.join(root,'lib/store.tsx'),'utf8').replaceAll('\r\n','\n');
+    const addition=' || key === "contactLog" || key === "invalidReason" || key === "nonContractReason" || key === "replacementRequestedAt"';
+    assert.ok(source.includes('if (key === "consultation"'+addition+') return can("db.edit_consultation");'));
+    const current=source.replace(addition,'');
     for(const [start,end]of [['  const canPatchLead =','  const fetchEntityTable ='],['  const saveEntity =','  const value = useMemo<AppStoreValue>']])
       assert.equal(current.slice(current.indexOf(start),current.indexOf(end)),original.slice(original.indexOf(start),original.indexOf(end)));
   });

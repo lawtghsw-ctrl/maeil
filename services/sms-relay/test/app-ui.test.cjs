@@ -81,18 +81,38 @@ function harness(options = {}) {
   };
   const finalRuntime = engine();
   // Get the non-exported workspace via an AST export appended only to this test's in-memory source.
-  const source = fs.readFileSync(path.join(root, 'app/sms/page.tsx'), 'utf8') + '\nexport { SmsFirmWorkspace };';
+  const source = fs.readFileSync(path.join(root, 'components/sms/SmsCenter.tsx'), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: module.exports, console, Date, Math, Map, AbortController, Headers, crypto: require('node:crypto').webcrypto, fetch: fetchMock, confirm: () => options.confirm !== false,
     document: documentMock, window: documentMock, setInterval(fn, ms) { assert.equal(ms,12000); const id=++intervalId;intervals.set(id,fn);return id; }, clearInterval(id) {intervals.delete(id);},
     require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store, useStoreSession: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; throw Error(name); } });
-  const props = { initialDraft: options.draft ?? draft(), onDraftChange: (value) => snapshots.push(value) };
+  const props = { initialRecipients: options.initialRecipients ?? [], initialDraft: options.fresh ? undefined : options.draft ?? draft(), onDraftChange: (value) => snapshots.push(value) };
   const render = () => finalRuntime.render(module.exports.SmsFirmWorkspace, props);
   const flush = async () => { for (let i = 0; i < 4; i++) { await new Promise(setImmediate); render(); } };
   const button = (part) => nodes(render(), (node) => node.type === 'button' && text(node).includes(part))[0];
   return { render, flush, button, apiCalls, writes, uploads, snapshots, sendPending, readPending, historyPending, intervals, document: documentMock, tick: ()=>[...intervals.values()].forEach((fn)=>fn()), event: (name)=>listeners.get(name)?.(), response, unmount: () => finalRuntime.unmount(), controls, store };
 }
+
+test('DB popup prefills a normalized customer without sending or changing automation', async () => {
+  const h = harness({ fresh: true, initialRecipients: [{ name: '시연 고객', phone: '010-0000-0000' }] });
+  h.render(); await h.flush();
+  assert.equal(h.snapshots.at(-1).recipients[0].phone, '01000000000');
+  assert.equal(h.snapshots.at(-1).recipients[0].name, '시연 고객');
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.uploads.length, 0);
+  assert.ok(h.apiCalls.every(call => !call.init.method));
+  assert.equal(h.snapshots.at(-1).message, '');
+});
+
+test('reopened DB popup retains its prior draft instead of replacing recipients', async () => {
+  const saved = draft({ recipients: [{ name: '원래 수신자', phone: '01011111111' }], message: '작성 중 문구' });
+  const h = harness({ draft: saved, initialRecipients: [{ name: '다른 고객', phone: '01022222222' }] });
+  h.render(); await h.flush(); h.unmount();
+  assert.equal(h.snapshots.at(-1).recipients[0].phone, '01011111111');
+  assert.equal(h.snapshots.at(-1).message, '작성 중 문구');
+  assert.equal(h.sendPending.length, 0);
+});
 
 test('opening legacy history makes only reads and never registers or processes old pending rows', async () => {
   const h = harness({ draft: draft({ tab: 'history' }), history: [

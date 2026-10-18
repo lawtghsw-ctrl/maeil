@@ -1,0 +1,72 @@
+// Offline fixtures only: real pure modules and read handlers, no service or DB access.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
+const ts = require('typescript');
+const root = path.resolve(__dirname, '..');
+let actor, db, queryCalls;
+const originalLoad = Module._load;
+const admin = { from(table) { return new Query(table); } };
+class Query {
+  constructor(table) { this.table = table; this.filters = []; this.maximum = Infinity; }
+  select() { return this; }
+  eq(key, value) { this.filters.push(row => row[key] === value); return this; }
+  gt(key, value) { this.filters.push(row => row[key] > value); return this; }
+  order(key) { this.orderBy = key; return this; }
+  limit(value) { this.maximum = value; return this; }
+  maybeSingle() { this.single = true; return this; }
+  then(resolve, reject) { queryCalls.push(this.table); const rows = (db[this.table] ?? []).filter(row => this.filters.every(fn => fn(row))).sort((a,b)=>String(a[this.orderBy]??'').localeCompare(String(b[this.orderBy]??''))).slice(0,Math.min(this.maximum,137)); return Promise.resolve({ data: this.single ? rows[0] ?? null : rows, error: null }).then(resolve,reject); }
+}
+Module._load = function(name, parent, ...rest) {
+  if (name === '@/lib/platform/server') return {
+    requirePlatformUser: async () => { if (!actor) throw new Error('UNAUTHORIZED'); return { admin, profile: actor, user: { id: actor.id } }; },
+    platformError: error => ({ status: ['UNAUTHORIZED'].includes(error.message) ? 401 : ['FORBIDDEN','NO_FIRM'].includes(error.message) ? 403 : 400, message: error.message }),
+  };
+  if (name === 'next/server') return { NextResponse: { json: (body, options) => ({ body, status: options?.status ?? 200 }) } };
+  if (name.startsWith('@/')) return originalLoad.call(this, path.join(root, name.slice(2)), parent, ...rest);
+  return originalLoad.call(this, name, parent, ...rest);
+};
+for (const ext of ['.ts','.tsx']) require.extensions[ext] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX }, fileName: filename }).outputText, filename);
+global.fetch = () => { throw new Error('Network is forbidden'); };
+const reporting = require('../lib/firm-reporting.ts');
+const core = require('../lib/management-core.ts');
+const access = require('../lib/management-access.ts');
+const server = require('../lib/firm-reporting-server.ts');
+const route = require('../app/api/admin/firm-supply/route.ts');
+const firm = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
+const row = (id, patch={}) => ({ id, law_firm_id: firm, lead_id: `lead-${id}`, supplied_at: '2026-07-01T00:00:00Z', billable: true, unit_price_snapshot: 100, ...patch });
+const summary = (rows, cases=[]) => reporting.summarizeFirmSupply(firm,'2026-07-01','2026-10-31',rows,[],0,cases,'2026-10-18');
+const settings = () => structuredClone(core.DEFAULT_MANAGEMENT_SETTINGS);
+
+test('actual receipts preserve zero and use old scheduled amount only when absent',()=>{ assert.equal(reporting.actualPayment({amount:100,actualPaidAmount:0}),0); assert.equal(reporting.actualPayment({amount:100,actualPaidAmount:35}),35); assert.equal(reporting.actualPayment({amount:100}),100); });
+test('cash and payment fees use actual receipt and the paid date',()=>{ const cases=[{id:'c',assignedStaff:'A',paymentMethod:'신카할부완납'}]; const payments=[{caseId:'c',amount:1000,actualPaidAmount:200,status:'완료',paidDate:'2026-10-01'},{caseId:'c',amount:500,actualPaidAmount:0,status:'완료',paidDate:'2026-10-02'},{caseId:'c',amount:900,status:'예정',paidDate:'2026-10-02'}]; assert.equal(core.cashByStaff(cases,payments,'2026-10-01','2026-10-31').get('A'),200); const s=settings();s.paymentFees=[{paymentMethod:'신카할부완납',rate:10,payer:'사무소 부담'}];assert.equal(core.paymentFeesForRange(cases,payments,s,'2026-10-01','2026-10-31'),20); });
+test('cash incentive uses partial actual payment and not scheduled amount',()=>{ const s=settings();s.staffCompensations=[{staff:'A',baseSalary:0,incentiveMode:'회수매출%',incentiveValue:10,clawbackOnCancel:true}];assert.equal(core.laborCostForRange([{id:'c',assignedStaff:'A',status:'진행중'}],[{caseId:'c',amount:1000,actualPaidAmount:100,status:'완료',paidDate:'2026-10-01'}],s,'2026-10-01','2026-10-31'),10); });
+test('provider production costs do not appear in firm response or close snapshots',()=>{const s=settings();s.adSpendEntries=[{id:'private',date:'2026-10-01',creative:'SECRET',amount:777}];s.privateUnexpected='private';s.monthClosings={'2026-09':{closedAt:'x',snapshot:core.makeFinancialSnapshot(s)}};const visible=access.firmVisibleSettings(s);assert.equal(JSON.stringify(visible).includes('SECRET'),false);assert.equal('privateUnexpected' in visible,false);assert.equal(visible.monthClosings['2026-09'].snapshot.adSpendEntries.length,0);assert.equal(s.adSpendEntries[0].amount,777);});
+test('public setting edits preserve original private costs and old close exactly',()=>{const s=settings();s.adSpendEntries=[{id:'secret',date:'2026-10-01',creative:'secret',amount:777}];s.monthClosings={'2026-09':{closedAt:'original',snapshot:core.makeFinancialSnapshot(s)}};const request=access.firmVisibleSettings(s);request.monthlyContractTarget=7;request.adSpendEntries=[{amount:1}];request.monthClosings['2026-09'].closedAt='tampered';const merged=access.mergeFirmSettings(s,request);assert.equal(merged.monthlyContractTarget,7);assert.deepEqual(merged.adSpendEntries,s.adSpendEntries);assert.deepEqual(merged.monthClosings['2026-09'],s.monthClosings['2026-09']);});
+test('new close ignores client-provided totals and uses private source settings snapshot',()=>{const s=settings(),request=structuredClone(s);request.monthClosings={'2026-10':{closedAt:'fake',snapshot:{},totals:{cashSales:999999}}};const result=access.mergeFirmSettings(s,request);assert.equal(result.monthClosings['2026-10'].totals,undefined);assert.notEqual(result.monthClosings['2026-10'].closedAt,'fake');});
+test('explicit reopen removes only requested close',()=>{const s=settings();s.monthClosings={'2026-09':{closedAt:'old',snapshot:core.makeFinancialSnapshot(s)}};const request=access.firmVisibleSettings(s);request.monthClosings={};assert.deepEqual(access.mergeFirmSettings(s,request).monthClosings,{});});
+test('invalid month cannot enter close map',()=>{assert.throws(()=>access.mergeFirmSettings({}, {monthClosings:{'2026-13':{}}}));});
+test('old close remains supported and partial dates do not pretend to be frozen totals',()=>{const s=settings();s.monthClosings={'2026-10':{closedAt:'x',snapshot:core.makeFinancialSnapshot(s),totals:{contractCount:2,contractSales:100,cashSales:30,purchaseCost:10,laborCost:3,paymentFees:1,fixedCost:4}}};assert.equal(core.closedTotalsForRange(s,'2026-10-01','2026-10-31').cashSales,30);assert.equal(core.closedTotalsForRange(s,'2026-10-02','2026-10-31'),undefined);delete s.monthClosings['2026-10'].totals;assert.equal(core.closedTotalsForRange(s,'2026-10-01','2026-10-31'),undefined);});
+test('cost is supplied snapshot and nonbillable replacement never charges',()=>{const result=summary([row('1'),row('2',{unit_price_snapshot:500,billable:false})]);assert.equal(result.purchaseCost,100);assert.equal(result.billableCount,1);assert.equal(result.suppliedCount,2);});
+test('missing or zero snapshot yields unknown cost, preserving known subtotal',()=>{const result=summary([row('1'),row('2',{unit_price_snapshot:0}),row('3',{unit_price_snapshot:null})]);assert.equal(result.purchaseCost,null);assert.equal(result.knownPurchaseCost,100);assert.equal(result.missingPriceCount,2);});
+test('unlinked delivery remains in supply count with warning',()=>{const result=summary([row('1',{lead_id:null})]);assert.equal(result.unlinkedCount,1);assert.equal(result.suppliedCount,1);assert.equal(result.matureCohort.retained,0);});
+test('mature cohort includes day 60 and excludes day 59 in KST',()=>{const result=summary([row('1',{supplied_at:'2026-08-19T14:59:59Z'}),row('2',{supplied_at:'2026-08-19T15:00:00Z'})]);assert.equal(result.matureCohort.cutoff,'2026-08-19');assert.equal(result.matureCohort.supplied,1);});
+test('mature retention excludes zero-fee and cancelled cases; duplicate cases count one delivery',()=>{const result=summary([row('1'),row('2'),row('3')],[{fromLeadId:'lead-1',contractAmount:100,status:'진행중'},{fromLeadId:'lead-1',contractAmount:200,status:'진행중'},{fromLeadId:'lead-2',contractAmount:0,status:'진행중'},{fromLeadId:'lead-3',contractAmount:300,status:'취하'}]);assert.equal(result.matureCohort.retained,1);});
+test('cross-tenant ledger rejected even with colliding IDs',()=>assert.throws(()=>summary([row('1',{law_firm_id:other})]),/FORBIDDEN/));
+test('empty sample and ratios are explicitly deferred',()=>{assert.equal(summary([]).matureCohort.conversionRate,null);assert.equal(reporting.ratioLabel(0,0),'판단 유예 · 0/0');assert.match(reporting.ratioLabel(1,2),/1\/2.*50.0%/);});
+test('fee standard snapshot wins over changed current settings',()=>{assert.equal(reporting.standardFeeForCase({feeStandardSnapshot:{baseFee:100}},900),100);assert.equal(reporting.standardFeeForCase({},900),900);});
+test('first telephone attempt excludes SMS and unstructured old notes',()=>{const lead={receivedAt:'2026-10-01T00:00:00Z',consultation:{memoLog:[{at:'2026-10-01T00:01:00Z',text:'전화'}]},contactLog:[{type:'sms',at:'2026-10-01T00:02:00Z'},{type:'phone',at:'2026-10-01T00:07:00Z'}]};assert.equal(reporting.firstCallMinutes(lead),7);delete lead.contactLog;assert.equal(reporting.firstCallMinutes(lead),undefined);});
+test('pagination reads beyond 1000 and does not stop at server cap below requested batch',async()=>{db={lead_supply_ledger:Array.from({length:1150},(_,i)=>row(String(i).padStart(5,'0')))};queryCalls=[];const result=await server.readFirmRows(admin,'lead_supply_ledger',firm,'id,law_firm_id');assert.equal(result.length,1150);assert.equal(queryCalls.length,10);});
+test('firm-supply API denies staff and foreign firm, preserves legacy manager permission',async()=>{db={};queryCalls=[];const request=id=>({nextUrl:new URL(`https://fixture.invalid/api?firmId=${id}&start=2026-10-01&end=2026-10-31`)});actor={id:'a',platform_role:'staff',role:'staff',law_firm_id:firm};assert.equal((await route.GET(request(firm))).status,403);actor.role='admin';assert.equal((await route.GET(request(other))).status,403);actor=null;assert.equal((await route.GET(request(firm))).status,401);});
+test('crm-only classification does not claim missing sales price or fabricate a supply contract',async()=>{db={lead_supply_ledger:[row('1',{unit_price_snapshot:0})],platform_supply_contracts:[],platform_supply_adjustments:[],app_cases:[],platform_firm_commercial_profiles:[{law_firm_id:firm,service_mode:'crm_only'}]};queryCalls=[];const result=await server.readFirmSupply(admin,firm,'2026-07-01','2026-10-31');assert.equal(result.serviceMode,'crm_only');assert.equal(result.purchaseCost,0);assert.equal(result.missingPriceCount,0);assert.deepEqual(result.contracts,[]);assert.equal(result.suppliedCount,1);});
+test('unregistered service classification has unknown purchase cost, even with legacy zero rows',async()=>{db={lead_supply_ledger:[row('1')],platform_firm_commercial_profiles:[]};queryCalls=[];const result=await server.readFirmSupply(admin,firm,'2026-07-01','2026-10-31');assert.equal(result.serviceMode,'unregistered');assert.equal(result.purchaseCost,null);});
+test('RLS closes only private management key, preserving all source JSON and other keys',()=>{const sql=fs.readFileSync(path.join(root,'supabase/migrations/20261018002409_firm_management_private_costs.sql'),'utf8');assert.match(sql,/as restrictive for all to authenticated/);assert.match(sql,/key <> 'management_analytics_v1'/);assert.equal(/\b(update|delete from|insert into)\b/i.test(sql),false);});
+
+test('stage dwell uses the recorded stage change, never old receipt or memo dates',()=>{const now=Date.parse('2026-10-18T00:00:00Z');assert.equal(reporting.leadStageDays({receivedAt:'2026-01-01',consultation:{memoLog:[]}},now),undefined);assert.equal(reporting.leadStageDays({stageUpdatedAt:'2026-10-11T00:00:00Z'},now),7);assert.equal(reporting.leadStageDays({stageUpdatedAt:'invalid'},now),undefined);assert.equal(reporting.leadStageDays({stageUpdatedAt:'2026-10-19T00:00:00Z'},now),undefined);});
+test('weekly supply uses KST Monday boundary and counts only selected dates',()=>{const result=summary([row('1',{supplied_at:'2026-10-11T14:59:59Z'}),row('2',{supplied_at:'2026-10-11T15:00:00Z',billable:false})]);assert.deepEqual(result.weekly,[{week:'2026-10-05',suppliedCount:1,billableCount:1},{week:'2026-10-12',suppliedCount:1,billableCount:0}]);});
+
+test('closed totals expose only seven allowed numeric fields and reject malformed totals',()=>{const s=settings();s.monthClosings={'2026-09':{closedAt:'old',snapshot:core.makeFinancialSnapshot(s),totals:{contractCount:1,contractSales:100,cashSales:70,purchaseCost:20,laborCost:5,paymentFees:1,fixedCost:2,adSpend:999,secret:'SECRET'}}};const result=access.firmVisibleSettings(s);assert.deepEqual(Object.keys(result.monthClosings['2026-09'].totals).sort(),['contractCount','contractSales','cashSales','purchaseCost','laborCost','paymentFees','fixedCost'].sort());assert.equal(JSON.stringify(result).includes('SECRET'),false);s.monthClosings['2026-09'].totals.cashSales='private';assert.equal(access.firmVisibleSettings(s).monthClosings['2026-09'].totals,undefined);});
+test('malformed old closing reports an error instead of exposing or replacing the source',()=>{const s=settings();s.monthClosings={'2026-09':null};assert.throws(()=>access.firmVisibleSettings(s),/월마감 기록/);assert.equal(s.monthClosings['2026-09'],null);});
+test('settings revision requires the exact version originally loaded, including absent-row null',()=>{assert.doesNotThrow(()=>access.assertSettingsRevision('v1','v1'));assert.doesNotThrow(()=>access.assertSettingsRevision(null,null));assert.throws(()=>access.assertSettingsRevision('v2','v1'));assert.throws(()=>access.assertSettingsRevision(null,undefined));assert.throws(()=>access.assertSettingsRevision('v2',null));});

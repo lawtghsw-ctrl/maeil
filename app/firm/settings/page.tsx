@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Copy, KeyRound, Link2, Megaphone, PlayCircle, Plus, RefreshCcw, RotateCw, Settings2, UsersRound } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
+import FirmEsignSettings from "@/components/platform/FirmEsignSettings";
 
 type Data = {
   viewerRole: "super_admin" | "firm_admin";
@@ -172,6 +173,8 @@ function FirmSettingsContent() {
     {!canManageIntegrations && <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800"><b>로펌 관리자 화면</b> · 직원 초대는 직접 관리할 수 있고, 광고계정·Google Sheet·광고소스·Meta 자동전송 설정은 로파워에서 관리합니다.</div>}
     {inviteCode && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="text-xs font-bold text-blue-700">새 {inviteRole === "firm_admin" ? "로펌관리자" : "직원"} 초대코드 · 24시간 · 1회용</div><div className="mt-2 flex items-center gap-2"><code className="rounded-lg bg-white px-3 py-2 text-lg font-black">{inviteCode}</code><button onClick={() => navigator.clipboard.writeText(inviteCode)} className="rounded-lg border bg-white p-2"><Copy size={16} /></button></div><p className="mt-2 text-xs text-blue-700">/join에서 사용합니다. 생성 후 이 화면을 벗어나면 전체 코드는 다시 표시되지 않습니다.</p></div>}
     {canManageIntegrations && secret && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="text-xs font-bold text-emerald-700">Google Sheet 연동 Secret · 최초 1회만 표시</div><div className="mt-2 flex items-center gap-2"><code className="max-w-full overflow-x-auto rounded-lg bg-white px-3 py-2 text-sm font-black">{secret}</code><button onClick={() => navigator.clipboard.writeText(secret)} className="rounded-lg border bg-white p-2"><Copy size={16} /></button></div></div>}
+
+    <FirmEsignSettings key={lawFirmId || data.firm.id} lawFirmId={lawFirmId || data.firm.id}/>
 
     <section className="rounded-2xl border bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2 font-black"><Settings2 size={17} />DB 공급/중복 기준</div><p className="mt-1 text-xs text-slate-500">같은 로펌 안에서 동일 전화번호가 중복기간 안에 다시 들어오면 중복 처리합니다. DB 단가는 공급원장에 유입 당시 스냅샷으로 저장됩니다.</p>

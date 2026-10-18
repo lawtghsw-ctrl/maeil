@@ -6,6 +6,7 @@
 // 컴포넌트로 분리했습니다. 실제 외부 API(전자서명/알림톡)는 아직 연결 전이라 기존과
 // 동일하게 미리보기 동작을 유지합니다.
 import { useEffect, useState, type ChangeEvent } from "react";
+import FirmEsignDocumentDialog from "@/components/cases/FirmEsignDocumentDialog";
 import { FileSignature, Plus, RefreshCw, Send, Table2, WalletCards } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
@@ -357,57 +358,8 @@ function PriorityRepaymentGuideModal({ open, onClose }: { open: boolean; onClose
   );
 }
 
-function CaseEformModal({
-  open,
-  client,
-  caseRecord,
-  onClose,
-}: {
-  open: boolean;
-  client: Client;
-  caseRecord: CaseRecord;
-  onClose: () => void;
-}) {
-  const [phone, setPhone] = useState(client.phone);
-  const [message, setMessage] = useState("계약서 확인 후 서명 부탁드립니다.");
-
-  useEffect(() => {
-    if (open) {
-      setPhone(client.phone);
-      setMessage("계약서 확인 후 서명 부탁드립니다.");
-    }
-  }, [open, client.phone]);
-
-  return (
-    <Modal open={open} title={`${client.name} · 전자계약서 전송`} onClose={onClose}>
-      <div className="space-y-4">
-        <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
-          <b>{client.name}</b> 고객의 계약정보를 템플릿에 자동 입력해 서명 요청을 전송합니다.
-          <div className="mt-1 text-xs text-blue-600">※ 전자서명 API 연동 전 미리보기입니다.</div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Label text="고객명"><Input value={client.name} readOnly /></Label>
-          <Label text="계약일"><Input value={caseRecord.contractDate} readOnly /></Label>
-          <Label text="전화번호(SMS)">
-            <Input value={phone} onChange={(e: ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)} />
-          </Label>
-          <Label text="사건유형"><Input value={caseRecord.caseType} readOnly /></Label>
-          <Label text="총 수임료"><Input value={fmtWon(caseRecord.contractAmount)} readOnly /></Label>
-          <Label text="결제수단"><Input value={PAYMENT_METHOD_NOTE[caseRecord.paymentMethod]} readOnly /></Label>
-        </div>
-        <Label text="전송 메시지">
-          <Input value={message} onChange={(e: ChangeEvent<HTMLInputElement>) => setMessage(e.target.value)} />
-        </Label>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>취소</Button>
-          <Button onClick={() => alert("전자계약서 전송 기능은 API 연동 후 제공됩니다.")}>
-            <RefreshCw size={15} />
-            계약서 전송
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
+function CaseEformModal(props: { open: boolean; client: Client; caseRecord: CaseRecord; onClose: () => void }) {
+  return <FirmEsignDocumentDialog {...props} />;
 }
 
 function buildDocGuideMessage(clientName: string, pendingLabels: string[]): string {

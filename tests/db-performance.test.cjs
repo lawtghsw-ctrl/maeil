@@ -75,6 +75,7 @@ function createHarness(source, options = {}) {
   const modules = new Map();
   let store;
   const requireMock = (name) => {
+    if (name === '@/components/sms/LeadSmsDialog' || name === '@/components/db/LeadWorkDialog') return { __esModule: true, default: () => null };
     if (name === 'react') return React;
     if (name === 'react/jsx-runtime') return jsx;
     if (name === 'next/link') return { __esModule:true, default:host('a') };
@@ -128,7 +129,15 @@ function createHarness(source, options = {}) {
 }
 
 function pair(options) { return [createHarness(baseline,options),createHarness(current,options)]; }
-function equalPair(a,b) { assert.deepEqual(b.snapshot(),a.snapshot()); assert.deepEqual(b.tree(),a.tree()); }
+// The feedback adds two explicitly requested row actions. Keep comparing every
+// pre-existing control and value, excluding only those two new button subtrees.
+function originalTree(value) {
+  if (Array.isArray(value)) return value.map(originalTree).filter(item=>item!==null);
+  if (!value || typeof value !== 'object') return value;
+  if (value.type === 'button' && ['컨택 · 사유','문자발송'].some(label=>value.children?.includes(label))) return null;
+  return {...value, ...(value.children ? {children:originalTree(value.children)} : {})};
+}
+function equalPair(a,b) { assert.deepEqual(b.snapshot(),a.snapshot()); assert.deepEqual(originalTree(b.tree()),originalTree(a.tree())); }
 function hostNodes(h,type) { return h.view.root.findAll(node=>node.type===type); }
 function hostText(node) { return node.children.map(child=>typeof child==='string'?child:hostText(child)).join(''); }
 
