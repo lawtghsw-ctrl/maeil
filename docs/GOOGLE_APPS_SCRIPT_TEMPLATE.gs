@@ -15,6 +15,7 @@
  *   LAWPOWER_SOURCE_KEY    = 이 Sheet 전체를 광고소스 1개로 고정할 때만 입력
  *
  * 최초 1회 setupLawPowerSync()를 실행하면 현재 마지막 행까지 건너뛰고 이후 신규 행부터 1분마다 전송합니다.
+ * 기존 연동 코드만 갱신할 때는 setup/reset을 실행하지 않습니다. 기존 커서와 트리거를 유지합니다.
  */
 
 const LAWPOWER_HEADER_ROW = 1;
@@ -98,6 +99,25 @@ function lawPowerCell_(row, index) {
   return index < 0 ? '' : String(row[index] || '').trim();
 }
 
+function lawPowerNormalizeMetaId_(value, field) {
+  if (typeof value !== 'string') return null;
+  const prefixes = { metaLeadId: 'l:', adId: 'ag:', adsetId: 'as:', campaignId: 'c:', formId: 'f:' };
+  const prefix = prefixes[field];
+  if (!prefix) return null;
+  const raw = value.trim();
+  const id = raw.indexOf(prefix) === 0 ? raw.slice(prefix.length) : raw;
+  return /^[1-9]\d{0,31}$/.test(id) ? id : null;
+}
+
+function lawPowerMetaIdCell_(row, index, field, rawValue) {
+  // getDisplayValues() can hide an already-rounded Number behind a decimal string.
+  // Preserve its original type so server validation rejects it instead of guessing lost digits.
+  if (rawValue != null && typeof rawValue !== 'string') return rawValue;
+  const raw = typeof rawValue === 'string' ? rawValue.trim() : lawPowerCell_(row, index);
+  // Keep an invalid value visible to server validation; never guess or coerce a large ID to Number.
+  return lawPowerNormalizeMetaId_(raw, field) || raw;
+}
+
 function lawPowerLastRowKey_() {
   const c = lawPowerConfig_();
   return LAWPOWER_LAST_ROW_KEY_PREFIX + c.sheetName;
@@ -166,11 +186,11 @@ function syncLawPowerNewRows() {
         debtRange: lawPowerCell_(row, map.debt),
         income: lawPowerCell_(row, map.income),
         consultTime: lawPowerCell_(row, map.consultTime),
-        formId: lawPowerCell_(row, map.formId),
-        metaLeadId: lawPowerCell_(row, map.metaLeadId),
-        campaignId: lawPowerCell_(row, map.campaignId),
-        adsetId: lawPowerCell_(row, map.adsetId),
-        adId: lawPowerCell_(row, map.adId),
+        formId: lawPowerMetaIdCell_(row, map.formId, 'formId', rawRows[index][map.formId]),
+        metaLeadId: lawPowerMetaIdCell_(row, map.metaLeadId, 'metaLeadId', rawRows[index][map.metaLeadId]),
+        campaignId: lawPowerMetaIdCell_(row, map.campaignId, 'campaignId', rawRows[index][map.campaignId]),
+        adsetId: lawPowerMetaIdCell_(row, map.adsetId, 'adsetId', rawRows[index][map.adsetId]),
+        adId: lawPowerMetaIdCell_(row, map.adId, 'adId', rawRows[index][map.adId]),
       });
       targetLastRow = rowNumber;
     }

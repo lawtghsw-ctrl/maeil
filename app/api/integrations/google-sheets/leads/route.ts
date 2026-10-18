@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeMetaIdentifier, sheetMetaIdentifiers } from "@/lib/integrations/meta-identifiers";
 import {
   normalizeConsultTimeValue,
   DEBT_RANGE_OPTIONS,
@@ -55,6 +56,28 @@ type SourceRow = {
 
 const text = (value: unknown) => typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
+const SOURCE_COLUMNS = "id,law_firm_id,source_key,name,meta_form_id,campaign_id,adset_id,ad_id,meta_account_id,sheet_integration_id,active";
+
+// Optional metadata lookup only. A missing/ambiguous registration must never stop legacy intake.
+async function legacySourceContext(admin: AdminClient, firmId: string, sheetId: string, sheetName: string) {
+  const empty = { sheet: null as { id: string; sheet_name: string } | null, sources: [] as SourceRow[] };
+  if (!sheetId) return empty;
+  try {
+    const { data: sheet, error } = await admin.from("firm_sheet_integrations")
+      .select("id,law_firm_id,spreadsheet_id,sheet_name,active")
+      .eq("law_firm_id", firmId).eq("spreadsheet_id", sheetId).eq("sheet_name", sheetName)
+      .eq("active", true).maybeSingle();
+    if (error || !sheet || sheet.law_firm_id !== firmId || sheet.spreadsheet_id !== sheetId || sheet.sheet_name !== sheetName || !sheet.active) return empty;
+    const { data, error: sourceError, count } = await admin.from("ad_sources")
+      .select(SOURCE_COLUMNS, { count: "exact" })
+      .eq("law_firm_id", firmId).eq("sheet_integration_id", sheet.id).eq("active", true);
+    // A capped/partial response cannot establish that a match is unique.
+    if (sourceError || !data || count !== data.length) return empty;
+    return { sheet, sources: (data as SourceRow[]).filter(source => source.active && source.law_firm_id === firmId && source.sheet_integration_id === sheet.id) };
+  } catch {
+    return empty;
+  }
+}
 
 function normalizePhone(value: unknown) {
   const raw = text(value);
@@ -139,7 +162,7 @@ async function resolveTenant(admin: AdminClient, request: NextRequest, body: Inc
     if (sha256(suppliedSecret) !== sheet.secret_hash) throw new Error("연동 인증키가 올바르지 않습니다.");
 
     const { data: sources, error: sourceListError } = await admin.from("ad_sources")
-      .select("id,law_firm_id,source_key,name,meta_form_id,campaign_id,adset_id,ad_id,meta_account_id,sheet_integration_id,active")
+      .select(SOURCE_COLUMNS)
       .eq("law_firm_id", firm.id)
       .eq("sheet_integration_id", sheet.id)
       .eq("active", true);
@@ -163,19 +186,17 @@ async function resolveTenant(admin: AdminClient, request: NextRequest, body: Inc
   const configuredSheetName = process.env.GOOGLE_SHEETS_SHEET_NAME?.trim();
   const allowed = new Set(["Raw2", ...(configuredSheetName ? [configuredSheetName] : [])]);
   if (!allowed.has(requestedName)) throw new Error(`허용된 시트는 Raw2 입니다. 현재: ${requestedName || "(없음)"}`);
-  return { firm, sheet: null as any, sources: [] as SourceRow[], fixedSource: null as SourceRow | null, legacy: true };
+  const context = await legacySourceContext(admin, firm.id, text(body.sheetId), requestedName);
+  return { firm, ...context, fixedSource: null as SourceRow | null, legacy: true };
 }
 
 function validateSourceLineage(source: SourceRow, row: IncomingSheetRow, body: IncomingBody) {
-  const formId = text(row.formId || body.formId);
-  const campaignId = text(row.campaignId);
-  const adsetId = text(row.adsetId);
-  const adId = text(row.adId);
+  const { ids: { formId, campaignId, adsetId, adId } } = sheetMetaIdentifiers(row, body.formId);
   const checks: Array<[string, string | null, string]> = [
-    ["Form ID", source.meta_form_id, formId],
-    ["Campaign ID", source.campaign_id, campaignId],
-    ["Adset ID", source.adset_id, adsetId],
-    ["Ad ID", source.ad_id, adId],
+    ["Form ID", source.meta_form_id, formId ?? ""],
+    ["Campaign ID", source.campaign_id, campaignId ?? ""],
+    ["Adset ID", source.adset_id, adsetId ?? ""],
+    ["Ad ID", source.ad_id, adId ?? ""],
   ];
   for (const [label, configured, incoming] of checks) {
     if (!configured) continue;
@@ -185,16 +206,24 @@ function validateSourceLineage(source: SourceRow, row: IncomingSheetRow, body: I
 }
 
 function resolveSourceForRow(tenant: Awaited<ReturnType<typeof resolveTenant>>, row: IncomingSheetRow, body: IncomingBody): SourceRow | null {
-  if (tenant.legacy) return null;
+  const { ids: { formId, campaignId, adsetId, adId }, invalidFields } = sheetMetaIdentifiers(row, body.formId);
+  if (tenant.legacy) {
+    // Legacy intake remains available even if optional attribution cannot be verified.
+    if (invalidFields.length || !tenant.sheet || (!formId && !adId)) return null;
+    const candidates = tenant.sources.filter(source =>
+      (!!adId && normalizeMetaIdentifier(source.ad_id, "adId") === adId)
+      || (!!formId && normalizeMetaIdentifier(source.meta_form_id, "formId") === formId));
+    // Conflicting or overlapping source registrations are deliberately left unlinked.
+    if (candidates.length !== 1) return null;
+    try { validateSourceLineage(candidates[0], row, body); } catch { return null; }
+    return candidates[0];
+  }
+  if (invalidFields.length) throw new Error(`Meta ID 형식이 올바르지 않습니다: ${invalidFields.join(", ")}`);
   if (tenant.fixedSource) {
     validateSourceLineage(tenant.fixedSource, row, body);
     return tenant.fixedSource;
   }
 
-  const formId = text(row.formId || body.formId);
-  const campaignId = text(row.campaignId);
-  const adsetId = text(row.adsetId);
-  const adId = text(row.adId);
   const all = tenant.sources;
   if (all.length === 0) throw new Error("이 Google Sheet에 활성 광고소스가 등록되어 있지 않습니다.");
 
@@ -269,11 +298,7 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const formId = text(rawRow.formId || body.formId);
-    const metaLeadId = text(rawRow.metaLeadId);
-    const campaignId = text(rawRow.campaignId);
-    const adsetId = text(rawRow.adsetId);
-    const adId = text(rawRow.adId);
+    const { ids: { formId, metaLeadId, campaignId, adsetId, adId } } = sheetMetaIdentifiers(rawRow, body.formId);
     const debtRaw = text(rawRow.debtRange);
     const incomeRaw = text(rawRow.income);
     const consultTimeRaw = text(rawRow.consultTime);
