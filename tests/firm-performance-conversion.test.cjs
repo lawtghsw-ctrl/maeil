@@ -270,6 +270,8 @@ function renderLegacy(input, rangeStart, rangeEnd, manager = true, tableObserver
 test('default firm analytics renders the new cohort card for the selected dates and keeps it hidden from ordinary staff', () => {
   const input = freeze(fixture()), before = JSON.stringify(input);
   const current = renderLegacy(input, start, end);
+  assert.match(current, /수익 · DB 생산성 · 상담 과정 · 수임 · 수납을 해당 로펌 기준으로 봅니다/);
+  assert.doesNotMatch(current, /최고 관리자 기준/);
   assert.match(current, /월 접수 DB.*수임 전환율/); assert.match(current, /수임 전환 2건 \/ 월 접수 DB 5건/); assert.match(current, /40\.0%/);
   const later = renderLegacy(input, '2026-11-01', '2026-11-30');
   assert.match(later, /2026-11-01 ~ 2026-11-30/); assert.match(later, /수임 전환 1건 \/ 월 접수 DB 1건/); assert.match(later, /100\.0%/);
