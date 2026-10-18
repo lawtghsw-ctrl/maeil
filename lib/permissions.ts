@@ -35,13 +35,14 @@ export const PERMISSION_PRESETS:Array<{id:string;label:string;description:string
   {id:"default_staff",label:"상담·계약 실무 기본",description:"본인 담당 DB 상담부터 계약/분납까지 처리하는 기본 실무 권한",permissions:DEFAULT_STAFF_PERMISSIONS},
   {id:"db_staff",label:"DB·상담 전담",description:"본인 담당 DB 등록/상담일지/진행단계/예약/전환 중심",permissions:keysMap(["dashboard.view","dashboard.schedule_calendar","db.view","db.view_finance","db.create","db.edit_basic","db.view_consultation","db.edit_consultation","db.change_stage","db.manage_reservation","db.convert","sms.view","sms.send","sms.view_history","living.view"])},
   {id:"case_staff",label:"계약·분납 전담",description:"본인 담당 계약 등록/분납/전자계약/서류안내 중심",permissions:keysMap(["dashboard.view","dashboard.finance","dashboard.installment_calendar","cases.view","cases.view_finance","cases.create","cases.manage_installments","cases.econtract","cases.send_docs","living.view"])},
-  {id:"office_full",label:"실무 전체권한",description:"직원계정관리와 운영기준/정산요율 수정, 데이터집계를 제외한 전사 실무 권한",permissions:keysMap(ALL_PERMISSION_KEYS.filter(k=>!(["settlement_settings.edit","living.edit","db.delete","cases.delete","analytics.view","analytics.view_all","analytics.finance"] as PermissionKey[]).includes(k)))},
+  {id:"office_full",label:"실무 전체권한",description:"직원관리와 운영기준/정산요율 수정, 데이터집계를 제외한 전사 실무 권한",permissions:keysMap(ALL_PERMISSION_KEYS.filter(k=>!(["settlement_settings.edit","living.edit","db.delete","cases.delete","analytics.view","analytics.view_all","analytics.finance"] as PermissionKey[]).includes(k)))},
   {id:"manager_read",label:"전사 조회 중심",description:"전사 DB/계약/대시보드/정산을 조회하되 업무 수정은 최소화",permissions:keysMap(["dashboard.view","dashboard.company_metrics","dashboard.company_todo","dashboard.finance","dashboard.installment_calendar","dashboard.schedule_calendar","dashboard.statistics","db.view","db.view_all","db.view_finance","db.view_consultation","cases.view","cases.view_all","cases.view_finance","sms.view","sms.view_history","settlements.view","settlements.view_all","settlement_settings.view","living.view","changes.view","changes.view_all"])},
   {id:"readonly",label:"본인 조회 전용",description:"본인 담당 DB/상담일지/계약과 기본 대시보드만 조회",permissions:keysMap(["dashboard.view","db.view","db.view_consultation","cases.view","cases.view_finance","living.view"])},
   {id:"none",label:"권한 없음",description:"활성화 전 권한을 직접 선택하기 위한 빈 설정",permissions:{}},
 ];
 
 export const ROUTE_PERMISSION:Array<{prefix:string;permission?:PermissionKey;adminOnly?:boolean}>=[
+  {prefix:"/firm/contract-settings",adminOnly:true},
   {prefix:"/staff-accounts",adminOnly:true},
   {prefix:"/settlement-settings",adminOnly:true},
   {prefix:"/min-living-cost",permission:"living.view"},

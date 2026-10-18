@@ -35,7 +35,7 @@ function shell(pathname, platformRole = 'super_admin', scoped = false) {
 test('global platform routes allow aggregates and account but require an explicit firm for customer work', () => {
   const { requiresFirmWorkspace } = load('lib/workspace-access.ts');
   for (const route of ['/', '/analytics', '/account', '/platform', '/platform/contracts', '/platform/advertising']) assert.equal(requiresFirmWorkspace(route), false);
-  for (const route of ['/db', '/cases', '/clients', '/sms', '/changes', '/settlements', '/settlement-settings', '/firm/settings', '/cases/private-id']) {
+  for (const route of ['/db', '/cases', '/clients', '/sms', '/changes', '/settlements', '/settlement-settings', '/firm/settings', '/firm/contract-settings', '/cases/private-id']) {
     assert.equal(requiresFirmWorkspace(route), true);
     const html = shell(route); assert.match(html, /관리할 로펌을 선택/); assert.doesNotMatch(html, /PRIVATE_CUSTOMER_WORK/);
   }
@@ -46,6 +46,8 @@ test('firm managers cannot render platform finances and ordinary staff cannot re
   assert.doesNotMatch(shell('/platform/costs', 'firm_admin'), /PRIVATE_CUSTOMER_WORK/);
   assert.doesNotMatch(shell('/platform/settings', 'staff'), /PRIVATE_CUSTOMER_WORK/);
   assert.doesNotMatch(shell('/analytics', 'staff'), /PRIVATE_CUSTOMER_WORK/);
+  assert.doesNotMatch(shell('/firm/contract-settings', 'staff'), /PRIVATE_CUSTOMER_WORK/);
+  assert.match(shell('/firm/contract-settings', 'firm_admin'), /PRIVATE_CUSTOMER_WORK/);
   assert.match(shell('/db', 'firm_admin'), /PRIVATE_CUSTOMER_WORK/);
   assert.match(shell('/analytics', 'firm_admin'), /PRIVATE_CUSTOMER_WORK/);
 });
@@ -63,6 +65,10 @@ test('sidebar keeps platform costs and sales away from law-firm accounts', () =>
   }
   const firm = render('firm_admin');
   assert.match(firm, /로펌 운영/); assert.match(firm, /데이터집계/);
+  assert.match(firm, /직원관리/); assert.match(firm, /href="\/firm\/contract-settings"/); assert.match(firm, /계약서 설정/);
+  assert.doesNotMatch(firm, /직원계정관리|로펌 설정\/직원초대|href="\/firm\/settings/);
+  const scoped = render('super_admin', true);
+  assert.match(scoped, /로펌 설정\/광고연동/); assert.match(scoped, /href="\/firm\/settings\?lawFirmId=firm-a"/);
   assert.doesNotMatch(firm, /href="\/platform/); assert.doesNotMatch(firm, /DB 원가|로파워 정산설정|영업 파이프라인/);
   const global = render('super_admin');
   assert.match(global, /로파워 운영/); assert.match(global, /전체 로펌 성과/);

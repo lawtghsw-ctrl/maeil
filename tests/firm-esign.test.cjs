@@ -77,12 +77,41 @@ function harness(options = {}) {
 test('global legacy credentials resolve only for the explicit Maeil UUID; secrets never in settings GET', async () => {
   const h = harness(); assert.throws(() => h.connections.legacyMaeilEsignConfig(OTHER), /등록되지/);
   assert.equal(h.connections.legacyMaeilEsignConfig(MAEIL).memberId, 'legacy-member');
-  const body = await (await h.settings.GET(h.request('GET'))).json(); assert.equal(body.canManage, false); assert.equal(body.presence.apiKey, true); assert.ok(!JSON.stringify(body).includes('test-api-only')); assert.ok(!JSON.stringify(body).includes('PRIVATE KEY'));
+  const body = await (await h.settings.GET(h.request('GET'))).json(); assert.equal(body.canManage, true); assert.equal(body.presence.apiKey, true); assert.ok(!JSON.stringify(body).includes('test-api-only')); assert.ok(!JSON.stringify(body).includes('PRIVATE KEY'));
   h.db.platform_firm_esign_connections = []; assert.equal(await h.connections.readFirmEsignConfig(h.admin, OTHER), null);
 });
 test('staff require e-contract permission; other-tenant cases and settings writes are blocked', async () => {
   for (const options of [{ profile: { platform_role: 'staff' } }, { profile: { law_firm_id: MAEIL } }]) { const h = harness(options); assert.notEqual((await h.send.POST(h.request())).status, 200); assert.equal(h.calls.length, 0); assert.equal(h.writes.length, 0); }
-  const h = harness(); assert.equal((await h.settings.PUT(h.request('PUT'))).status, 403); assert.equal((await h.settings.GET(h.request('GET', null, '?lawFirmId=' + MAEIL))).status, 403);
+  const h = harness(); assert.equal((await h.settings.PUT(h.request('PUT', {lawFirmId:MAEIL}))).status, 403); assert.equal((await h.settings.GET(h.request('GET', null, '?lawFirmId=' + MAEIL))).status, 403);
+});
+
+test('firm manager saves only its own versioned connection, preserving blank secrets and never sending a document', async () => {
+  const h = harness();
+  const response = await h.settings.PUT(h.request('PUT', { lawFirmId: OTHER, expectedConnectionId: null, companyId: 'company-new', templates: [template] }));
+  assert.equal(response.status,200);
+  const saved = h.writes.find(write => write.rpc === 'replace_firm_esign_connection');
+  assert.equal(saved.args.p_law_firm_id, OTHER); assert.equal(saved.args.p_updated_by,'actor');
+  assert.ok(saved.args.p_credentials_ciphertext.startsWith('encrypted:')); assert.equal(h.calls.length,0);
+  assert.ok(!JSON.stringify(await response.json()).includes('test-api-only')); assert.ok(!JSON.stringify(h.audits).includes('test-api-only'));
+  const staff = harness({profile:{platform_role:'staff'}});
+  assert.equal((await staff.settings.GET(staff.request('GET'))).status,403);
+  assert.equal((await staff.settings.PUT(staff.request('PUT', {lawFirmId:OTHER}))).status,403); assert.equal(staff.writes.length,0);
+});
+
+test('connection check authenticates saved credentials only, with no document creation, writes or secret response', async () => {
+  const h=harness();
+  const response=await h.settings.POST(h.request('POST',{action:'check_connection',lawFirmId:OTHER,apiKey:'ignored-unsaved-key'}));
+  assert.equal(response.status,200); assert.deepEqual(h.calls.map(call=>call.kind),['access']);
+  assert.equal(h.calls[0].config.apiKey,'test-api-only'); assert.equal(h.writes.length,0); assert.equal(h.audits.length,0);
+  const body=await response.json(); assert.equal(body.ok,true); assert.ok(!JSON.stringify(body).includes('test-api-only')); assert.ok(!JSON.stringify(body).includes('mock-token'));
+  for(const options of [{profile:{platform_role:'staff'}},{}]) {
+    const denied=harness(options);
+    assert.equal((await denied.settings.POST(denied.request('POST',{action:'check_connection',lawFirmId:MAEIL}))).status,403);
+    assert.equal(denied.calls.length,0); assert.equal(denied.writes.length,0);
+  }
+  const missing=harness({db:{platform_firm_esign_connections:[]}});
+  assert.equal((await missing.settings.POST(missing.request('POST',{action:'check_connection'}))).status,400); assert.equal(missing.calls.length,0);
+  const invalid=harness(); assert.equal((await invalid.settings.POST(invalid.request('POST',{action:'send'}))).status,400); assert.equal(invalid.calls.length,0);
 });
 test('read-only preflight allows permitted staff but does not authenticate/send or mutate', async () => {
   const h = harness({ profile: { platform_role: 'staff' }, permissions: { 'cases.econtract': true } });

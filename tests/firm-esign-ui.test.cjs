@@ -28,9 +28,33 @@ function harness(file, initial, auth) {
 const button = (h, label) => h.tree().root.findAllByType('button').find(n => text(n.props.children) === label);
 const field = (h, label) => h.tree().root.findByProps({ 'aria-label': label });
 const change = async (h, label, value) => act(async () => field(h, label).props.onValueChange ? field(h, label).props.onValueChange(value) : field(h, label).props.onChange({ target: { value } }));
-test('firm admin sees read-only connection status without secret editor or save', async () => {
+test('read-only response never enables connection edits or authentication checks', async () => {
   const h = harness('components/platform/FirmEsignSettings.tsx', { lawFirmId: 'firm1' }, async () => ({ ...safe, canManage: false })); await h.mount();
   assert.equal(h.tree().root.findAllByType('textarea').length, 0); assert.equal(button(h, '연결·템플릿 저장'), undefined); assert.equal(h.tree().root.findAllByType('input').every(n => n.props.disabled), true); assert.equal(h.calls.length, 1); h.close();
+});
+
+test('own-firm manager can configure templates and only saved connection is checked without sending draft secrets', async () => {
+  const pending = defer();
+  const h = harness('components/platform/FirmEsignSettings.tsx', { lawFirmId: 'firm1' }, async (_url, init) => init?.method === 'POST' ? pending.promise : safe); await h.mount();
+  assert.ok(button(h, '연결·템플릿 저장')); assert.equal(field(h, '템플릿 1 templateId').props.disabled, false);
+  await change(h, '이폼사인 apiKey', 'unsaved-test-key'); await change(h, '이폼사인 회사 ID', 'unsaved-company');
+  const check = button(h, '저장된 연결 확인').props.onClick;
+  await act(async () => { check(); check(); });
+  const posts = h.calls.filter(c => c.init?.method === 'POST'); assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, '/api/firm/eformsign'); assert.deepEqual(JSON.parse(posts[0].init.body), { action: 'check_connection', lawFirmId: 'firm1' });
+  assert.equal(button(h, '연결·템플릿 저장').props.disabled, true);
+  assert.match(text(h.tree().toJSON()), /입력 중인 변경사항은 먼저 저장/);
+  await act(async () => pending.resolve({ ok: true, message: '저장된 계정 인증 확인 완료' }));
+  assert.match(text(h.tree().toJSON()), /저장된 계정 인증 확인 완료/); assert.equal(field(h, '이폼사인 apiKey').props.value, 'unsaved-test-key');
+  assert.equal(h.calls.some(c => /send|document/.test(c.url)), false); h.close();
+});
+
+test('unconfigured connections cannot be checked and previous-firm check results are discarded', async () => {
+  const empty = harness('components/platform/FirmEsignSettings.tsx', { lawFirmId: 'firm1' }, async () => ({ ...safe, configured: false })); await empty.mount();
+  assert.equal(button(empty, '저장된 연결 확인').props.disabled, true); await act(async () => button(empty, '저장된 연결 확인').props.onClick()); assert.equal(empty.calls.length, 1); empty.close();
+  const pending = defer(); const h = harness('components/platform/FirmEsignSettings.tsx', { lawFirmId: 'firm1' }, async (_url, init) => init?.method === 'POST' ? pending.promise : safe); await h.mount();
+  await act(async () => button(h, '저장된 연결 확인').props.onClick()); await h.update({ lawFirmId: 'firm2' });
+  await act(async () => pending.resolve({ ok: true, message: 'PREVIOUS_FIRM_RESULT' })); assert.doesNotMatch(text(h.tree().toJSON()), /PREVIOUS_FIRM_RESULT/); h.close();
 });
 test('connection save error preserves input; success clears secret values and does not call provider', async () => {
   let fail = true; const h = harness('components/platform/FirmEsignSettings.tsx', { lawFirmId: 'firm1' }, async (_url, init) => { if (init?.method === 'PUT') { if (fail) throw new Error('모의 저장 오류'); return { message: '저장 완료' }; } return safe; }); await h.mount();

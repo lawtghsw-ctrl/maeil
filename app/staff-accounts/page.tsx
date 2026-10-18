@@ -17,6 +17,7 @@ import {
 } from "@/lib/permissions";
 import { Button, Card, Input, Modal, PageHeader, Select } from "@/components/ui/Primitives";
 import { LeadAssignmentModal } from "@/components/staff/LeadAssignmentModal";
+import StaffInvitePanel from "@/components/staff/StaffInvitePanel";
 
 interface StaffAccountRow {
   id: string;
@@ -297,7 +298,7 @@ export default function StaffAccountsPage() {
   return (
     <>
       <PageHeader
-        title="직원계정관리"
+        title="직원관리"
         description={isFirmAdmin
           ? "로펌 관리자 전용 · 신규 직원은 24시간 1회용 초대코드로 가입하고, 가입 후 여기서 활성화·권한을 관리합니다. DB 자동배정은 별도 설정창에서 통합 관리합니다."
           : superAdminFirmScope
@@ -307,7 +308,7 @@ export default function StaffAccountsPage() {
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void load()}><RefreshCw size={14} /> 새로고침</Button>
             {!globalSuperView && <Button variant="secondary" onClick={() => setAssignmentOpen(true)}><UserRoundCheck size={15} /> DB 자동배정</Button>}
-            {canDirectCreate ? <Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 계정 직접 생성</Button> : !globalSuperView ? <Link href="/firm/settings" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"><Plus size={15} /> 직원 초대코드</Link> : null}
+            {canDirectCreate ? <Button onClick={() => { setDraft(emptyDraft()); setCreateOpen(true); }}><Plus size={15} /> 계정 직접 생성</Button> : !globalSuperView ? <Link href="#staff-invites" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"><Plus size={15} /> 직원 초대코드</Link> : null}
           </div>
         }
       />
@@ -341,7 +342,8 @@ export default function StaffAccountsPage() {
         </Card>
       </div>
 
-      {isFirmAdmin && <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><b>신규 직원 가입 방식</b> · 직원계정은 이 화면에서 직접 생성하지 않습니다. <Link href="/firm/settings" className="font-black underline">로펌 설정 → 직원 초대</Link>에서 24시간 1회용 코드를 발급하고 직원이 <code>/join</code>에서 회원가입합니다.</div>}
+      {isFirmAdmin && <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><b>신규 직원 가입 방식</b> · 직원계정은 이 화면에서 직접 생성하지 않습니다. <a href="#staff-invites" className="font-black underline">아래 직원 초대</a>에서 24시간 1회용 코드를 발급하고 직원이 <code>/join</code>에서 회원가입합니다.</div>}
+      {(isFirmAdmin || canDirectCreate) && <StaffInvitePanel key={`${platformRole}:${isFirmAdmin ? profile?.lawFirmId : superAdminFirmScope?.id}`} lawFirmId={canDirectCreate ? superAdminFirmScope?.id : undefined} />}
       {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

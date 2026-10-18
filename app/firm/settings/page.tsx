@@ -1,7 +1,9 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useStoreSession } from "@/lib/store";
 import { AlertTriangle, Copy, KeyRound, Link2, Megaphone, PlayCircle, Plus, RefreshCcw, RotateCw, Settings2, UsersRound } from "lucide-react";
 import { authJson } from "@/lib/platform/client";
 import FirmEsignSettings from "@/components/platform/FirmEsignSettings";
@@ -157,6 +159,7 @@ function FirmSettingsContent() {
   const queueFailed = useMemo(() => data?.metaQueue.filter((x) => x.status === "failed").length ?? 0, [data]);
 
   if (!data) return <div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-500">{error || "로펌 설정을 불러오는 중..."}</div>;
+  if (data.viewerRole !== "super_admin") return <StaffSettingsRedirect />;
   const canManageIntegrations = data.viewerRole === "super_admin";
 
   return <div className="space-y-5">
@@ -229,5 +232,15 @@ function FirmSettingsContent() {
 }
 
 export default function FirmSettingsPage() {
+  const { profile } = useStoreSession();
+  if (!profile) return <p className="p-8 text-sm text-slate-500">권한을 확인하는 중...</p>;
+  if (profile.platformRole === "firm_admin") return <StaffSettingsRedirect />;
+  if (profile.platformRole !== "super_admin") return <p role="alert" className="p-8 text-sm text-slate-500">로펌 설정에 접근할 권한이 없습니다.</p>;
   return <Suspense fallback={<div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-500">로펌 설정을 불러오는 중...</div>}><FirmSettingsContent /></Suspense>;
+}
+
+function StaffSettingsRedirect() {
+  const router = useRouter();
+  useEffect(() => { router.replace("/staff-accounts"); }, [router]);
+  return <div className="rounded-xl border bg-white p-6 text-sm leading-7 text-slate-600">직원 초대는 <Link href="/staff-accounts" className="font-semibold text-blue-700 underline">직원관리</Link>에서 이용해주세요. 이폼사인 연결은 <Link href="/firm/contract-settings" className="font-semibold text-blue-700 underline">계약서 설정</Link>에서 관리할 수 있습니다.</div>;
 }

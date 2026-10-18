@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { encryptIntegrationSecret, platformError, requirePlatformUser, writePlatformAudit } from "@/lib/platform/server";
 import { readFirmEsignConfig, safeFirmEsignView } from "@/lib/eformsign-connections";
 import { validateEsignTemplates } from "@/lib/eformsign-config";
+import { getEformsignAccess } from "@/lib/eformsign";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -20,12 +21,12 @@ export async function GET(request: NextRequest) {
     const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin"]);
     const lawFirmId = firmId(request, profile);
     const config = await readFirmEsignConfig(admin, lawFirmId);
-    return NextResponse.json(safeFirmEsignView(lawFirmId, config, profile.platform_role === "super_admin"), { headers });
+    return NextResponse.json(safeFirmEsignView(lawFirmId, config, true), { headers });
   } catch (error) { const e = platformError(error); return NextResponse.json({ error: e.message }, { status: e.status, headers }); }
 }
 export async function PUT(request: NextRequest) {
   try {
-    const { admin, profile } = await requirePlatformUser(request, ["super_admin"]);
+    const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin"]);
     const text = await request.text();
     if (text.length > 50_000) throw new Error("연결 설정이 너무 큽니다.");
     let body: any; try { body = JSON.parse(text); } catch { throw new Error("설정 형식이 올바르지 않습니다."); }
@@ -52,5 +53,21 @@ export async function PUT(request: NextRequest) {
     if (savedError) throw new Error("로펌 전자계약 연결정보를 저장하지 못했습니다.");
     await writePlatformAudit(admin, request, profile, { lawFirmId, action: "eformsign.connection.update", targetType: "law_firm", targetId: lawFirmId, detail: { templateCount: templates.length, configured: true } });
     return NextResponse.json({ ok: true, message: "설정을 암호화 저장했습니다. 실제 문서 발송은 실행하지 않았습니다." }, { headers });
+  } catch (error) { const e = platformError(error); return NextResponse.json({ error: e.message }, { status: e.status, headers }); }
+}
+
+/** Authenticate the saved connection only; this never creates or sends a document. */
+export async function POST(request: NextRequest) {
+  try {
+    const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin"]);
+    const text = await request.text();
+    if (text.length > 2000) throw new Error("연결 확인 요청이 너무 큽니다.");
+    let body: any; try { body = JSON.parse(text); } catch { throw new Error("요청 형식이 올바르지 않습니다."); }
+    if (!body || body.action !== "check_connection") throw new Error("연결 확인 작업을 선택해주세요.");
+    const lawFirmId = firmId(request, profile, body);
+    const config = await readFirmEsignConfig(admin, lawFirmId);
+    if (!config?.apiKey || !config.privateKey || !config.memberId) throw new Error("계정 연결정보를 먼저 저장한 뒤 확인해주세요.");
+    await getEformsignAccess(config);
+    return NextResponse.json({ ok: true, message: "저장된 이폼사인 계정 인증을 확인했습니다. 계약서 발송은 실행하지 않았습니다." }, { headers });
   } catch (error) { const e = platformError(error); return NextResponse.json({ error: e.message }, { status: e.status, headers }); }
 }

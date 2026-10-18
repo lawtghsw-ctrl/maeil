@@ -2,7 +2,7 @@ import { decryptIntegrationSecret } from "@/lib/platform/server";
 import { MAEIL_ESIGN_FIRM_ID, defaultEsignTemplate, validateEsignTemplates, type FirmEsignConfig, type FirmEsignView } from "@/lib/eformsign-config";
 
 export function legacyMaeilEsignConfig(lawFirmId: string): FirmEsignConfig {
-  if (lawFirmId !== MAEIL_ESIGN_FIRM_ID) throw new Error("이 로펌의 이폼사인 연결이 등록되지 않았습니다. 로파워 관리자에게 연결을 요청해주세요.");
+  if (lawFirmId !== MAEIL_ESIGN_FIRM_ID) throw new Error("이 로펌의 이폼사인 연결이 등록되지 않았습니다. 로펌 관리자의 계약서 설정에서 연결해주세요.");
   return { lawFirmId, connectionId: null, source: "legacy_env", apiKey: process.env.EFORMSIGN_API_KEY?.trim() || "", privateKey: process.env.EFORMSIGN_PRIVATE_KEY?.trim() || "", memberId: process.env.EFORMSIGN_MEMBER_ID?.trim() || "", senderMemberId: process.env.EFORMSIGN_SENDER_MEMBER_ID?.trim() || "", companyId: "", templates: [defaultEsignTemplate(process.env.EFORMSIGN_TEMPLATE_ID?.trim() || "")] };
 }
 export async function readFirmEsignConfig(admin: any, lawFirmId: string, connectionId?: string | null): Promise<FirmEsignConfig | null> {
@@ -20,7 +20,7 @@ export async function readFirmEsignConfig(admin: any, lawFirmId: string, connect
   return { lawFirmId, connectionId: data.id, source: "connection", apiKey: String(secrets.apiKey || ""), privateKey: String(secrets.privateKey || ""), memberId: String(secrets.memberId || ""), senderMemberId: String(secrets.senderMemberId || ""), companyId: data.company_id || "", templates: validateEsignTemplates(data.templates) };
 }
 export function requireFirmEsignConfig(config: FirmEsignConfig | null): FirmEsignConfig {
-  if (!config || !config.apiKey || !config.privateKey || !config.memberId) throw new Error("이 로펌의 이폼사인 연결이 완료되지 않았습니다. 로파워 관리자에게 연결을 요청해주세요.");
+  if (!config || !config.apiKey || !config.privateKey || !config.memberId) throw new Error("이 로펌의 이폼사인 연결이 완료되지 않았습니다. 로펌 관리자의 계약서 설정에서 연결해주세요.");
   return config;
 }
 export function safeFirmEsignView(lawFirmId: string, config: FirmEsignConfig | null, canManage: boolean, updatedAt: string | null = null): FirmEsignView {

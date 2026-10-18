@@ -21,7 +21,7 @@ const baseMenu: MenuItem[] = [
   ["최저생계비 계산기", "/min-living-cost", Scale, "living.view"],
   ["기간별 변동내역", "/changes", History, "changes.view"],
   ["데이터집계", "/analytics", Activity, "admin"],
-  ["직원계정관리", "/staff-accounts", UsersRound, "admin"],
+  ["직원관리", "/staff-accounts", UsersRound, "admin"],
 ];
 
 const platformMenu = [
@@ -49,7 +49,7 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
   const visible = useMemo(() => {
     const rows = baseMenu.filter(([, href, , permission]) => (!global || href === "/analytics") && (permission === "admin" ? isAdmin : can(permission))).map((row): MenuItem => row[1] === "/analytics" ? [global ? "전체 로펌 성과 · 통계" : "데이터집계", row[1], row[2], row[3]] : row);
     if (isSuper && superAdminFirmScope) rows.push(["로펌 설정/광고연동", `/firm/settings?lawFirmId=${encodeURIComponent(superAdminFirmScope.id)}`, Link2, "admin"]);
-    else if (platformRole === "firm_admin") rows.push(["로펌 설정/직원초대", "/firm/settings", Link2, "admin"]);
+    else if (platformRole === "firm_admin") rows.push(["계약서 설정", "/firm/contract-settings", FileSignature, "admin"]);
     return rows;
   }, [can, isAdmin, isSuper, global, platformRole, superAdminFirmScope]);
   const isActive = (href: string) => { const clean = href.split("?")[0]; return clean === "/platform" ? pathname === "/platform" || (pathname === "/" && global) : clean === "/" ? pathname === "/" : pathname === clean || pathname.startsWith(`${clean}/`); };
