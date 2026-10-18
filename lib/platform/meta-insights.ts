@@ -1,4 +1,5 @@
 // Shared, secret-free contracts and aggregation for the super-admin advertising view.
+import { isRehabilitationAdName, rehabilitationInsightSnapshot } from "./meta-insights-scope";
 export interface InsightDay {
   date: string; accountId: string; adId: string; adName: string;
   campaignId: string; campaignName: string; adsetId: string; adsetName: string;
@@ -19,7 +20,7 @@ export interface InsightAccount {
 }
 export interface InsightLead {
   id: string; law_firm_id: string; meta_account_id: string | null;
-  receivedAt: string | null; platform: Record<string, unknown> | null;
+  receivedAt: string | null; platform: Record<string, unknown> | null; adName?: string | null;
 }
 export interface InsightCase {
   id: string; law_firm_id: string; fromLeadId: string | null;
@@ -75,8 +76,15 @@ export function aggregateMetaInsights(input: {
   firms: { id: string; name: string; billing_type: string }[];
   commercialProfiles: { law_firm_id: string; service_mode: "crm_only" | "db_supply" }[];
 }): MetaInsightsResponse {
-  const connections = new Map(input.accounts.flatMap(a => a.connections.map(c => [c.id, a] as const)));
-  const eligibleFirms = new Set([...input.accounts.flatMap(a => a.connections.map(c => c.lawFirmId)), ...input.unconfigured.map(c => c.lawFirmId)]);
+  // Retain full provider caches in storage, but never expose other-product rows
+  // through charts, exports or account snapshots in this rehabilitation CRM.
+  const knownAds = new Set(input.accounts.flatMap(a => a.snapshot?.rows.filter(row => typeof row.adName === "string" && row.adName.trim()).map(row => key(a.accountId, row.adId)) || []));
+  const accounts: InsightAccount[] = input.accounts.map(a => {
+    const missingName = a.snapshot?.rows.some(row => typeof row.adName !== "string" || !row.adName.trim());
+    return { ...a, snapshot: a.snapshot ? rehabilitationInsightSnapshot(a.snapshot) : null, ...(missingName ? { status: "error" as const, error: "광고명을 확인할 수 없는 항목이 있습니다. 광고비를 다시 조회해주세요." } : {}) };
+  });
+  const connections = new Map(accounts.flatMap(a => a.connections.map(c => [c.id, a] as const)));
+  const eligibleFirms = new Set([...accounts.flatMap(a => a.connections.map(c => c.lawFirmId)), ...input.unconfigured.map(c => c.lawFirmId)]);
   const firms = new Map(input.firms.map(f => [f.id, f]));
   const modes = new Map(input.commercialProfiles.map(p => [p.law_firm_id, p.service_mode]));
   const scope = (account: InsightAccount): "included" | "not_applicable" | "unknown" => {
@@ -87,7 +95,7 @@ export function aggregateMetaInsights(input: {
   };
   const ads = new Map<string, InsightAd>();
   const activeAds = new Set<string>();
-  const snapshots = input.accounts.flatMap(a => a.snapshot ? [a.snapshot] : []);
+  const snapshots = accounts.flatMap(a => a.snapshot ? [a.snapshot] : []);
   for (const snap of snapshots) for (const row of snap.rows) {
     const id = key(snap.accountId, row.adId);
     activeAds.add(id);
@@ -97,6 +105,7 @@ export function aggregateMetaInsights(input: {
   }
   const leadAds = new Map<string, InsightAd>();
   const leadCohort = new Set<string>();
+  const excludedLeads = new Set<string>();
   let unattributedLeads = 0, unattributedSupply = 0;
   const inRange = (date: string | null) => date !== null && date >= input.start && date <= input.end;
   for (const lead of input.leads) {
@@ -112,9 +121,19 @@ export function aggregateMetaInsights(input: {
     const id = key(lead.law_firm_id, lead.id);
     if (!valid || !account.snapshot) { if (inRange(date)) unattributedLeads++; continue; }
     const adKey = key(account.accountId, adId);
-    // Successful Insights may omit an ad with zero spend; retain CRM-only rows explicitly.
+    // A filtered-out advertisement must not reappear as a zero-spend CRM row.
+    // When Insights omits an ad entirely, its recorded name must establish the
+    // same scope before we can retain a genuine zero-spend CRM-only row.
     let item = ads.get(adKey);
-    if (!item) { item = { accountId: account.accountId, adId, adName: `광고 ${adId}`, campaignName: "", currency: account.snapshot.currency, spend: 0, impressions: 0, clicks: 0, metaLeads: 0, metaCpl: null, crmLeads: 0, contracts: 0, conversionRate: null, crmCpl: null, supplyRevenue: 0, contribution: null, marginRate: null, firmNames: [], attributionNote: null }; ads.set(adKey, item); }
+    if (!knownAds.has(adKey) && !isRehabilitationAdName(lead.adName)) {
+      if (typeof lead.adName === "string" && lead.adName.trim()) excludedLeads.add(id);
+      else if (inRange(date)) unattributedLeads++;
+      continue;
+    }
+    if (!item) {
+      if (knownAds.has(adKey)) { excludedLeads.add(id); continue; }
+      item = { accountId: account.accountId, adId, adName: lead.adName!, campaignName: "", currency: account.snapshot.currency, spend: 0, impressions: 0, clicks: 0, metaLeads: 0, metaCpl: null, crmLeads: 0, contracts: 0, conversionRate: null, crmCpl: null, supplyRevenue: 0, contribution: null, marginRate: null, firmNames: [], attributionNote: null }; ads.set(adKey, item);
+    }
     leadAds.set(id, item);
     if (!item.firmNames.includes(firms.get(lead.law_firm_id)?.name || lead.law_firm_id)) item.firmNames.push(firms.get(lead.law_firm_id)?.name || lead.law_firm_id);
     if (inRange(date) && !leadCohort.has(id)) { leadCohort.add(id); item.crmLeads++; activeAds.add(adKey); }
@@ -130,8 +149,9 @@ export function aggregateMetaInsights(input: {
   for (const firmId of eligibleFirms) if (modes.get(firmId) !== "crm_only" && (modes.get(firmId) !== "db_supply" || firms.get(firmId)?.billing_type !== "per_lead")) pendingFirms.add(firmId);
   for (const supply of input.supplies) {
     if (!eligibleFirms.has(supply.law_firm_id) || modes.get(supply.law_firm_id) === "crm_only") continue;
+    if (supply.lead_id && excludedLeads.has(key(supply.law_firm_id, supply.lead_id))) continue;
     const item = supply.lead_id ? leadAds.get(key(supply.law_firm_id, supply.lead_id)) : undefined;
-    const snap = item ? input.accounts.find(a => a.accountId === item.accountId)?.snapshot : null;
+    const snap = item ? accounts.find(a => a.accountId === item.accountId)?.snapshot : null;
     if (!inRange(insightDate(supply.supplied_at, snap?.timezone || "Asia/Seoul"))) continue;
     if (supply.billing_type !== "per_lead") pendingFirms.add(supply.law_firm_id);
     if (!supply.billable) continue;
@@ -142,7 +162,7 @@ export function aggregateMetaInsights(input: {
     else if (item.supplyRevenue !== null) { const sum = item.supplyRevenue + amount; item.supplyRevenue = Number.isSafeInteger(sum) ? sum : null; }
   }
   for (const item of ads.values()) {
-    const account = input.accounts.find(a => a.accountId === item.accountId)!;
+    const account = accounts.find(a => a.accountId === item.accountId)!;
     item.supplyScope = scope(account);
     const needsBilling = account.connections.some(c => pendingFirms.has(c.lawFirmId));
     if (item.supplyScope !== "included" || needsBilling || unattributedSupply > 0) item.supplyRevenue = null;
@@ -153,17 +173,17 @@ export function aggregateMetaInsights(input: {
   }
   const rows = [...ads.values()].filter(a => activeAds.has(key(a.accountId, a.adId))).sort((a, b) => b.spend - a.spend || a.adId.localeCompare(b.adId));
   const currencies = new Set(snapshots.map(s => s.currency));
-  const incompleteAccounts = input.accounts.filter(a => a.status !== "cached").length + input.unconfigured.length;
+  const incompleteAccounts = accounts.filter(a => a.status !== "cached").length + input.unconfigured.length;
   const complete = incompleteAccounts === 0 && snapshots.length > 0;
   const currency = currencies.size === 1 ? [...currencies][0] : null;
   const spend = complete && currency ? rows.reduce((s, r) => plus(s, r.spend), 0) : null;
   const crmLeads = rows.reduce((s, r) => s + r.crmLeads, 0), contracts = rows.reduce((s, r) => s + r.contracts, 0), metaLeads = rows.reduce((s, r) => s + r.metaLeads, 0);
-  const salesRows = rows.filter(r => r.supplyScope === "included"), salesAccounts = input.accounts.filter(a => scope(a) === "included");
-  const salesComplete = salesAccounts.length > 0 && input.accounts.every(a => scope(a) !== "unknown") && salesAccounts.every(a => a.status === "cached") && !input.unconfigured.some(c => modes.get(c.lawFirmId) !== "crm_only");
+  const salesRows = rows.filter(r => r.supplyScope === "included"), salesAccounts = accounts.filter(a => scope(a) === "included");
+  const salesComplete = salesAccounts.length > 0 && accounts.every(a => scope(a) !== "unknown") && salesAccounts.every(a => a.status === "cached") && !input.unconfigured.some(c => modes.get(c.lawFirmId) !== "crm_only");
   const supplyRevenue = salesComplete && pendingFirms.size === 0 && unattributedSupply === 0 && salesRows.every(r => r.supplyRevenue !== null) ? salesRows.reduce((s, r) => s + r.supplyRevenue!, 0) : null;
   const supplyAdSpend = salesComplete && salesAccounts.every(a => a.snapshot?.currency === "KRW") ? salesRows.reduce((s, r) => plus(s, r.spend), 0) : null;
   const contribution = supplyAdSpend !== null && supplyRevenue !== null ? plus(supplyRevenue, -supplyAdSpend) : null;
-  return { start: input.start, end: input.end, generatedAt: new Date().toISOString(), accounts: input.accounts, unconfigured: input.unconfigured, ads: rows,
+  return { start: input.start, end: input.end, generatedAt: new Date().toISOString(), accounts, unconfigured: input.unconfigured, ads: rows,
     totals: { currency, spend, metaLeads, crmLeads, contracts, metaCpl: spend === null ? null : ratio(spend, metaLeads), crmCpl: spend === null ? null : ratio(spend, crmLeads), conversionRate: ratio(contracts, crmLeads, 100), supplyRevenue, supplyAdSpend, contribution, marginRate: contribution === null || supplyRevenue === null ? null : ratio(contribution, supplyRevenue, 100) },
-    quality: { incompleteAccounts, unattributedLeads, unattributedSupply, pendingBillingFirms: pendingFirms.size, notes: ["Meta 리드는 actions의 lead 항목만 사용합니다. 다른 lead action을 중복 합산하지 않습니다.", "CRM DB는 광고 ID가 확인된 조회기간 접수 고유 리드입니다. 계약전환은 해당 코호트의 현재 유효 계약(금액 > 0, 취하 제외)입니다.", "CRM 전용 로펌은 공급매출·마진 비대상입니다. 서비스 미등록·0원 단가는 확인 필요이며, CRM 전용과 공급 로펌이 공유한 광고계정은 비용 배분을 추정하지 않습니다.", "공급매출은 조회기간 공급 원장의 양수 건별 단가 스냅샷입니다. 공급 마진에는 공급 대상 계정의 광고비만 차감합니다. 광고비 차감마진은 인건비·세금 등을 제외한 회계 순이익이 아닙니다.", "일별 광고비와 CRM 날짜는 각 광고계정 시간대 기준입니다. 서로 다른 통화는 합산하지 않습니다.", "기존 수동 광고비·정산 설정과 월마감 값은 이 화면에 합산하거나 변경하지 않습니다."] } };
+    quality: { incompleteAccounts, unattributedLeads, unattributedSupply, pendingBillingFirms: pendingFirms.size, notes: ["광고명에 ‘회생’이 포함된 광고만 집계합니다. 캠페인·광고세트 이름만으로 포함하지 않으며, 다른 광고는 합계·차트·엑셀·자동 Meta 광고비에서 제외합니다.", "Meta 리드는 actions의 lead 항목만 사용합니다. 다른 lead action을 중복 합산하지 않습니다.", "CRM DB는 회생 광고 ID가 확인된 조회기간 접수 고유 리드입니다. 조회 결과에 없는 광고는 CRM에 기록된 광고명까지 확인하며, 이름을 확인할 수 없으면 추정 집계하지 않습니다. 계약전환은 해당 코호트의 현재 유효 계약(금액 > 0, 취하 제외)입니다.", "CRM 전용 로펌은 공급매출·마진 비대상입니다. 서비스 미등록·0원 단가는 확인 필요이며, CRM 전용과 공급 로펌이 공유한 광고계정은 비용 배분을 추정하지 않습니다.", "공급매출은 조회기간 공급 원장의 양수 건별 단가 스냅샷입니다. 공급 마진에는 공급 대상 계정의 광고비만 차감합니다. 광고비 차감마진은 인건비·세금 등을 제외한 회계 순이익이 아닙니다.", "일별 광고비와 CRM 날짜는 각 광고계정 시간대 기준입니다. 서로 다른 통화는 합산하지 않습니다.", "기존 수동 광고비·정산 설정과 월마감 값은 이 화면에 합산하거나 변경하지 않습니다."] } };
 }

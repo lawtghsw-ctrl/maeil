@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     const endTime = new Date(Date.parse(end) + 2 * 86400000).toISOString();
     const [cache, leads, cases, supplies, commercialProfiles] = await Promise.all([
       allRows<any>((from, to) => admin.from("platform_meta_insights_cache").select("account_id,fingerprint,snapshot,last_error").eq("range_start", start).eq("range_end", end).order("account_id").order("fingerprint").range(from, to).abortSignal(request.signal)),
-      allRows<any>((from, to) => admin.from("app_leads").select("id,law_firm_id,meta_account_id,receivedAt:data->>receivedAt,platform:data->_platform").order("id").range(from, to).abortSignal(request.signal)),
+      allRows<any>((from, to) => admin.from("app_leads").select("id,law_firm_id,meta_account_id,receivedAt:data->>receivedAt,adName:data->>adName,platform:data->_platform").order("id").range(from, to).abortSignal(request.signal)),
       allRows<any>((from, to) => admin.from("app_cases").select("id,law_firm_id,fromLeadId:data->>fromLeadId,status:data->>status,contractAmount:data->>contractAmount").order("id").range(from, to).abortSignal(request.signal)),
       allRows<any>((from, to) => admin.from("lead_supply_ledger").select("id,law_firm_id,lead_id,supplied_at,classification,billable,billing_type,unit_price_snapshot").neq("origin", "backfill").gte("supplied_at", startTime).lt("supplied_at", endTime).order("id").range(from, to).abortSignal(request.signal)),
       allRows<{ law_firm_id: string; service_mode: "crm_only" | "db_supply" }>((from, to) => admin.from("platform_firm_commercial_profiles").select("law_firm_id,service_mode").order("law_firm_id").range(from, to).abortSignal(request.signal)),

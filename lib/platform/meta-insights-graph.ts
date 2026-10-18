@@ -63,6 +63,7 @@ export async function fetchMetaInsights(args: { accountId: string; token: string
       if (!Array.isArray(body.data)) return failure("INVALID_RESPONSE", "Meta 광고 목록 형식이 올바르지 않습니다.");
       for (const raw of body.data) {
         if (String(raw.account_id) !== accountId || raw.account_currency !== info.currency || !/^\d+$/.test(String(raw.ad_id || "")) || raw.date_start !== raw.date_stop || !/^\d{4}-\d{2}-\d{2}$/.test(raw.date_start || "") || raw.date_start < args.start || raw.date_start > args.end) return failure("INVALID_RESPONSE", "Meta 광고 계정·날짜·통화가 조회 범위와 일치하지 않습니다.");
+        if (typeof raw.ad_name !== "string" || !raw.ad_name.trim()) return failure("INVALID_RESPONSE", "Meta 광고명을 확인할 수 없어 회생 광고비를 확정하지 않았습니다.");
         try { validateInsightRange(raw.date_start, raw.date_stop); } catch { return failure("INVALID_RESPONSE", "Meta 광고 날짜가 올바르지 않습니다."); }
         const identity = `${raw.date_start}:${raw.ad_id}`;
         if (seen.has(identity)) return failure("INVALID_RESPONSE", "Meta 광고 페이지에 중복 행이 있어 합산하지 않았습니다."); seen.add(identity);

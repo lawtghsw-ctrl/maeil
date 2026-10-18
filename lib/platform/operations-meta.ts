@@ -2,6 +2,7 @@
 import { createHash } from "crypto";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeAdAccountId } from "./meta-insights";
+import { rehabilitationInsightSnapshot } from "./meta-insights-scope";
 import { opsBounds, opsDate, opsToday } from "./operations";
 export type OperationsMetaCost = { firmId: string; month: string; amount: number | null; source: "meta_actual" | "meta_incomplete" | "meta_ambiguous" };
 type Connection = { id: string; law_firm_id: string; ad_account_id: string | null; access_token_ciphertext: string | null };
@@ -32,13 +33,17 @@ export function operationMetaCosts(connections: Connection[], tokens: Token[], c
       // that calendar month ended; a prematurely cached future range is not final.
       const validRefresh = Number.isFinite(fetched) && fetched <= now.getTime() && (month === currentMonth ? opsToday(new Date(fetched)) === today : month < currentMonth && opsToday(new Date(fetched)) > end);
       if (row?.last_error || !s || s.version !== 1 || s.accountId !== id || s.start !== start || s.end !== end || s.currency !== "KRW" || !Array.isArray(s.rows) || !validRefresh) { result.incomplete = true; continue; }
-      const seen = new Set<string>(); let amount = 0, valid = true;
+      const seen = new Set<string>(); let rawAmount = 0, valid = true;
+      // Validate the complete raw response before filtering. A malformed excluded
+      // ad must not turn an incomplete account response into a valid zero cost.
       for (const day of s.rows) {
         const identity = `${day?.date}\0${day?.adId}`;
-        if (!day || day.accountId !== id || !opsDate(day.date) || day.date < start || day.date > end || typeof day.adId !== "string" || seen.has(identity) || typeof day.spend !== "number" || !Number.isFinite(day.spend) || day.spend < 0) { valid = false; break; }
-        seen.add(identity); amount += day.spend;
+        if (!day || day.accountId !== id || !opsDate(day.date) || day.date < start || day.date > end || typeof day.adId !== "string" || typeof day.adName !== "string" || !day.adName.trim() || seen.has(identity) || typeof day.spend !== "number" || !Number.isFinite(day.spend) || day.spend < 0) { valid = false; break; }
+        seen.add(identity); rawAmount += day.spend;
       }
-      if (!valid || !Number.isFinite(amount) || amount > Number.MAX_SAFE_INTEGER || result.amount + amount > Number.MAX_SAFE_INTEGER) result.incomplete = true;
+      if (!valid || !Number.isFinite(rawAmount) || rawAmount > Number.MAX_SAFE_INTEGER) { result.incomplete = true; continue; }
+      const amount = rehabilitationInsightSnapshot(s).rows.reduce((total, day) => total + day.spend, 0);
+      if (!Number.isFinite(amount) || amount > Number.MAX_SAFE_INTEGER || result.amount + amount > Number.MAX_SAFE_INTEGER) result.incomplete = true;
       else result.amount += amount;
     }
     return [...results].map(([firmId, value]) => ({ firmId, month, amount: value.ambiguous || value.incomplete ? null : Math.round(value.amount * 1000000) / 1000000, source: value.ambiguous ? "meta_ambiguous" as const : value.incomplete ? "meta_incomplete" as const : "meta_actual" as const }));

@@ -11,7 +11,7 @@ const { act } = Renderer;
 function report(patch = {}) { return { start: '2026-10-01', end: '2026-10-18', generatedAt: '2026-10-18T00:00:00Z', accounts: [{ accountId: '123', connections: [{ id: 'connection', lawFirmId: 'f', firmName: '로펌', name: '계정', hasReadToken: false }], status: 'not_synced', snapshot: null, error: null }], unconfigured: [], ads: [], totals: { currency: 'KRW', spend: null, metaLeads: 0, crmLeads: 0, contracts: 0, metaCpl: null, crmCpl: null, conversionRate: null, supplyRevenue: null, contribution: null, marginRate: null }, quality: { incompleteAccounts: 1, unattributedLeads: 0, unattributedSupply: 0, pendingBillingFirms: 0, notes: ['집계 기준'] }, ...patch }; }
 function harness({ role = 'super_admin', active = true, auth } = {}) {
   const source = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../components/platform/MetaInsights.tsx'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React } }).outputText;
-  const calls = [], session = { currentUser: { id: 'user' }, profile: { platformRole: role, isActive: active } };
+  const calls = [], downloads = [], session = { currentUser: { id: 'user' }, profile: { platformRole: role, isActive: active } };
   const module = { exports: {} };
   const authJson = async (url, init) => { calls.push({ url, init }); return auth ? auth(url, init) : report(); };
   vm.runInNewContext(`(function(require,module,exports){${source}\n})`, { React, Date, Intl, AbortController, setTimeout, clearTimeout }, { filename: 'MetaInsights.tsx' })(name => {
@@ -19,10 +19,14 @@ function harness({ role = 'super_admin', active = true, auth } = {}) {
     if (name === 'lucide-react') return new Proxy({}, { get: (_t, key) => props => React.createElement('svg', { ...props, 'data-icon': key }) });
     if (name === '@/lib/platform/client') return { authJson };
     if (name === '@/lib/store') return { useStoreSession: () => session };
+    if (name === 'xlsx') return {
+      utils: { book_new: () => ({ sheets: {} }), aoa_to_sheet: rows => rows, book_append_sheet: (book, sheet, name) => { book.sheets[name] = sheet; } },
+      writeFile: (book, filename) => downloads.push({ book, filename }),
+    };
     throw new Error(name);
   }, module, module.exports);
   let tree;
-  return { calls, session, mount: async () => { await act(async () => { tree = Renderer.create(React.createElement(module.exports.default)); }); }, tree: () => tree,
+  return { calls, downloads, session, mount: async () => { await act(async () => { tree = Renderer.create(React.createElement(module.exports.default)); }); }, tree: () => tree,
     update: async () => { await act(async () => tree.update(React.createElement(module.exports.default))); }, close: () => act(() => tree.unmount()) };
 }
 const text = node => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : node ? text(node.children) : '';
@@ -62,4 +66,43 @@ test('role loss clears sensitive form and aborts pending fetch', async () => {
   h.session.profile.platformRole = 'firm_admin'; await h.update(); assert.equal(h.calls[0].init.signal.aborted, true);
   await act(async () => d.resolve(report({ totals: { ...report().totals, spend: 99999 } })));
   assert.ok(!text(h.tree().toJSON()).includes('99,999')); h.close();
+});
+
+test('rehabilitation scope is explicit and server-scoped data stays consistent across KPI, chart, table and export', async () => {
+  const ad = (accountId, adId, adName, spend) => ({ accountId, adId, adName, campaignName: '캠페인', currency: 'KRW', spend, impressions: 100, clicks: 10, metaLeads: 1, metaCpl: spend, crmLeads: 0, contracts: 0, conversionRate: null, crmCpl: null, supplyRevenue: null, contribution: null, marginRate: null, firmNames: [], attributionNote: null });
+  const ads = [ad('123', '456', '회생 상담 A', 1000), ad('222', '789', '개인회생 B', 2000)];
+  const data = report({
+    accounts: ads.map(row => ({ accountId: row.accountId, connections: [{ id: `connection-${row.accountId}`, lawFirmId: 'f', firmName: '로펌', name: `계정 ${row.accountId}`, hasReadToken: false }], status: 'cached', error: null, snapshot: { accountId: row.accountId, accountName: `계정 ${row.accountId}`, currency: 'KRW', timezone: 'Asia/Seoul', fetchedAt: '2026-10-18T00:00:00Z', rows: [{ ...row, date: '2026-10-01' }] } })),
+    ads,
+    totals: { ...report().totals, spend: 3000, metaLeads: 2, metaCpl: 1500 },
+    quality: { ...report().quality, incompleteAccounts: 0 },
+  });
+  const original = JSON.stringify(data), h = harness({ auth: () => data }); await h.mount();
+  const rendered = text(h.tree().toJSON());
+  assert.match(rendered, /광고명에 ‘회생’이 포함된 광고의 Meta 지출/);
+  assert.match(rendered, /상단 KPI는 전체 연결 계정의 회생 광고입니다/);
+  const tableText = () => text(h.tree().root.findByType('tbody'));
+  assert.match(tableText(), /회생 상담 A/); assert.match(tableText(), /개인회생 B/);
+  const chartTitles = () => h.tree().root.findByProps({ 'aria-label': '선택한 계정의 회생 광고 일별 지출' }).findAll(n => typeof n.props.title === 'string').map(n => n.props.title);
+  assert.deepEqual(chartTitles(), ['2026-10-01: 3,000']);
+  const exportButton = () => h.tree().root.findAllByType('button').find(n => text(n.props.children) === '엑셀');
+  const download = async () => { await act(async () => { exportButton().props.onClick(); await new Promise(r => setImmediate(r)); }); return h.downloads.at(-1).book.sheets; };
+  let sheets = await download();
+  assert.equal(sheets['광고성과'][0][1], '광고명에 ‘회생’이 포함된 광고');
+  assert.deepEqual(Array.from(sheets['광고성과'].slice(3), row => row[2]), ads.map(row => row.adName));
+  assert.match(JSON.stringify(sheets['집계기준']), /광고명에 ‘회생’이 포함된 광고만 집계합니다/);
+  // Only account selection narrows the chart; search narrows the table/export, as stated in the UI.
+  await act(async () => h.tree().root.findByProps({ 'aria-label': '광고계정 필터' }).props.onChange({ target: { value: '222' } }));
+  assert.deepEqual(chartTitles(), ['2026-10-01: 2,000']);
+  assert.doesNotMatch(tableText(), /회생 상담 A/); assert.match(tableText(), /개인회생 B/);
+  sheets = await download(); assert.deepEqual(Array.from(sheets['광고성과'].slice(3), row => row[1]), ['789']);
+  const spendLabel = h.tree().root.findAllByType('span').find(n => text(n) === 'Meta 실제 광고비');
+  assert.match(text(spendLabel.parent.parent), /3,000/);
+  await act(async () => h.tree().root.findByProps({ 'aria-label': '광고 검색' }).props.onChange({ target: { value: '일치하지 않는 검색' } }));
+  assert.match(tableText(), /표시할 광고가 없습니다/); assert.deepEqual(chartTitles(), ['2026-10-01: 2,000']);
+  sheets = await download(); assert.equal(sheets['광고성과'].length, 3);
+  // This request changes the ad scope only; the existing null display and API behavior stay intact.
+  const conversionLabel = h.tree().root.findAllByType('span').find(n => text(n) === 'CRM 계약 전환율');
+  assert.match(text(conversionLabel.parent.parent), /확인 필요/);
+  assert.equal(h.calls.length, 1); assert.equal(JSON.stringify(data), original); h.close();
 });

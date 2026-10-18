@@ -171,11 +171,12 @@ test('Meta exact completed cache becomes actual cost, ambiguous/incomplete is no
   assert.equal(report({ metaCosts: [actual], monthRows: [{ month: '2026-10', config }] }).totals.adSpend, 12000);
 });
 test('Meta adapter rejects old fingerprint, shared account, non-KRW, failed refresh and duplicate rows', () => {
-  const insight = load('lib/platform/meta-insights.ts');
-  const meta = load('lib/platform/operations-meta.ts', { crypto: require('node:crypto'), './meta-insights': insight, './operations': ops });
+  const scope = load('lib/platform/meta-insights-scope.ts');
+  const insight = load('lib/platform/meta-insights.ts', { './meta-insights-scope': scope });
+  const meta = load('lib/platform/operations-meta.ts', { crypto: require('node:crypto'), './meta-insights': insight, './meta-insights-scope': scope, './operations': ops });
   const connections = [{ id: 'c1', law_firm_id: firmId, ad_account_id: 'act_123', access_token_ciphertext: 'encrypted-value' }];
   const fingerprint = require('node:crypto').createHash('sha256').update(JSON.stringify(['123', 'v25.0', [['c1', 'encrypted-value']]])).digest('hex');
-  const day = { accountId: '123', date: '2026-10-01', adId: 'ad1', spend: 123.45 };
+  const day = { accountId: '123', date: '2026-10-01', adId: 'ad1', adName: '개인회생 상담', spend: 123.45 };
   const cache = { account_id: '123', range_start: '2026-10-01', range_end: '2026-10-31', fingerprint, last_error: null, snapshot: { version: 1, accountId: '123', start: '2026-10-01', end: '2026-10-31', currency: 'KRW', fetchedAt: '2026-11-01T00:00:00Z', rows: [day] } };
   const calculate = (cs = connections, c = cache) => meta.operationMetaCosts(cs, [], [c], ['2026-10'], 'v25.0', new Date('2026-11-02T00:00:00Z'));
   assert.equal(calculate()[0].amount, 123.45);
@@ -189,6 +190,29 @@ test('Meta adapter rejects old fingerprint, shared account, non-KRW, failed refr
   assert.equal(current({ ...mtd, snapshot: { ...mtd.snapshot, fetchedAt: '2026-10-17T01:00:00Z' } }).amount, null);
   assert.equal(current({ ...mtd, snapshot: { ...mtd.snapshot, rows: [{ ...day, date: '2026-10-19' }] } }).amount, null);
   assert.equal(calculate(connections, { ...cache, snapshot: { ...cache.snapshot, fetchedAt: '2026-10-18T01:00:00Z' } })[0].amount, null);
+  const other = { ...day, adId: 'other', adName: '불법사채 상담', campaignName: '회생 공통 캠페인', adsetName: '회생 세트', spend: 9999 };
+  const mixed = { ...cache, snapshot: { ...cache.snapshot, rows: [day, other] } };
+  const before = JSON.stringify(mixed);
+  assert.equal(calculate(connections, mixed)[0].amount, 123.45);
+  assert.equal(JSON.stringify(mixed), before);
+  const noMatch = calculate(connections, { ...cache, snapshot: { ...cache.snapshot, rows: [other] } })[0];
+  assert.equal(noMatch.amount, 0); assert.equal(noMatch.source, 'meta_actual');
+  for (const excluded of [{ ...other, spend: -1 }, { ...other, spend: Infinity }, { ...other, spend: '100' }, { ...other, accountId: 'wrong' }, { ...other, date: '2026-11-01' }, { ...other, adName: null }, { ...other, adName: '' }, { ...other, adName: '   ' }, { ...other, spend: Number.MAX_SAFE_INTEGER + 1 }]) {
+    assert.equal(calculate(connections, { ...cache, snapshot: { ...cache.snapshot, rows: [day, excluded] } })[0].amount, null);
+  }
+  assert.equal(calculate(connections, { ...cache, snapshot: { ...cache.snapshot, rows: [day, other, other] } })[0].amount, null);
+});
+
+test('rehabilitation scope matches only literal ad names and never mutates the raw cache', () => {
+  const scope = load('lib/platform/meta-insights-scope.ts');
+  for (const name of ['회생', '개인회생 상담', '신규 로펌 회생 광고', '회생·파산']) assert.equal(scope.isRehabilitationAdName(name), true);
+  for (const name of [null, undefined, 123, {}, '', '불법사채', '회 생', 'rehabilitation']) assert.equal(scope.isRehabilitationAdName(name), false);
+  const included = Object.freeze({ adName: '회생 광고', adId: 'one' });
+  const excluded = Object.freeze({ adName: '기타 광고', campaignName: '회생', adsetName: '회생', adId: 'two' });
+  const snapshot = Object.freeze({ version: 1, accountId: '123', rows: Object.freeze([included, excluded]) });
+  const result = scope.rehabilitationInsightSnapshot(snapshot);
+  assert.notEqual(result, snapshot); assert.notEqual(result.rows, snapshot.rows); assert.equal(snapshot.rows.length, 2);
+  assert.equal(result.rows.length, 1); assert.equal(result.rows[0], included);
 });
 test('advertising spreadsheet preview rejects mismatched firm, duplicate, blank, formulas and malformed currency', () => {
   const importer = load('lib/platform/operations-import.ts'); const header = importer.OPERATIONS_AD_HEADERS;

@@ -23,7 +23,7 @@ const pure = load('lib/platform/meta-insights.ts');
 const graph = load('lib/platform/meta-insights-graph.ts');
 const start = '2026-10-01', end = '2026-10-31';
 const connection = (id = 'm1', lawFirmId = 'f1') => ({ id, lawFirmId, firmName: lawFirmId, name: id, accountId: '123', hasToken: true, hasReadToken: false });
-const day = (patch = {}) => ({ date: start, accountId: '123', adId: '456', adName: '광고', campaignId: '789', campaignName: '캠페인', adsetId: '890', adsetName: '세트', spend: 1000, impressions: 500, clicks: 10, metaLeads: 2, ...patch });
+const day = (patch = {}) => ({ date: start, accountId: '123', adId: '456', adName: '회생 광고', campaignId: '789', campaignName: '캠페인', adsetId: '890', adsetName: '세트', spend: 1000, impressions: 500, clicks: 10, metaLeads: 2, ...patch });
 const snapshot = (patch = {}) => ({ version: 1, accountId: '123', accountName: '광고계정', currency: 'KRW', timezone: 'Asia/Seoul', start, end, fetchedAt: '2026-10-18T00:00:00Z', rows: [day()], ...patch });
 const account = (patch = {}) => ({ accountId: '123', connections: [connection()], status: 'cached', error: null, snapshot: snapshot(), ...patch });
 const lead = (patch = {}) => ({ id: 'l1', law_firm_id: 'f1', meta_account_id: 'm1', receivedAt: '2026-09-30T15:00:00Z', platform: { metaAccountId: 'm1', adId: '456' }, ...patch });
@@ -42,6 +42,71 @@ test('actual spend, distinct CRM contract cohort, zero/negative margin definitio
   assert.equal(result.totals.conversionRate, 100); assert.equal(result.totals.supplyRevenue, 2500); assert.equal(result.totals.marginRate, 60);
   const zero = pure.aggregateMetaInsights(fixture({ supplies: [supply({ unit_price_snapshot: 0 })] }));
   assert.equal(zero.totals.supplyRevenue, null); assert.equal(zero.totals.contribution, null); assert.equal(zero.totals.marginRate, null);
+});
+
+test('only rehabilitation advertisement names contribute to totals, CRM, contracts and supply', () => {
+  const other = day({ adId: '666', adName: '불법사채 광고', campaignName: '회생 캠페인', adsetName: '회생 세트', spend: 9000, metaLeads: 30 });
+  const input = fixture({ accounts: [account({ snapshot: snapshot({ rows: [day(), other] }) })] });
+  input.leads.push(lead({ id: 'other', adName: '회생이라는 잘못된 CRM 이름', platform: { metaAccountId: 'm1', adId: '666' } }));
+  input.cases.push({ ...input.cases[0], id: 'other-case', fromLeadId: 'other' });
+  input.supplies.push(supply({ id: 'other-supply', lead_id: 'other', unit_price_snapshot: 99999 }));
+  const before = JSON.stringify(input), result = pure.aggregateMetaInsights(input);
+  assert.equal(result.ads.length, 1); assert.equal(result.ads[0].adId, '456');
+  assert.equal(result.totals.spend, 1000); assert.equal(result.totals.metaLeads, 2);
+  assert.equal(result.totals.crmLeads, 1); assert.equal(result.totals.contracts, 1);
+  assert.equal(result.totals.supplyRevenue, 2500); assert.equal(result.totals.marginRate, 60);
+  assert.equal(result.quality.unattributedSupply, 0);
+  assert.equal(result.accounts[0].snapshot.rows.length, 1);
+  assert.ok(!JSON.stringify(result).includes('불법사채'));
+  assert.equal(JSON.stringify(input), before);
+});
+
+test('completed other-product-only account is a real zero without inventing conversion or revenue', () => {
+  const result = pure.aggregateMetaInsights(fixture({ accounts: [account({ snapshot: snapshot({ rows: [day({ adName: '불법사채 광고' })] }) })] }));
+  assert.equal(result.totals.spend, 0); assert.equal(result.totals.metaLeads, 0);
+  assert.equal(result.totals.crmLeads, 0); assert.equal(result.totals.contracts, 0);
+  assert.equal(result.totals.supplyRevenue, 0); assert.equal(result.totals.conversionRate, null);
+  assert.equal(result.ads.length, 0); assert.equal(result.quality.unattributedLeads, 0);
+  assert.equal(result.quality.unattributedSupply, 0);
+});
+
+test('missing provider ad name is incomplete rather than a confirmed zero cost', () => {
+  for (const adName of ['', '   ', null]) {
+    const result = pure.aggregateMetaInsights(fixture({ accounts: [account({ snapshot: snapshot({ rows: [day({ adName })] }) })], leads: [], cases: [], supplies: [] }));
+    assert.equal(result.totals.spend, null); assert.equal(result.quality.incompleteAccounts, 1);
+    assert.equal(result.accounts[0].status, 'error'); assert.equal(result.ads.length, 0);
+  }
+});
+
+test('omitted zero-spend CRM ad requires a recorded rehabilitation name', () => {
+  const empty = [account({ snapshot: snapshot({ rows: [] }) })];
+  const named = pure.aggregateMetaInsights(fixture({ accounts: empty, leads: [lead({ adName: '신규 개인회생 광고' })] }));
+  assert.equal(named.totals.spend, 0); assert.equal(named.totals.crmLeads, 1);
+  assert.equal(named.totals.contracts, 1); assert.equal(named.ads[0].adName, '신규 개인회생 광고');
+  const unnamed = pure.aggregateMetaInsights(fixture({ accounts: empty }));
+  assert.equal(unnamed.ads.length, 0); assert.equal(unnamed.totals.crmLeads, 0);
+  assert.equal(unnamed.quality.unattributedLeads, 1); assert.equal(unnamed.totals.supplyRevenue, null);
+});
+
+test('zero-spend fallback checks each CRM name and is independent of input order', () => {
+  const yes = lead({ adName: '회생 광고' });
+  const no = lead({ id: 'other', adName: '불법사채 광고' });
+  const absent = lead({ id: 'unnamed' });
+  for (const leads of [[yes, no, absent], [absent, no, yes], [no, yes, absent]]) {
+    const input = fixture({ accounts: [account({ snapshot: snapshot({ rows: [] }) })], leads });
+    input.cases.push({ ...input.cases[0], id: 'other-case', fromLeadId: 'other' });
+    const result = pure.aggregateMetaInsights(input);
+    assert.equal(result.totals.crmLeads, 1); assert.equal(result.totals.contracts, 1);
+    assert.equal(result.ads.length, 1); assert.equal(result.ads[0].adName, '회생 광고');
+    assert.equal(result.quality.unattributedLeads, 1);
+  }
+});
+
+test('rehabilitation classification never crosses accounts with the same ad ID', () => {
+  const otherAccount = account({ accountId: '222', connections: [{ ...connection('m2', 'f2'), accountId: '222' }], snapshot: snapshot({ accountId: '222', rows: [day({ accountId: '222', adName: '다른 상품', spend: 7000 })] }) });
+  const result = pure.aggregateMetaInsights(fixture({ accounts: [account(), otherAccount], leads: [lead(), lead({ law_firm_id: 'f2', meta_account_id: 'm2', platform: { metaAccountId: 'm2', adId: '456' } })], commercialProfiles: [{ law_firm_id: 'f1', service_mode: 'db_supply' }, { law_firm_id: 'f2', service_mode: 'db_supply' }] }));
+  assert.equal(result.ads.length, 1); assert.equal(result.totals.spend, 1000);
+  assert.equal(result.totals.crmLeads, 1); assert.equal(result.accounts[1].snapshot.rows.length, 0);
 });
 test('duplicate external account connections count spend once, exact tenant joins', () => {
   const result = pure.aggregateMetaInsights(fixture({ accounts: [account({ connections: [connection(), connection('m2', 'f2')] })], cases: [{ id: 'x', law_firm_id: 'f2', fromLeadId: 'l1', contractAmount: 1, status: '진행' }] }));
@@ -119,7 +184,8 @@ test('foreign hosts, duplicate rows, malformed dates and currencies are rejected
     { data: [graphRaw()], paging: { next: 'https://attacker.test/', cursors: { after: 'a' } } },
     { data: [graphRaw(), graphRaw()] }, { data: [graphRaw({ account_currency: 'USD' })] },
     { data: [graphRaw({ date_start: '2026-11-01', date_stop: '2026-11-01' })] },
-    { data: [graphRaw({ spend: '-1' })] },
+    { data: [graphRaw({ spend: '-1' })] }, { data: [graphRaw({ ad_name: '' })] },
+    { data: [graphRaw({ ad_name: '   ' })] }, { data: [graphRaw({ ad_name: null })] },
   ]) await assert.rejects(graphHarness([page]).run(), e => e.code === 'INVALID_RESPONSE');
 });
 test('Graph repeated pagination fails instead of publishing a partial result', async () => {
@@ -175,6 +241,19 @@ test('refresh uses only registered credentials and publishes complete snapshot o
   assert.equal((await response.json()).ok, true); assert.equal(h.graphCalls.length, 1); assert.equal(h.graphCalls[0].token, 'never-return-this-token');
   assert.deepEqual(h.writes.map(w => w.table), ['platform_meta_insights_cache']);
   const body = await (await h.route.GET(h.request())).json(); assert.equal(body.accounts[0].status, 'cached'); assert.equal(body.totals.spend, 1000);
+});
+
+test('GET scopes old full-account caches without writes or another Meta request', async () => {
+  const h = routeHarness({ graphResult: snapshot({ rows: [day(), day({ adId: '666', adName: '불법사채 광고', spend: 5000 })] }) });
+  await h.route.POST(h.request('POST', { action: 'refresh', accountId: '123', start, end }));
+  const cacheBefore = JSON.stringify(h.database.platform_meta_insights_cache);
+  assert.equal(h.database.platform_meta_insights_cache[0].snapshot.rows.length, 2);
+  const body = await (await h.route.GET(h.request())).json();
+  assert.equal(body.totals.spend, 1000); assert.equal(body.ads.length, 1);
+  assert.equal(body.accounts[0].snapshot.rows.length, 1);
+  assert.ok(!JSON.stringify(body).includes('불법사채'));
+  assert.equal(JSON.stringify(h.database.platform_meta_insights_cache), cacheBefore);
+  assert.equal(h.writes.length, 1); assert.equal(h.graphCalls.length, 1);
 });
 test('failed refresh does not write a partial snapshot or echo credentials', async () => {
   const h = routeHarness({ graphError: new graph.MetaInsightsError('PERMISSION', '조회 권한 확인 필요') });
