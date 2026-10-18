@@ -68,6 +68,12 @@ function harness(component) {
       }
       if (name === './types') return load('lib/types.ts');
       if (name.startsWith('@/lib/')) return load(name.slice(2) + '.ts');
+      if (name.startsWith('.')) {
+        const owner = file === 'component.tsx' ? 'components/analytics/LegacyAnalytics.tsx' : file;
+        const target = path.resolve(root, path.dirname(owner), name);
+        const resolved = ['.ts', '.tsx'].map(ext => target + ext).find(candidate => fs.existsSync(candidate));
+        if (resolved) return load(path.relative(root, resolved));
+      }
       throw new Error(`Unexpected import: ${name}`);
     };
     vm.runInNewContext(code, { module, exports: module.exports, require: requireMock, Date: TestDate }, { filename: file });

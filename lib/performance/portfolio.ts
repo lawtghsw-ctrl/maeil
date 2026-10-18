@@ -73,10 +73,11 @@ function add(a: number, b: number): number {
 }
 function addMetrics(target: PerformanceMetrics, source: PerformanceMetrics) {
   for (const key of Object.keys(target) as Array<keyof PerformanceMetrics>) {
-    if (key !== "conversionRate") target[key] = add(target[key], source[key]);
+    if (key !== "conversionRate" && key !== "contractConversionRate") target[key] = add(target[key], source[key]);
   }
   // Weighted by intake volume; never average individual firms' percentages.
   target.conversionRate = target.db ? target.converted / target.db * 100 : 0;
+  target.contractConversionRate = target.db ? target.contractedDb / target.db * 100 : 0;
 }
 function average(metrics: PerformanceMetrics, count: number, firms: readonly PerformanceMetrics[]): PortfolioAverage {
   const conversionFirms = firms.filter(firm => firm.db > 0);

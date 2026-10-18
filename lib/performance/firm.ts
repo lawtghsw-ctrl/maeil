@@ -1,4 +1,5 @@
 import type { CaseRecord, Client, DbLead, Installment } from "../types";
+import { getRetainedLeadIds } from "./lead-retainer-conversion";
 
 /** Read-only analytics. Period flows use KST calendar dates; current stock values
  * (activeDb/activeCases/outstanding/overdueAmount) are not historical snapshots.
@@ -9,6 +10,9 @@ export interface PerformanceMetrics {
   db: number;
   converted: number;
   conversionRate: number;
+  /** Intake-cohort leads with a current positive-fee, non-cancelled contract. */
+  contractedDb: number;
+  contractConversionRate: number;
   consulted: number;
   contacts: number;
   contracts: number;
@@ -143,7 +147,7 @@ function name(value: unknown): string { return typeof value === "string" && valu
 function inPeriod(date: string | undefined, start: string, end: string): boolean { return !!date && date >= start && date <= end; }
 function validContract(record: CaseRecord): boolean { return money(record.contractAmount) > 0 && record.status !== "취하"; }
 function emptyMetrics(): PerformanceMetrics {
-  return { db: 0, converted: 0, conversionRate: 0, consulted: 0, contacts: 0, contracts: 0, contractAmount: 0, cash: 0, outstanding: 0, overdueAmount: 0, activeCases: 0, cancelled: 0, activeDb: 0, zeroFeeCases: 0 };
+  return { db: 0, converted: 0, conversionRate: 0, contractedDb: 0, contractConversionRate: 0, consulted: 0, contacts: 0, contracts: 0, contractAmount: 0, cash: 0, outstanding: 0, overdueAmount: 0, activeCases: 0, cancelled: 0, activeDb: 0, zeroFeeCases: 0 };
 }
 function unique<T extends { id: string }>(rows: readonly T[]): { rows: T[]; duplicates: number } {
   const byId = new Map<string, T>();
@@ -165,6 +169,7 @@ export function buildFirmPerformanceReport(
   const today = kstPerformanceDate(now.toISOString())!;
   const leadSet = unique(input.leads), caseSet = unique(input.cases), clientSet = unique(input.clients), installmentSet = unique(input.installments);
   const { rows: leads } = leadSet, { rows: cases } = caseSet, { rows: clients } = clientSet, { rows: installments } = installmentSet;
+  const retainedLeadIds = getRetainedLeadIds(leads, cases);
   const caseById = new Map(cases.map((record) => [record.id, record]));
   const clientById = new Map(clients.map((client) => [client.id, client]));
   const clientsWithCases = new Set(cases.map((record) => record.clientId));
@@ -219,7 +224,7 @@ export function buildFirmPerformanceReport(
     // Count only an explicit stored consultation state, never infer it from text.
     const consulted = lead.status === "상담완료" || lead.detailStage === "상담";
     for (const [target, from, to] of [[current, start, end], [previous, range.previousStart, range.previousEnd]] as const) {
-      if (inPeriod(date, from, to)) { target.db += 1; if (converted) target.converted += 1; if (consulted) target.consulted += 1; }
+      if (inPeriod(date, from, to)) { target.db += 1; if (converted) target.converted += 1; if (retainedLeadIds.has(lead.id)) target.contractedDb += 1; if (consulted) target.consulted += 1; }
     }
     if (selected(staff) && inPeriod(date, start, end)) {
       const day = trend.get(date!)!; day.db += 1; if (converted) day.converted += 1;
@@ -297,12 +302,13 @@ export function buildFirmPerformanceReport(
     const result = emptyMetrics();
     for (const [staff, row] of map) {
       if (!selected(staff)) continue;
-      for (const key of Object.keys(result) as Array<keyof PerformanceMetrics>) if (key !== "conversionRate") result[key] += row[key];
+      for (const key of Object.keys(result) as Array<keyof PerformanceMetrics>) if (key !== "conversionRate" && key !== "contractConversionRate") result[key] += row[key];
     }
     result.conversionRate = result.db ? result.converted / result.db * 100 : 0;
+    result.contractConversionRate = result.db ? result.contractedDb / result.db * 100 : 0;
     return result;
   }
-  const staff = [...currentByStaff].map(([staffName, row]) => ({ name: staffName, ...row, conversionRate: row.db ? row.converted / row.db * 100 : 0 }))
+  const staff = [...currentByStaff].map(([staffName, row]) => ({ name: staffName, ...row, conversionRate: row.db ? row.converted / row.db * 100 : 0, contractConversionRate: row.db ? row.contractedDb / row.db * 100 : 0 }))
     .sort((a, b) => b.cash - a.cash || b.contracts - a.contracts || a.name.localeCompare(b.name, "ko"));
   const counts = (map: Map<string, number>) => [...map].map(([label, count]) => ({ name: label, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ko"));
   return { ...range, scope, selectedStaff: requestedStaff, summary: total(currentByStaff), previous: total(previousByStaff), staff,
