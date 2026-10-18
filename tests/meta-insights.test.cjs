@@ -116,6 +116,64 @@ test('invalid/ad-mismatched or missing lineage is unknown; no ad-name guessing',
   const result = pure.aggregateMetaInsights(fixture({ leads: [lead({ platform: { metaAccountId: 'other', adId: '456', adName: '광고' } })] }));
   assert.equal(result.quality.unattributedLeads, 1); assert.equal(result.quality.unattributedSupply, 1); assert.equal(result.totals.supplyRevenue, null); assert.equal(result.totals.marginRate, null);
 });
+test('recorded referrals suppress only the unattributed-lead warning across missing lineage and missing ad evidence', () => {
+  const scenarios = [
+    { leads: [lead({ meta_account_id: null, platform: null })] },
+    { leads: [lead({ platform: { metaAccountId: 'm1' } })] },
+    { accounts: [account({ snapshot: null, status: 'not_synced' })] },
+    { accounts: [account({ snapshot: snapshot({ rows: [] }) })] },
+  ];
+  for (const patch of scenarios) {
+    const input = fixture(patch);
+    const baseline = pure.aggregateMetaInsights(input);
+    assert.equal(baseline.quality.unattributedLeads, 1);
+    input.leads = input.leads.map(row => ({ ...row, source: '지인소개' }));
+    const before = JSON.stringify(input), result = pure.aggregateMetaInsights(input);
+    assert.equal(result.quality.unattributedLeads, 0);
+    // Source affects this warning alone, even when supply or account quality is incomplete.
+    const comparable = value => JSON.stringify({ ...value, generatedAt: null, quality: { ...value.quality, unattributedLeads: 0 } });
+    assert.equal(comparable(result), comparable(baseline));
+    assert.equal(JSON.stringify(input), before);
+  }
+});
+test('25 unresolved records retain all 19 unspecified and one Meta warning while excluding five explicit referrals', () => {
+  const leads = Array.from({ length: 25 }, (_, index) => lead({
+    id: `unresolved-${index}`, meta_account_id: null, platform: null,
+    source: index < 5 ? '지인소개' : index === 24 ? '메타' : null,
+  }));
+  const input = fixture({ leads, cases: [], supplies: [] });
+  const before = JSON.stringify(input), result = pure.aggregateMetaInsights(input);
+  assert.equal(result.quality.unattributedLeads, 20);
+  assert.equal(result.totals.crmLeads, 0); assert.equal(result.totals.contracts, 0);
+  assert.equal(result.totals.spend, 1000); assert.equal(result.totals.metaLeads, 2);
+  assert.equal(JSON.stringify(input), before);
+  const baseline = pure.aggregateMetaInsights({ ...input, leads: leads.map(row => ({ ...row, source: null })) });
+  assert.equal(baseline.quality.unattributedLeads, 25);
+  assert.deepEqual(result.totals, baseline.totals); assert.deepEqual(result.ads, baseline.ads);
+});
+test('referral source never removes a valid CRM cohort, contract, supply or cost association', () => {
+  for (const accounts of [[account()], [account({ snapshot: snapshot({ rows: [] }) })]]) {
+    const input = fixture({ accounts, leads: [lead({ adName: '회생 광고' })] });
+    const baseline = pure.aggregateMetaInsights(input);
+    const referralInput = { ...input, leads: input.leads.map(row => ({ ...row, source: '지인소개' })) };
+    const before = JSON.stringify(referralInput), result = pure.aggregateMetaInsights(referralInput);
+    assert.equal(result.totals.crmLeads, 1); assert.equal(result.totals.contracts, 1);
+    assert.equal(result.totals.supplyRevenue, 2500); assert.equal(result.totals.conversionRate, 100);
+    assert.equal(JSON.stringify({ ...result, generatedAt: null }), JSON.stringify({ ...baseline, generatedAt: null }));
+    assert.equal(JSON.stringify(referralInput), before);
+  }
+});
+test('other or merely similar source labels remain unresolved and date/tenant boundaries stay unchanged', () => {
+  const sources = [undefined, null, '', '메타', '네이버', '구글', '유튜브', '인스타그램', '쓰레드', '기타', '소개', '지인 소개', '지인소개 ', ' 지인소개', '지인소개(직원)'];
+  const leads = sources.map((source, index) => lead({ id: `source-${index}`, meta_account_id: null, platform: null, source }));
+  const result = pure.aggregateMetaInsights(fixture({ leads, cases: [], supplies: [] }));
+  assert.equal(result.quality.unattributedLeads, sources.length);
+  const outOfScope = [null, '', 'invalid', '2026-09-30T14:59:59Z', '2026-10-31T15:00:00Z'].flatMap((receivedAt, index) =>
+    [null, '지인소개'].map((source, variant) => lead({ id: `outside-${index}-${variant}`, meta_account_id: null, platform: null, source, receivedAt })));
+  outOfScope.push(lead({ id: 'unrelated-referral', law_firm_id: 'unrelated', meta_account_id: null, platform: null, source: '지인소개' }));
+  const outside = pure.aggregateMetaInsights(fixture({ leads: outOfScope, cases: [], supplies: [] }));
+  assert.equal(outside.quality.unattributedLeads, 0);
+});
 test('unrelated firms do not invalidate connected-account margin', () => {
   const result = pure.aggregateMetaInsights(fixture({ leads: [lead(), lead({ id: 'other', law_firm_id: 'unrelated', platform: null })], supplies: [supply(), supply({ id: 'other', law_firm_id: 'unrelated', lead_id: null })] }));
   assert.equal(result.quality.unattributedLeads, 0); assert.equal(result.quality.unattributedSupply, 0); assert.equal(result.totals.marginRate, 60);
@@ -203,11 +261,11 @@ function routeHarness({ role = 'super_admin', graphResult = snapshot(), graphErr
     platform_meta_insights_tokens: [], platform_meta_insights_cache: [], law_firms: fixture().firms, platform_firm_commercial_profiles: fixture().commercialProfiles,
     app_leads: [{ ...lead(), meta_account_id: id, platform: { metaAccountId: id, adId: '456' } }], app_cases: fixture().cases, lead_supply_ledger: fixture().supplies,
   };
-  const writes = [], reads = [], graphCalls = [];
+  const writes = [], reads = [], projections = [], graphCalls = [];
   function from(table) {
     reads.push(table); let filters = [], offset = 0, to = Infinity, single = false, write = null;
     const q = {
-      select() { return q; }, eq(k, v) { filters.push(r => r[k] === v); return q; }, neq(k, v) { filters.push(r => r[k] !== v); return q; }, gte(k, v) { filters.push(r => r[k] >= v); return q; }, lt(k, v) { filters.push(r => r[k] < v); return q; }, order() { return q; }, abortSignal() { return q; }, range(a, b) { offset = a; to = b; return q; }, maybeSingle() { single = true; return q; },
+      select(columns) { projections.push({ table, columns }); return q; }, eq(k, v) { filters.push(r => r[k] === v); return q; }, neq(k, v) { filters.push(r => r[k] !== v); return q; }, gte(k, v) { filters.push(r => r[k] >= v); return q; }, lt(k, v) { filters.push(r => r[k] < v); return q; }, order() { return q; }, abortSignal() { return q; }, range(a, b) { offset = a; to = b; return q; }, maybeSingle() { single = true; return q; },
       upsert(payload, options) { write = { kind: 'upsert', payload, options }; return q; }, delete() { write = { kind: 'delete' }; return q; },
       then(resolve) {
         let data;
@@ -227,7 +285,7 @@ function routeHarness({ role = 'super_admin', graphResult = snapshot(), graphErr
     '@/lib/platform/meta-insights-graph': { MetaInsightsError: graph.MetaInsightsError, fetchMetaInsights: async args => { graphCalls.push(args); if (graphError) throw graphError; return graphResult; } },
   });
   const request = (method = 'GET', body) => Object.assign(new Request(`https://app.test/api/platform/meta-insights?start=${start}&end=${end}`, { method, ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) }), { nextUrl: new URL(`https://app.test/?start=${start}&end=${end}`) });
-  return { route, request, database, writes, reads, graphCalls, id };
+  return { route, request, database, writes, reads, projections, graphCalls, id };
 }
 test('all API methods deny firm administrators before reading data', async () => {
   for (const method of ['GET', 'POST', 'PATCH']) { const h = routeHarness({ role: 'firm_admin' }); const response = await h.route[method](h.request(method, method === 'GET' ? undefined : {})); assert.equal(response.status, 403); assert.equal(h.reads.length, 0); assert.equal(h.graphCalls.length, 0); }
@@ -235,6 +293,21 @@ test('all API methods deny firm administrators before reading data', async () =>
 test('GET performs no Meta request and duplicate registrations return one account', async () => {
   const h = routeHarness(); const response = await h.route.GET(h.request()); const body = await response.json();
   assert.equal(body.accounts.length, 1); assert.equal(body.accounts[0].connections.length, 2); assert.equal(h.graphCalls.length, 0); assert.equal(h.writes.length, 0); assert.equal(body.totals.spend, null); assert.ok(!JSON.stringify(body).includes('encrypted-capi')); assert.equal(response.headers.get('cache-control'), 'private, no-store');
+});
+test('GET explicitly reads the stored source and excludes only five referral warnings without any mutation or Meta request', async () => {
+  const h = routeHarness();
+  h.database.app_leads = Array.from({ length: 25 }, (_, index) => ({
+    ...h.database.app_leads[0], id: `unresolved-${index}`, meta_account_id: null, platform: null,
+    source: index < 5 ? '지인소개' : index === 24 ? '메타' : null,
+  }));
+  const before = JSON.stringify(h.database), response = await h.route.GET(h.request()), body = await response.json();
+  assert.equal(response.status, 200); assert.equal(body.quality.unattributedLeads, 20);
+  const leadReads = h.projections.filter(item => item.table === 'app_leads');
+  assert.ok(leadReads.length > 0);
+  assert.ok(leadReads.every(item => item.columns.split(',').includes('source:data->>source')));
+  assert.equal(h.writes.length, 0); assert.equal(h.graphCalls.length, 0);
+  assert.equal(JSON.stringify(h.database), before);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
 });
 test('refresh uses only registered credentials and publishes complete snapshot once', async () => {
   const h = routeHarness(); const response = await h.route.POST(h.request('POST', { action: 'refresh', accountId: '123', start, end, token: 'attacker' }));

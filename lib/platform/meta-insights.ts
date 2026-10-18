@@ -20,7 +20,7 @@ export interface InsightAccount {
 }
 export interface InsightLead {
   id: string; law_firm_id: string; meta_account_id: string | null;
-  receivedAt: string | null; platform: Record<string, unknown> | null; adName?: string | null;
+  receivedAt: string | null; platform: Record<string, unknown> | null; adName?: string | null; source?: string | null;
 }
 export interface InsightCase {
   id: string; law_firm_id: string; fromLeadId: string | null;
@@ -119,7 +119,10 @@ export function aggregateMetaInsights(input: {
     const valid = account && sameFirm && !contradictory && adId;
     const date = insightDate(lead.receivedAt, account?.snapshot?.timezone || "Asia/Seoul");
     const id = key(lead.law_firm_id, lead.id);
-    if (!valid || !account.snapshot) { if (inRange(date)) unattributedLeads++; continue; }
+    // A recorded referral does not need an advertising identity. Only the warning
+    // count changes; any verified advertising/contract/supply attribution stays intact.
+    const countUnattributed = inRange(date) && lead.source !== "지인소개";
+    if (!valid || !account.snapshot) { if (countUnattributed) unattributedLeads++; continue; }
     const adKey = key(account.accountId, adId);
     // A filtered-out advertisement must not reappear as a zero-spend CRM row.
     // When Insights omits an ad entirely, its recorded name must establish the
@@ -127,7 +130,7 @@ export function aggregateMetaInsights(input: {
     let item = ads.get(adKey);
     if (!knownAds.has(adKey) && !isRehabilitationAdName(lead.adName)) {
       if (typeof lead.adName === "string" && lead.adName.trim()) excludedLeads.add(id);
-      else if (inRange(date)) unattributedLeads++;
+      else if (countUnattributed) unattributedLeads++;
       continue;
     }
     if (!item) {
