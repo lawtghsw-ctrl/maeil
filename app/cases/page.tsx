@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 import { useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
@@ -97,7 +98,7 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
         </label>
         <label className="text-xs font-semibold text-slate-600">
           계약일
-          <Input className="mt-1" type="date" value={contractDate} onChange={(e) => setContractDate(e.target.value)} />
+          <DateInput className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base sm:h-10 sm:text-sm" aria-label="계약일" value={contractDate} onValueChange={setContractDate} />
         </label>
         <label className="text-xs font-semibold text-slate-600">
           총 수임료(원)

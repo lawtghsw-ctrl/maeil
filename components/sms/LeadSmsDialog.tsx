@@ -6,6 +6,7 @@ import { Modal } from "@/components/ui/Primitives";
 import { useStoreSession } from "@/lib/store";
 import type { SmsDraft } from "@/components/sms/SmsCenter";
 import type { DbLead } from "@/lib/types";
+import { smsConsultTime } from "@/lib/sms/template-variables";
 
 const SmsCenter = dynamic(() => import("@/components/sms/SmsCenter"), {
   loading: () => <p role="status" className="p-6 text-sm text-slate-500">문자발송 화면을 불러오는 중입니다.</p>,
@@ -27,7 +28,7 @@ export default function LeadSmsDialog({ lead, onClose }: { lead: DbLead | null; 
   }, [lead, eligible, onClose]);
   return <Modal open={eligible} title={`${lead?.name ?? "고객"} · 문자발송`} onClose={onClose} size="full">
     {eligible && lead && <div role="dialog" aria-modal="true" aria-label="고객 문자발송" className="p-2 sm:p-4">
-      <SmsCenter contextKey={`lead:${lead.id}`} draftCache={cache.current} initialRecipients={[{ name: lead.name, phone: lead.phone }]}/>
+      <SmsCenter contextKey={`lead:${lead.id}`} draftCache={cache.current} initialRecipients={[{ name: lead.name, phone: lead.phone, consultTime: smsConsultTime(lead) }]}/>
     </div>}
   </Modal>;
 }

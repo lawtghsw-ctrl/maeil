@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 // 상담일지(개인회생·개인파산 상담일지) 입력 탭 6종(인적사항/소득현황/재산현황/채무현황/
 // 변제계획/상담메모) — 원래 고객관리 수정 팝업(CustomerEditModal)에만 있던 내용을 공용
@@ -146,11 +147,11 @@ export function ConsultationTabsEditor({
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Label text="생년월일">
-              <input
-                type="date"
+              <DateInput
+                aria-label="생년월일"
                 className={dateInputClass}
                 value={personal.birthDate ?? ""}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setPersonal((p) => ({ ...p, birthDate: e.target.value }))}
+                onValueChange={value => setPersonal((p) => ({ ...p, birthDate: value }))}
               />
             </Label>
             <Label text="성별">
@@ -414,11 +415,11 @@ export function ConsultationTabsEditor({
                         <Input className="w-28" value={row.lender ?? ""} onChange={(e: ChangeEvent<HTMLInputElement>) => updateLoanRecord(i, { lender: e.target.value })} placeholder="예: 제이티저축은행" />
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="date"
+                        <DateInput
+                          aria-label="대출 실행일"
                           className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none"
                           value={row.executedAt ?? ""}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) => updateLoanRecord(i, { executedAt: e.target.value })}
+                          onValueChange={value => updateLoanRecord(i, { executedAt: value })}
                         />
                       </td>
                       <td className="px-3 py-2">

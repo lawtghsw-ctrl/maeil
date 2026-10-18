@@ -14,6 +14,7 @@ function harness(file, initial, auth) {
     const module = { exports: {} };
     vm.runInNewContext(`(function(require,module,exports){${source}\n})`, { React, Date, AbortController }, { filename: relative })(name => {
       if (name === 'react') return React;
+      if (name === '@/components/ui/DateInput') return { DateInput: ({ onValueChange, onIncompleteChange, ...props }) => React.createElement('input', { ...props, type: 'date', onChange: event => onValueChange(event.target.value) }) };
       if (name === 'lucide-react') return new Proxy({}, { get: (_t, key) => p => React.createElement('svg', { 'data-icon': key, ...p }) });
       if (name === '@/lib/platform/client') return { authJson: async (url, init) => { calls.push({ url, init }); return auth(url, init); } };
       if (name === '@/components/ui/Primitives') return { Modal: p => p.open ? React.createElement('section', {}, p.children) : null, Button: p => React.createElement('button', p), Input: p => React.createElement('input', p), Label: p => React.createElement('label', {}, p.children) };
@@ -26,7 +27,7 @@ function harness(file, initial, auth) {
 }
 const button = (h, label) => h.tree().root.findAllByType('button').find(n => text(n.props.children) === label);
 const field = (h, label) => h.tree().root.findByProps({ 'aria-label': label });
-const change = async (h, label, value) => act(async () => field(h, label).props.onChange({ target: { value } }));
+const change = async (h, label, value) => act(async () => field(h, label).props.onValueChange ? field(h, label).props.onValueChange(value) : field(h, label).props.onChange({ target: { value } }));
 test('firm admin sees read-only connection status without secret editor or save', async () => {
   const h = harness('components/platform/FirmEsignSettings.tsx', { lawFirmId: 'firm1' }, async () => ({ ...safe, canManage: false })); await h.mount();
   assert.equal(h.tree().root.findAllByType('textarea').length, 0); assert.equal(button(h, '연결·템플릿 저장'), undefined); assert.equal(h.tree().root.findAllByType('input').every(n => n.props.disabled), true); assert.equal(h.calls.length, 1); h.close();
@@ -49,8 +50,10 @@ test('real-send dialog requires confirmation, clears it after changes and guards
   await change(h, '전자계약 residentNumber', '000000-0000000'); await change(h, '전자계약 creditorCount', '2');
   await act(async () => field(h, '실제 전자계약 발송 확인').props.onChange({ target: { checked: true } }));
   await change(h, '전자계약 phone', '01011111111'); assert.equal(field(h, '실제 전자계약 발송 확인').props.checked, false);
+  await change(h, '전자계약 contractDate', '2026-10-19'); assert.equal(field(h, '실제 전자계약 발송 확인').props.checked, false);
   await act(async () => field(h, '실제 전자계약 발송 확인').props.onChange({ target: { checked: true } }));
   const send = button(h, '실제 서명 요청 전송').props.onClick; await act(async () => { send(); send(); }); assert.equal(h.calls.filter(c => c.init?.method === 'POST').length, 1);
+  assert.equal(JSON.parse(h.calls.find(c => c.init?.method === 'POST').init.body).contractDate, '2026-10-19');
   await act(async () => d.resolve({ documentId: 'doc', status: '서명 요청' })); assert.equal(button(h, '실제 서명 요청 전송').props.disabled, true); assert.ok(text(h.tree().toJSON()).includes('서명 요청이 전송되었습니다')); h.close();
 });
 test('lost send response prevents another send and offers status lookup; existing binding blocks send', async () => {

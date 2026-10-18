@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 // 상담일지 좌측 컬럼. v14에서는 사용자가 제시한 원본 서식과 동일하게 모든 항목을
 // "라벨 셀 | 입력 셀" 한 줄 구조로 배치합니다. 광역지역과 관할법원은 각각 드롭다운으로
@@ -156,7 +157,7 @@ export function BasicInfoSection({
         </FieldRow>
 
         <FieldRow label="나이">
-          <input type="date" className={compactInputClass} value={personal.birthDate ?? ""} onChange={(e) => changeBirthDate(e.target.value)} />
+          <DateInput aria-label="생년월일" className={compactInputClass} value={personal.birthDate ?? ""} onValueChange={changeBirthDate} />
           <div className="flex h-7 min-w-[92px] items-center justify-center rounded border border-slate-200 bg-slate-50 px-2 text-[11px] font-bold text-slate-700">
             {autoAge === undefined ? "만 - 세" : `만 ${autoAge}세`}
           </div>

@@ -2,6 +2,7 @@ import { NextRequest,NextResponse } from "next/server";
 import { APPROVED_SENDERS,assertRelayReady,assertRpc,fail,isDemoFirm,MOBILE,readJson,requireSmsActor,requireUuid,smsErrorResponse } from "@/lib/sms/delivery";
 import { imagePaths,loadImages } from "@/lib/sms/media";
 import { countEucKrBytes,validateMessage } from "@/services/sms-relay/src/validation.mjs";
+import { renderSmsTemplate } from "@/lib/sms/template-variables";
 
 export const dynamic="force-dynamic";
 export const maxDuration=60;
@@ -16,12 +17,13 @@ export async function POST(request:NextRequest){
     if(!Array.isArray(body.recipients)||!body.recipients.length||body.recipients.length>1000)fail(400,"수신자는 1명 이상 1,000명 이하로 입력해주세요.");
     const numbers=new Set<string>();
     const recipients=body.recipients.map(item=>{
-      if(!item||typeof item!=="object"||Array.isArray(item)||Object.keys(item).some(key=>!["phone","name"].includes(key)))fail(400,"수신자 형식을 확인해주세요.");
+      if(!item||typeof item!=="object"||Array.isArray(item)||Object.keys(item).some(key=>!["phone","name","consultTime"].includes(key)))fail(400,"수신자 형식을 확인해주세요.");
       const value=item as Record<string,unknown>;
       if(typeof value.phone!=="string" || (value.name!==undefined&&typeof value.name!=="string"))fail(400,"수신자 형식을 확인해주세요.");
       const phone=value.phone.replace(/\D/g,""); const name=String(value.name||"").trim();
       if(!MOBILE.test(phone)||name.length>100||/[\x00-\x1f\x7f]/.test(name))fail(400,"수신번호와 고객명을 확인해주세요.");
-      if(numbers.has(phone))fail(400,"수신번호가 중복되었습니다.");numbers.add(phone);return {phone,name};
+      if(value.consultTime!==undefined&&(typeof value.consultTime!=="string"||value.consultTime.length>200||/[\x00-\x1f\x7f]/.test(value.consultTime)))fail(400,"상담 신청 시간대를 확인해주세요.");
+      if(numbers.has(phone))fail(400,"수신번호가 중복되었습니다.");numbers.add(phone);return {phone,name,...(typeof value.consultTime==="string"?{consultTime:value.consultTime}:{})};
     });
     if(typeof body.message!=="string"||!body.message.trim()||body.message.length>2000)fail(400,"문구는 1자 이상 2,000자 이하로 입력해주세요.");
     const title=body.title==null?"":body.title;
@@ -31,7 +33,7 @@ export async function POST(request:NextRequest){
     if(senderError||!sender||!APPROVED_SENDERS.has(sender.phone))fail(400,"활성 상태이며 알리고에 등록된 발신번호를 선택해주세요.");
     let longest=0;
     try{
-      for(const recipient of recipients){const rendered=body.message.replaceAll("{고객명}",recipient.name||"고객").replaceAll("{담당자}",String(sender.staff_name||"담당자"));
+      for(const recipient of recipients){const rendered=renderSmsTemplate(body.message,recipient,String(sender.staff_name||"담당자"));
         const bytes=countEucKrBytes(rendered);longest=Math.max(longest,bytes);const type=paths.length?"MMS":bytes>90?"LMS":"SMS";validateMessage(rendered,type,type==="SMS"?"":title);}
     }catch{fail(400,"치환 후 문구는 최대 2,000바이트, 제목은 44바이트입니다. 지원하지 않는 이모지·문자가 있는지도 확인해주세요.");}
     const msgType=paths.length?"MMS":longest>90?"LMS":"SMS";

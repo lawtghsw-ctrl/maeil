@@ -86,7 +86,7 @@ function harness(options = {}) {
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: module.exports, console, Date, Math, Map, AbortController, Headers, crypto: require('node:crypto').webcrypto, fetch: fetchMock, confirm: () => options.confirm !== false,
     document: documentMock, window: documentMock, setInterval(fn, ms) { assert.equal(ms,12000); const id=++intervalId;intervals.set(id,fn);return id; }, clearInterval(id) {intervals.delete(id);},
-    require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store, useStoreSession: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; throw Error(name); } });
+    require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store, useStoreSession: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; if (name === '@/lib/sms/template-variables') return moduleFrom('lib/sms/template-variables.ts', {}, {}); if (name === '@/components/ui/DateInput') return { DateTimeInput: 'input' }; throw Error(name); } });
   const props = { initialRecipients: options.initialRecipients ?? [], initialDraft: options.fresh ? undefined : options.draft ?? draft(), onDraftChange: (value) => snapshots.push(value) };
   const render = () => finalRuntime.render(module.exports.SmsFirmWorkspace, props);
   const flush = async () => { for (let i = 0; i < 4; i++) { await new Promise(setImmediate); render(); } };
@@ -103,6 +103,30 @@ test('DB popup prefills a normalized customer without sending or changing automa
   assert.equal(h.uploads.length, 0);
   assert.ok(h.apiCalls.every(call => !call.init.method));
   assert.equal(h.snapshots.at(-1).message, '');
+});
+
+test('application time follows the customer through preview and frozen request, without changing automation', async () => {
+  const h=harness({fresh:true,initialRecipients:[{name:'가상 신청자',phone:'010-0000-0000',consultTime:'평일 점심(12시~1시)'}]});h.render();await h.flush();
+  const body=nodes(h.render(),n=>n.type==='textarea'&&n.props.placeholder?.includes('{상담시간대}'))[0];
+  body.props.onChange({target:{value:'{고객명}님 신청시간 {상담시간대}'}});await h.flush();
+  assert.match(text(h.render()),/가상 신청자님 신청시간 평일 점심\(12시~1시\)/);
+  assert.equal(h.sendPending.length,0);assert.equal(h.writes.length,0);
+  h.button('발송 요청').props.onClick();await h.flush();
+  assert.equal(JSON.parse(h.sendPending[0].init.body).recipients[0].consultTime,'평일 점심(12시~1시)');
+  assert.equal(h.writes.length,0);
+});
+
+test('saved-template shortcut copies the draft and explains per-staff chat links without saving or sending',async()=>{
+  const h=harness();h.render();await h.flush();h.button('현재 문구를 저장 문구로 등록하기').props.onClick();await h.flush();
+  assert.equal(h.snapshots.at(-1).tab,'settings');assert.equal(h.snapshots.at(-1).newTemplate.body,'{고객명}님 안내');
+  assert.match(text(h.render()),/담당자마다 다른 오픈채팅 링크/);assert.equal(h.writes.length,0);assert.equal(h.sendPending.length,0);
+});
+
+test('an incomplete reservation can never fall through to immediate SMS dispatch',async()=>{
+  const h=harness();h.render();await h.flush();
+  const reservation=nodes(h.render(),n=>typeof n.props.onIncompleteChange==='function')[0];reservation.props.onIncompleteChange(true);await h.flush();
+  h.button('발송 요청').props.onClick();await h.flush();assert.equal(h.sendPending.length,0);assert.equal(h.uploads.length,0);assert.equal(h.writes.length,0);
+  assert.match(text(h.render()),/미완성 예약은 즉시발송으로 처리하지 않습니다/);
 });
 
 test('reopened DB popup retains its prior draft instead of replacing recipients', async () => {

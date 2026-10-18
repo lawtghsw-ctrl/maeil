@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 // 상담일지 하단 "기대출리스트".
 // v19: 파일 선택/드래그앤드롭 즉시 파싱하고, 중복 의심 항목만 자동 제외한 뒤
@@ -268,11 +269,11 @@ export function DebtListSection({
                 </td>
 
                 <td className="px-2 py-1">
-                  <input
-                    type="date"
+                  <DateInput
+                    aria-label="대출 실행일"
                     className="h-7 rounded-lg border border-slate-200 bg-white px-1.5 text-[11px] outline-none sm:h-7"
                     value={row.executedAt ?? ""}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => updateRow(i, { executedAt: e.target.value })}
+                    onValueChange={value => updateRow(i, { executedAt: value })}
                   />
                 </td>
 

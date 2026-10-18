@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 // 상담일지 중단 상단 "소득". 참고 이미지처럼 라벨/입력 셀을 가로 한 줄로 붙여 배치하고,
 // 직군은 한 줄 버튼 선택으로 유지합니다. 선택형 버튼은 같은 값을 한 번 더 누르면 미선택으로
@@ -70,11 +71,11 @@ export function IncomeSection({
       </FieldRow>
 
       <FieldRow label="재직기간" required={required("tenureInfo")} missing={missing("tenureInfo")}>
-        <input
-          type="date"
+        <DateInput
+          aria-label="첫 취직일"
           className={compactInputClass}
           value={income.employmentStartDate ?? ""}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => handleStartDateChange(e.target.value)}
+          onValueChange={handleStartDateChange}
         />
         <div className="flex h-7 min-w-[86px] items-center justify-center rounded border border-slate-200 bg-slate-50 px-2 text-[11px] font-bold text-slate-700">
           {income.tenureMonths === undefined ? "- 개월" : `${income.tenureMonths}개월`}

@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 // 계약관리 [상세]: DB 상담일지처럼 한 화면에서 계약 재무/회차를 편집합니다.
 import { useEffect, useState } from "react";
@@ -113,11 +114,11 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
           <thead className="bg-slate-100 text-slate-700"><tr>{["회차","상환 예정일","납부예정금액","납부상태","실납부금액","실제 입금일","관리"].map(t=><th key={t} className="border-b border-r border-slate-200 px-2 py-3">{t}</th>)}</tr></thead>
           <tbody>{sortedRows.map(({row,originalIndex:i},displayIndex)=><tr key={row.id??`new-${i}`} className="border-b border-slate-200">
             <td className="w-[80px] px-2 text-center">{displayIndex===0?"계약금":`${displayIndex}회차`}</td>
-            <td className="px-2 py-1"><input className={input} type="date" disabled={!permitted} value={row.dueDate} onChange={e=>editRow(i,{dueDate:e.target.value})}/></td>
+            <td className="px-2 py-1"><DateInput className={input} aria-label="상환 예정일" disabled={!permitted} value={row.dueDate} onValueChange={value=>editRow(i,{dueDate:value})}/></td>
             <td className="px-2 py-1"><MoneyInput value={row.amount} disabled={!permitted} onChange={v=>editRow(i,{amount:v})}/></td>
             <td className="px-2 py-1"><select className={input} disabled={!permitted} value={row.status} onChange={e=>editRow(i,{status:e.target.value as InstallmentStatus})}>{statuses.map(s=><option key={s}>{s}</option>)}</select></td>
             <td className="px-2 py-1"><MoneyInput value={row.actualPaidAmount??(row.status==="완료"?row.amount:0)} disabled={!permitted} onChange={v=>editRow(i,{actualPaidAmount:v})}/></td>
-            <td className="px-2 py-1"><input className={input} type="date" disabled={!permitted} value={row.paidDate??""} onChange={e=>editRow(i,{paidDate:e.target.value})}/></td>
+            <td className="px-2 py-1"><DateInput className={input} aria-label="실제 입금일" disabled={!permitted} value={row.paidDate??""} onValueChange={value=>editRow(i,{paidDate:value})}/></td>
             <td className="px-2 py-1 text-center"><button type="button" className="rounded border border-red-200 px-2 py-1.5 text-red-600 disabled:opacity-30" disabled={!permitted} onClick={()=>{setRows(v=>v.filter((_,j)=>i!==j));setChanged(true)}}><Trash2 size={14}/></button></td>
           </tr>)}{!rows.length&&<tr><td colSpan={7} className="p-5 text-center text-slate-400">등록된 분납 일정이 없습니다.</td></tr>}</tbody>
         </table>

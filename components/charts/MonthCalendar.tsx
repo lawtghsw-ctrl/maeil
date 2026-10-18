@@ -6,6 +6,7 @@ import { useState, type ChangeEvent, type MouseEvent } from "react";
 import { CalendarDays } from "lucide-react";
 import { Card } from "@/components/ui/Primitives";
 import { fmtWon } from "@/lib/format";
+import { mondayWeekday, MONDAY_WEEKDAYS } from "@/lib/calendar-date";
 
 function today(): string {
   const t = new Date();
@@ -55,7 +56,7 @@ export function MonthCalendar({
 }) {
   const [yy, mm] = month.split("-").map(Number);
   const daysInMonth = new Date(yy, mm, 0).getDate();
-  const firstDay = new Date(yy, mm - 1, 1).getDay();
+  const firstDay = mondayWeekday(new Date(yy, mm - 1, 1).getDay());
   const days = [
     ...Array(firstDay).fill(""),
     ...Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`),
@@ -172,7 +173,7 @@ export function MonthCalendar({
           )}
         </div>
         <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
-          {["일", "월", "화", "수", "목", "금", "토"].map((x) => (
+          {MONDAY_WEEKDAYS.map((x) => (
             <div key={x} className="p-2 text-center text-xs font-semibold text-slate-500">
               {x}
             </div>

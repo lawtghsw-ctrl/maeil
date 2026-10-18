@@ -77,6 +77,7 @@ function createHarness(source, options = {}) {
   const requireMock = (name) => {
     if (name === '@/components/sms/LeadSmsDialog' || name === '@/components/db/LeadWorkDialog') return { __esModule: true, default: () => null };
     if (name === 'react') return React;
+    if (name === '@/components/ui/DateInput') return { DateInput: ({ onValueChange, onIncompleteChange, ...props }) => h('input', { ...props, type:'date', onChange:event=>onValueChange(event.target.value) }) };
     if (name === 'react/jsx-runtime') return jsx;
     if (name === 'next/link') return { __esModule:true, default:host('a') };
     if (name === 'lucide-react') return new Proxy({}, { get:(_target,key)=>()=>h('i', {'data-icon':key}) });

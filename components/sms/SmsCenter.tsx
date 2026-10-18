@@ -8,9 +8,11 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useStoreSession as useStore } from "@/lib/store";
 import DeliveryControls, { validDeliveryState, type DeliveryState } from "@/components/sms/DeliveryControls";
+import { renderSmsTemplate } from "@/lib/sms/template-variables";
+import { DateTimeInput } from "@/components/ui/DateInput";
 
 type Tab = "send" | "history" | "automation" | "settings";
-export type Recipient = { name: string; phone: string };
+export type Recipient = { name: string; phone: string; consultTime?: string };
 type Sender = { id: string; staff_name: string; label: string; phone: string; is_default: boolean; is_active: boolean; is_registered: boolean };
 type Template = { id: string; name: string; category: string; body: string };
 type Outbox = {
@@ -57,7 +59,7 @@ function mergeRecipients(prev: Recipient[], next: Recipient[]) {
   const map = new Map<string, Recipient>();
   [...prev, ...next].forEach((r) => {
     const phone = digits(r.phone);
-    if (phone.length >= 10) map.set(phone, { name: r.name.trim(), phone });
+    if (phone.length >= 10) map.set(phone, { name: r.name.trim(), phone, ...(r.consultTime ? { consultTime: r.consultTime } : {}) });
   });
   return Array.from(map.values());
 }
@@ -85,6 +87,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const { profile, superAdminFirmScope, workStaffNames, can } = useStore();
   const firmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
   const [tab, setTab] = useState<Tab>(initialDraft?.tab ?? "send");
+  const [reservationIncomplete, setReservationIncomplete] = useState(false);
   const [senders, setSenders] = useState<Sender[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [history, setHistory] = useState<Outbox[]>([]);
@@ -143,7 +146,8 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const serverOffset = useRef(0);
 
   const selectedSender = senders.find((s) => s.id === senderId);
-  const bytes = smsBytes(message);
+  const previewMessage = renderSmsTemplate(message, recipients[0] ?? {}, selectedSender?.staff_name);
+  const bytes = Math.max(smsBytes(previewMessage), ...recipients.map(recipient => smsBytes(renderSmsTemplate(message, recipient, selectedSender?.staff_name))));
   const msgType = images.length ? "MMS" : bytes <= 90 ? "SMS" : "LMS";
   const canSend = can("sms.send");
   const canHistory = can("sms.view_history");
@@ -404,7 +408,8 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       if (!message.trim()) { setNotice("문자 내용을 작성해주세요."); return; }
       if (recipients.length > delivery.capabilities.maxRecipients) { setNotice(`한 번에 최대 ${delivery.capabilities.maxRecipients.toLocaleString()}명까지 요청할 수 있습니다.`); return; }
       if (images.length > delivery.capabilities.maxImages || (images.length && !delivery.capabilities.mms)) { setNotice("현재 서버에서 이 이미지 문자 요청을 지원하지 않습니다. 첨부한 파일은 유지됩니다."); return; }
-      const longestMessage = Math.max(...recipients.map((recipient) => smsBytes(message.replaceAll("{고객명}", recipient.name || "고객"))));
+      if (reservationIncomplete) { setNotice("예약 날짜와 시간을 모두 입력하거나 예약 입력을 모두 지워주세요. 미완성 예약은 즉시발송으로 처리하지 않습니다."); return; }
+      const longestMessage = Math.max(...recipients.map((recipient) => smsBytes(renderSmsTemplate(message, recipient, selectedSender.staff_name))));
       if (!images.length && !(longestMessage > 90 ? delivery.capabilities.lms : delivery.capabilities.sms)) { setNotice("현재 서버에서 이 문자 유형의 발송을 지원하지 않습니다."); return; }
       if (reservedAt && (!Number.isFinite(new Date(reservedAt).getTime()) || new Date(reservedAt).getTime() < Date.now() + serverOffset.current + delivery.capabilities.minReservationMinutes * 60000)) { setNotice(`예약시간은 서버 현재 시각보다 ${delivery.capabilities.minReservationMinutes}분 이상 이후로 지정해주세요.`); return; }
       if (!confirm(`${recipients.length.toLocaleString()}명에게 ${reservedAt ? "예약 문자" : "문자"} 발송을 요청할까요?\n이번에 작성한 요청만 등록하며, 이전 대기 문자는 발송하지 않습니다.`)) return;
@@ -607,8 +612,11 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
             <input value={title} maxLength={44} onChange={(e)=>setTitle(e.target.value)} placeholder="장문/그림문자 제목" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm"/>
           </label>}
           <label className="mt-4 block text-xs font-bold text-slate-500">문구 작성
-            <textarea value={message} onChange={(e)=>setMessage(e.target.value)} placeholder="발송할 문자 내용을 입력하세요. {고객명}을 사용하면 수신자 이름으로 치환됩니다." className="mt-1 min-h-44 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-400"/>
+            <textarea value={message} onChange={(e)=>setMessage(e.target.value)} placeholder="{고객명}님, 신청하신 상담시간대는 {상담시간대}입니다." className="mt-1 min-h-44 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-400"/>
           </label>
+          <div className="mt-2 rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-900">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"}. DB관리의 고객별 문자발송 버튼으로 열면 신청 시간대를 함께 불러옵니다. 신청 시간대가 없거나 번호를 직접 입력한 경우 ‘미지정’으로 표시합니다. 예약한 상담 일시와는 구분됩니다.
+            {canManage && <button type="button" disabled={busy || !!pendingRequest} onClick={()=>{setNewTemplate(p=>({...p,body:message || p.body}));setTab("settings");}} className="mt-1 block font-bold text-blue-700 disabled:opacity-40">현재 문구를 저장 문구로 등록하기 →</button>}
+          </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex gap-2"><span className={`rounded-full px-2.5 py-1 font-black ${msgType==="SMS"?"bg-emerald-50 text-emerald-700":"bg-violet-50 text-violet-700"}`}>{msgType}</span><span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-500">약 {bytes} Byte</span></div>
             <span className="text-slate-400">알리고 기준 SMS 90Byte 초과 시 LMS 권장</span>
@@ -619,7 +627,8 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
               <input type="file" accept="image/jpeg,image/png,image/gif" multiple className="hidden" onChange={(e)=>setImages(Array.from(e.target.files??[]).slice(0,3))}/>
             </label>
             <label className="text-xs font-bold text-slate-500">예약발송 <span className="font-normal text-slate-400">(선택)</span>
-              <input type="datetime-local" value={reservedAt} onChange={(e)=>setReservedAt(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm"/>
+              <DateTimeInput aria-label="문자 예약발송 일시" value={reservedAt} onValueChange={setReservedAt} onIncompleteChange={setReservationIncomplete} className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm"/>
+              {reservationIncomplete && <div role="status" className="mt-1 text-amber-700">예약 날짜와 시간을 모두 입력해주세요. 미완성 예약은 발송할 수 없습니다.</div>}
               <div className="mt-1 font-normal text-slate-400">서버 현재 시각보다 {delivery?.capabilities.minReservationMinutes ?? 10}분 이상 이후로 지정합니다.</div>
             </label>
           </div>
@@ -633,11 +642,12 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
 
       <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-5 shadow-sm 2xl:sticky 2xl:top-5">
         <div className="mb-4 flex items-center justify-between"><b>미리보기</b><span className="text-xs text-slate-400">{msgType}</span></div>
+        <p className="mb-3 text-xs leading-5 text-slate-500">첫 번째 수신자 기준 · 이름·신청 시간대가 치환됩니다. 시간대가 ‘미지정’이면 신청 정보나 문구를 먼저 확인해주세요.</p>
         <div className="mx-auto max-w-[330px] rounded-[32px] border-[7px] border-slate-900 bg-slate-50 p-4 shadow-xl">
           <div className="mb-5 text-center text-[11px] font-bold text-slate-400">{selectedSender?prettyPhone(selectedSender.phone):"발신번호"}</div>
           <div className="rounded-2xl rounded-tl-md bg-white p-4 text-sm leading-6 shadow-sm">
             {title && <div className="mb-2 font-black">{title}</div>}
-            <div className="whitespace-pre-wrap">{message||"문자 내용을 입력하면 이곳에 미리 표시됩니다."}</div>
+            <div className="whitespace-pre-wrap">{previewMessage||"문자 내용을 입력하면 이곳에 미리 표시됩니다."}</div>
             {images.length>0 && <div className="mt-3 rounded-xl bg-slate-100 p-6 text-center text-xs text-slate-400"><ImagePlus className="mx-auto mb-1"/>이미지 {images.length}장 첨부</div>}
           </div>
           <div className="mt-2 text-right text-[10px] text-slate-400">수신 {recipients.length}명</div>
@@ -719,7 +729,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
             <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)setStaffAutomation((p)=>({...p,new_lead_template:t.body}));}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
           </label>
           <textarea value={staffAutomation.new_lead_template} onChange={(e)=>setStaffAutomation((p)=>({...p,new_lead_template:e.target.value}))} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
-          <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"}</div>
+          <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"} · 시간 미입력은 ‘미지정’. 이 담당자의 오픈채팅 링크는 문구에 직접 넣어주세요.</div>
           <label className="mt-4 flex min-h-24 cursor-pointer items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm font-bold text-slate-600"><ImagePlus size={20}/> 자동발송 이미지 ({newLeadAutoImages.length || staffAutomation.new_lead_image_paths.length}/3)<input type="file" accept="image/jpeg,image/png,image/gif" multiple className="hidden" onChange={(e)=>setNewLeadAutoImages(Array.from(e.target.files??[]).slice(0,3))}/></label>
           {(newLeadAutoImages.length>0 || staffAutomation.new_lead_image_paths.length>0) && <div className="mt-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{newLeadAutoImages.length>0 ? newLeadAutoImages.map((f)=><div key={f.name}>새 이미지 · {f.name}</div>) : staffAutomation.new_lead_image_paths.map((path)=><div key={path}>저장됨 · {path.split("/").pop()}</div>)}<button onClick={()=>{automationDirty.current=true;setNewLeadAutoImages([]);setStaffAutomation((p)=>({...p,new_lead_image_paths:[]}));}} className="mt-2 font-bold text-red-500">이미지 제거</button></div>}
         </section>
@@ -730,7 +740,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
             <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)setStaffAutomation((p)=>({...p,absence_template:t.body}));}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
           </label>
           <textarea value={staffAutomation.absence_template} onChange={(e)=>setStaffAutomation((p)=>({...p,absence_template:e.target.value}))} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
-          <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"}</div>
+          <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"} · 시간 미입력은 ‘미지정’. 이 담당자의 오픈채팅 링크는 문구에 직접 넣어주세요.</div>
           <label className="mt-4 flex min-h-24 cursor-pointer items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm font-bold text-slate-600"><ImagePlus size={20}/> 자동발송 이미지 ({absenceAutoImages.length || staffAutomation.absence_image_paths.length}/3)<input type="file" accept="image/jpeg,image/png,image/gif" multiple className="hidden" onChange={(e)=>setAbsenceAutoImages(Array.from(e.target.files??[]).slice(0,3))}/></label>
           {(absenceAutoImages.length>0 || staffAutomation.absence_image_paths.length>0) && <div className="mt-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{absenceAutoImages.length>0 ? absenceAutoImages.map((f)=><div key={f.name}>새 이미지 · {f.name}</div>) : staffAutomation.absence_image_paths.map((path)=><div key={path}>저장됨 · {path.split("/").pop()}</div>)}<button onClick={()=>{automationDirty.current=true;setAbsenceAutoImages([]);setStaffAutomation((p)=>({...p,absence_image_paths:[]}));}} className="mt-2 font-bold text-red-500">이미지 제거</button></div>}
         </section>
@@ -759,7 +769,8 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4"><h2 className="flex items-center gap-2 font-black"><BookOpen size={17}/> 문구 템플릿</h2><p className="text-xs text-slate-400">자주 쓰는 안내문을 저장해 발송화면에서 바로 불러옵니다.</p></div>
+        <div className="mb-4"><h2 className="flex items-center gap-2 font-black"><BookOpen size={17}/> 문구 템플릿</h2><p className="text-xs text-slate-400">템플릿명·분류·내용 입력 → 문구 저장 → 문자 보내기의 저장 문구에서 선택합니다.</p></div>
+        <div className="mb-4 rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-900">고객명은 {"{고객명}"}, 신청 시간대는 {"{상담시간대}"}로 입력하세요. 담당자마다 다른 오픈채팅 링크는 담당자 이름을 붙인 문구에 각각 넣어 저장하면 됩니다. 자동발송에는 ‘자동발송’ 탭에서 담당자를 선택하고 해당 문구를 불러와 별도로 저장하세요. 문구 저장만으로 자동발송이 켜지거나 이전 문자가 재발송되지 않습니다.</div>
         <div className="space-y-2">{templates.map((t)=><div key={t.id} className="rounded-xl border border-slate-100 p-3"><div className="flex items-center justify-between"><div><span className="mr-2 rounded bg-slate-100 px-2 py-1 text-[10px] font-bold">{t.category}</span><b className="text-sm">{t.name}</b></div>{canManage&&<button onClick={()=>void deleteTemplate(t.id)} className="text-red-400"><Trash2 size={15}/></button>}</div><div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-500">{t.body}</div><button disabled={busy || !!pendingRequest || !canSend} onClick={()=>{if(sending.current || pendingRef.current)return;setMessage(t.body);setTab("send");}} className="mt-2 text-xs font-bold text-blue-600 disabled:opacity-40">이 문구로 보내기</button></div>)}</div>
         {canManage && <div className="mt-4 rounded-xl bg-slate-50 p-3">
           <div className="grid grid-cols-[1fr_110px] gap-2"><input value={newTemplate.name} onChange={(e)=>setNewTemplate((p)=>({...p,name:e.target.value}))} placeholder="템플릿명" className="h-10 rounded-lg border border-slate-200 px-3 text-sm"/><select value={newTemplate.category} onChange={(e)=>setNewTemplate((p)=>({...p,category:e.target.value}))} className="h-10 rounded-lg border border-slate-200 bg-white px-2 text-sm"><option>일반</option><option>상담</option><option>분납</option><option>서류</option><option>공지</option></select></div>

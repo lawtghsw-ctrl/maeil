@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { mondayWeekday, MONDAY_WEEKDAYS } from "@/lib/calendar-date";
 
 function parseDate(value: string): Date | null {
   const [y, m, d] = value.split("-").map(Number);
@@ -46,6 +47,7 @@ export function DateRangePicker({
   const [draftStart, setDraftStart] = useState(start);
   const [draftEnd, setDraftEnd] = useState(end);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
 
   function closeWithoutApply() {
     setOpen(false);
@@ -79,7 +81,7 @@ export function DateRangePicker({
     const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
     const last = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
     const list: (Date | null)[] = [];
-    for (let i = 0; i < first.getDay(); i++) list.push(null);
+    for (let i = 0; i < mondayWeekday(first.getDay()); i++) list.push(null);
     for (let d = 1; d <= last.getDate(); d++) list.push(new Date(cursor.getFullYear(), cursor.getMonth(), d));
     while (list.length % 7) list.push(null);
     return list;
@@ -124,7 +126,11 @@ export function DateRangePicker({
   return (
     <div ref={root} className={cn("relative", className)}>
       <button
+        ref={trigger}
         type="button"
+        aria-label="조회 기간 선택"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         onClick={toggleOpen}
         className="flex h-10 w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:w-auto sm:min-w-[250px]"
       >
@@ -134,20 +140,20 @@ export function DateRangePicker({
         </span>
       </button>
       {open && (
-        <div className="absolute right-0 z-[85] mt-2 w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+        <div role="dialog" aria-label="조회 기간 달력" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeWithoutApply(); trigger.current?.focus(); } }} className="absolute right-0 z-[85] mt-2 w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
           <div className="mb-3 flex items-center justify-between">
-            <button type="button" onClick={() => setCursor(addMonths(cursor, -1))} className="grid size-9 place-items-center rounded-lg hover:bg-slate-100">
+            <button type="button" aria-label="이전 달" onClick={() => setCursor(addMonths(cursor, -1))} className="grid size-9 place-items-center rounded-lg hover:bg-slate-100">
               <ChevronLeft size={17} />
             </button>
             <div className="font-bold">
               {cursor.getFullYear()}년 {cursor.getMonth() + 1}월
             </div>
-            <button type="button" onClick={() => setCursor(addMonths(cursor, 1))} className="grid size-9 place-items-center rounded-lg hover:bg-slate-100">
+            <button type="button" aria-label="다음 달" onClick={() => setCursor(addMonths(cursor, 1))} className="grid size-9 place-items-center rounded-lg hover:bg-slate-100">
               <ChevronRight size={17} />
             </button>
           </div>
           <div className="mb-1 grid grid-cols-7 text-center text-[11px] font-semibold text-slate-400">
-            {["일", "월", "화", "수", "목", "금", "토"].map((x) => (
+            {MONDAY_WEEKDAYS.map((x) => (
               <div key={x} className="py-1">
                 {x}
               </div>
@@ -168,6 +174,8 @@ export function DateRangePicker({
                 <button
                   type="button"
                   key={v}
+                  aria-label={v}
+                  aria-pressed={inRangeVal}
                   onClick={() => pick(v)}
                   className={cn(
                     "mx-auto grid size-9 place-items-center rounded-lg text-sm transition hover:bg-blue-50 hover:text-blue-700",

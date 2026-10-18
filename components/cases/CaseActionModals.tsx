@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 // v22: 고객관리와 계약관리를 통합하면서 고객관리에서 실제로 유지하기로 한
 // 분납관리 / 전자계약서 / 서류안내문 전송 3개 기능만 계약 상세에서 재사용합니다.
@@ -220,22 +221,22 @@ function CaseInstallmentModal({
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <Label text="납부 예정일">
-                <input
-                  type="date"
+                <DateInput
+                  aria-label="납부 예정일"
                   className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-10 sm:text-sm"
                   value={row.dueDate}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => update(index, { dueDate: e.target.value })}
+                  onValueChange={value => update(index, { dueDate: value })}
                 />
               </Label>
               <Label text="회차 금액">
                 <NumberInput value={row.amount} onChange={(value) => update(index, { amount: value })} />
               </Label>
               <Label text="실제 입금일">
-                <input
-                  type="date"
+                <DateInput
+                  aria-label="실제 입금일"
                   className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:h-10 sm:text-sm"
                   value={row.paidDate ?? ""}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => update(index, { paidDate: e.target.value })}
+                  onValueChange={value => update(index, { paidDate: value })}
                 />
               </Label>
               <Label text="상태">

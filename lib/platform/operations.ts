@@ -2,10 +2,18 @@ import { buildSupplyConversionCohorts, supplyConversionUncertainty, type SupplyC
 
 /** Platform-only commercial operations. Amounts are integer KRW; absent facts remain null. */
 export type SupplyContractStatus = "draft" | "active" | "paused" | "ended";
+export interface ContractBillingTerms {
+  version: 1; quantityBasis: "monthly" | "total"; totalQuantity: number | null;
+  cycleBasis: "calendar_month" | "contract_month";
+  paymentTiming: "unspecified" | "prepaid" | "postpaid";
+  lastPartial: "prorate" | "full" | "included";
+}
 export interface SupplyContract {
   id: string; law_firm_id: string; product: string; category: string;
   unit_price: number | null; monthly_quantity: number | null; start_date: string; end_date: string;
   status: SupplyContractStatus; confirmed_at: string | null; revision: number; created_at: string; updated_at: string;
+  /** Null means legacy conditions were never explicitly recorded. */
+  billing_terms?: ContractBillingTerms | null;
 }
 export interface SupplyAdjustment {
   id: string; law_firm_id: string; contract_id: string | null; ledger_id: string | null;
@@ -60,7 +68,7 @@ export interface OperationsReport {
   projectedRevenue: number | null; projectedProfit: number | null; projectedOperatingProfit: number | null;
   trend: Array<{ month: string; revenue: number | null; adSpend: number | null; profit: number | null }>;
   sources: Array<{ firmName: string; source: string; sourceName?: string; denominator: number; numerator: number; missing: number; rate: number | null }>;
-  forecastMonths: Array<{ month: string; committed: number; pipeline: number; projectedRevenue: number; projectedProfit: number | null; projectedOperatingProfit: number | null; pendingProposals: number }>;
+  forecastMonths: Array<{ month: string; committed: number; pipeline: number; projectedRevenue: number; projectedProfit: number | null; projectedOperatingProfit: number | null; pendingProposals: number; unallocatedContracts?: number }>;
   peopleCosts: Array<{ id: string; name: string; incentive: number; total: number; automatic: boolean }>;
   /** Compare inside the month lock before closing, so a concurrent receipt cannot disappear from a snapshot. */
   adjustmentCount: number;
@@ -73,6 +81,8 @@ export interface OperationsReport {
 export interface OperationsResponse {
   firms: OperationFirm[]; contracts: SupplyContract[]; adjustments: SupplyAdjustment[]; ledger: OperationLedger[];
   month: OperationsMonth | null; closings: OperationsClosing[]; report: OperationsReport; ledgerTruncated: boolean; ledgerOffset: number; ledgerCount: number; commercialProfiles: CommercialProfile[];
+  /** All dates, only explicitly linked receipts; absent means unrecorded, not zero. */
+  contractReceipts?: Array<{ contractId: string; firmId: string; amount: number; count: number }>;
 }
 export const OPERATIONS_DEFINITIONS = [
   "공급수는 신규·재유입 공급 원장의 건수입니다. 과거 이관(backfill)은 제외하며, 수임료 매출과 구분합니다.",
@@ -95,6 +105,72 @@ export function opsDate(v: unknown): v is string {
 export function opsToday(now = new Date()): string { return new Date(now.getTime() + 9 * 3600000).toISOString().slice(0, 10); }
 export function shiftOpsMonth(month: string, delta: number): string { const [y, m] = month.split("-").map(Number); return new Date(Date.UTC(y, m - 1 + delta, 1)).toISOString().slice(0, 7); }
 export function opsBounds(month: string) { if (!opsMonth(month)) throw new Error("올바른 조회월을 선택해주세요."); return { start: month + "-01", end: new Date(Date.parse(shiftOpsMonth(month, 1) + "-01T00:00:00Z") - 86400000).toISOString().slice(0, 10) }; }
+export function validateContractBillingTerms(value: unknown): ContractBillingTerms | null {
+  if (value === null) return null;
+  const v = obj(value); keys(v, ["version", "quantityBasis", "totalQuantity", "cycleBasis", "paymentTiming", "lastPartial"]);
+  if (v.version !== 1 || !["monthly", "total"].includes(String(v.quantityBasis)) || !["calendar_month", "contract_month"].includes(String(v.cycleBasis)) || !["unspecified", "prepaid", "postpaid"].includes(String(v.paymentTiming)) || !["prorate", "full", "included"].includes(String(v.lastPartial))) throw new Error("계약 수량·회차·결제 조건을 선택해주세요.");
+  const totalQuantity = nullable(v.totalQuantity, 10000000);
+  if (v.quantityBasis === "total" ? !totalQuantity : totalQuantity !== null) throw new Error("총 수량은 총량 계약에서만 양수로 입력해주세요.");
+  return { version: 1, quantityBasis: v.quantityBasis as ContractBillingTerms["quantityBasis"], totalQuantity,
+    cycleBasis: v.cycleBasis as ContractBillingTerms["cycleBasis"], paymentTiming: v.paymentTiming as ContractBillingTerms["paymentTiming"], lastPartial: v.lastPartial as ContractBillingTerms["lastPartial"] };
+}
+export interface ContractBillingPlan {
+  configured: boolean; quantityBasis: "monthly" | "total"; monthlyAmount: number | null;
+  totalQuantity: number | null; totalAmount: number | null;
+  periods: Array<{ number: number; start: string; end: string; days: number; fullDays: number; partial: boolean; extraIncluded: boolean; quantity: number | null; amount: number | null; dueDate: string | null }>;
+}
+/** This is an explicit agreement preview, never actual receipts or ledger revenue.
+ * Existing calendar-prorated operations forecasts are intentionally unchanged.
+ * Contract-month anchors are clamped from the original start day (no Feb drift).
+ * Monthly amounts are rounded once per payment period to whole KRW.
+ */
+export function contractBillingPlan(contract: Pick<SupplyContract, "unit_price" | "monthly_quantity" | "start_date" | "end_date" | "billing_terms">): ContractBillingPlan {
+  if (!opsDate(contract.start_date) || !opsDate(contract.end_date) || contract.start_date > contract.end_date || Date.parse(contract.end_date) - Date.parse(contract.start_date) > 3660 * 86400000) throw new Error("계약 기간을 확인해주세요.");
+  const terms = contract.billing_terms == null ? null : validateContractBillingTerms(contract.billing_terms);
+  const quantityBasis = terms?.quantityBasis ?? "monthly", cycleBasis = terms?.cycleBasis ?? "calendar_month";
+  const valid = (value: number | null) => value !== null && Number.isSafeInteger(value) && value >= 0;
+  const quantity = quantityBasis === "total" ? terms!.totalQuantity : contract.monthly_quantity;
+  const unit = valid(contract.unit_price) ? contract.unit_price : null;
+  const base = valid(quantity) && unit !== null ? unit * quantity! : null;
+  if (base !== null && !Number.isSafeInteger(base)) throw new Error("약정금액이 정확하게 계산할 수 있는 범위를 초과했습니다.");
+  const periods: ContractBillingPlan["periods"] = [];
+  const dayBefore = (day: string) => new Date(Date.parse(day + "T00:00:00Z") - 86400000).toISOString().slice(0, 10);
+  const days = (start: string, end: string) => (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
+  function addPeriod(start: string, end: string, fullStart: string, fullEnd: string) {
+    const partial = start !== fullStart || end !== fullEnd;
+    const lastPartial = partial && end === contract.end_date;
+    const policy = lastPartial ? terms?.lastPartial ?? "prorate" : "prorate";
+    const factor = quantityBasis === "total" ? 1 : lastPartial && policy === "included" ? 0 : lastPartial && policy === "full" ? 1 : days(start, end) / days(fullStart, fullEnd);
+    periods.push({ number: periods.length + 1, start, end, days: days(start, end), fullDays: days(fullStart, fullEnd), partial,
+      extraIncluded: quantityBasis === "monthly" && lastPartial && policy === "included",
+      quantity: valid(quantity) ? quantity! * factor : null, amount: base === null ? null : Math.round(base * factor),
+      dueDate: terms?.paymentTiming === "prepaid" ? start : terms?.paymentTiming === "postpaid" ? end : null });
+  }
+  if (quantityBasis === "total") addPeriod(contract.start_date, contract.end_date, contract.start_date, contract.end_date);
+  else if (cycleBasis === "calendar_month") {
+    for (let month = contract.start_date.slice(0, 7); month <= contract.end_date.slice(0, 7); month = shiftOpsMonth(month, 1)) {
+      const b = opsBounds(month); addPeriod(b.start < contract.start_date ? contract.start_date : b.start, b.end > contract.end_date ? contract.end_date : b.end, b.start, b.end);
+    }
+  } else {
+    const [year, month, day] = contract.start_date.split("-").map(Number);
+    const anchor = (offset: number) => { const first = new Date(Date.UTC(year, month - 1 + offset, 1)); const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate(); return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10); };
+    for (let offset = 0, start = anchor(0); start <= contract.end_date; offset++, start = anchor(offset)) { const fullEnd = dayBefore(anchor(offset + 1)); addPeriod(start, fullEnd > contract.end_date ? contract.end_date : fullEnd, start, fullEnd); }
+  }
+  const totalAmount = periods.some(p => p.amount === null) ? null : sum(periods.map(p => p.amount!));
+  const totalQuantity = periods.some(p => p.quantity === null) ? null : sum(periods.map(p => p.quantity!));
+  return { configured: terms !== null, quantityBasis, monthlyAmount: quantityBasis === "monthly" ? base : null, totalAmount, totalQuantity, periods };
+}
+export function contractReceiptTotals(contracts: SupplyContract[], adjustments: SupplyAdjustment[]): NonNullable<OperationsResponse["contractReceipts"]> {
+  const owners = new Map(contracts.map(c => [c.id, c.law_firm_id]));
+  const totals = new Map<string, { contractId: string; firmId: string; amount: number; count: number }>();
+  for (const row of adjustments) {
+    if (row.kind !== "receipt" || !row.contract_id || owners.get(row.contract_id) !== row.law_firm_id) continue;
+    if (!Number.isSafeInteger(row.amount) || row.amount < 0) throw new Error("실입금 기록의 금액을 확인해주세요.");
+    const item = totals.get(row.contract_id) ?? { contractId: row.contract_id, firmId: row.law_firm_id, amount: 0, count: 0 };
+    item.amount = sum([item.amount, row.amount]); item.count++; totals.set(row.contract_id, item);
+  }
+  return [...totals.values()];
+}
 const obj = (v: unknown): Record<string, unknown> => { if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("입력 형식을 확인해주세요."); return v as Record<string, unknown>; };
 function keys(v: Record<string, unknown>, allowed: string[]) { if (Object.keys(v).some(k => !allowed.includes(k))) throw new Error("허용되지 않은 입력 항목입니다."); }
 function str(v: unknown, max: number, empty = false): string { if (typeof v !== "string" || v.length > max || (!empty && !v.trim()) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(v)) throw new Error("문자 입력 길이와 내용을 확인해주세요."); return v.trim(); }
@@ -129,14 +205,17 @@ export function validateOperationCommand(input: unknown): Record<string, unknown
     return { ...v, expectedRevision: num(v.expectedRevision, 2147483646) };
   }
   if (action === "contract") {
-    keys(v, ["action", "id", "expectedRevision", "law_firm_id", "product", "category", "unit_price", "monthly_quantity", "start_date", "end_date", "status"]);
+    keys(v, ["action", "id", "expectedRevision", "law_firm_id", "product", "category", "unit_price", "monthly_quantity", "start_date", "end_date", "status", "billing_terms"]);
     if ((v.id !== null && !opsUuid(v.id)) || !opsUuid(v.law_firm_id)) throw new Error("계약 또는 로펌 ID를 확인해주세요.");
     if (!opsDate(v.start_date) || !opsDate(v.end_date) || v.end_date < v.start_date || Date.parse(v.end_date) - Date.parse(v.start_date) > 3660 * 86400000) throw new Error("계약 기간은 10년 이내의 올바른 날짜여야 합니다.");
     if (!["draft", "active", "paused", "ended"].includes(String(v.status))) throw new Error("계약 상태를 확인해주세요.");
     const unit_price = nullable(v.unit_price), monthly_quantity = nullable(v.monthly_quantity, 10000000);
-    if (v.status === "active" && (!unit_price || !monthly_quantity)) throw new Error("확정 활성 계약은 단가와 월 약정량을 입력해야 합니다.");
+    const billing_terms = "billing_terms" in v ? validateContractBillingTerms(v.billing_terms) : undefined;
+    if (billing_terms?.quantityBasis === "total" && monthly_quantity !== null) throw new Error("총 수량 계약은 월 약정량을 비워주세요.");
+    if (v.status === "active" && (!unit_price || !(billing_terms?.quantityBasis === "total" ? billing_terms.totalQuantity : monthly_quantity))) throw new Error("확정 활성 계약은 양수 단가와 약정 수량을 입력해야 합니다.");
     if (unit_price !== null && monthly_quantity !== null && !Number.isSafeInteger(unit_price * monthly_quantity)) throw new Error("월 약정금액이 정확하게 계산할 수 있는 범위를 초과했습니다.");
-    return { action, id: v.id, expectedRevision: num(v.expectedRevision, 2147483646), law_firm_id: v.law_firm_id, product: str(v.product, 100), category: str(v.category, 100), unit_price, monthly_quantity, start_date: v.start_date, end_date: v.end_date, status: v.status };
+    contractBillingPlan({ unit_price, monthly_quantity, start_date: v.start_date, end_date: v.end_date, billing_terms });
+    return { action, id: v.id, expectedRevision: num(v.expectedRevision, 2147483646), law_firm_id: v.law_firm_id, product: str(v.product, 100), category: str(v.category, 100), unit_price, monthly_quantity, start_date: v.start_date, end_date: v.end_date, status: v.status, ...(billing_terms !== undefined ? { billing_terms } : {}) };
   }
   if (action === "adjustment") {
     keys(v, ["action", "id", "law_firm_id", "contract_id", "ledger_id", "event_date", "kind", "quantity", "amount", "reason"]);
@@ -331,6 +410,9 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
   const forecastMonths = Array.from({ length: 3 }, (_, i) => {
     const key = shiftOpsMonth(month, i + 1), b = opsBounds(key), prior = new Date(Date.parse(b.start) - 86400000).toISOString().slice(0, 10);
     const activeContracts = input.contracts.filter(c => selectedIds.has(c.law_firm_id) && c.status === "active" && c.confirmed_at && c.unit_price && c.start_date <= b.end && c.end_date >= b.start);
+    // A whole-term agreement has no monthly allocation. Keep the legacy money
+    // calculation intact, but mark its incomplete totals for honest display.
+    const unallocatedContracts = activeContracts.filter(c => c.billing_terms?.quantityBasis === "total").length;
     const committed = sum(activeContracts.map(c => ((plannedSupply(c, b.end) ?? 0) - (plannedSupply(c, prior) ?? 0)) * c.unit_price!));
     let pendingProposals = 0; const values: number[] = [];
     for (const sale of sales) {
@@ -345,7 +427,7 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
     const pipeline = sum(values), projectedRevenue = committed + pipeline;
     const projectedProfit = config.goals.margin === null ? null : projectedRevenue * config.goals.margin / 100;
     const futureOperatingCost = monthRow && (config.costs.length || config.people.length) ? sum([...config.costs.map(c => c.amount), ...config.people.map(p => p.base + incentiveForPerson(p, sales, key).amount + p.employerCost)]) : null;
-    return { month: key, committed, pipeline, projectedRevenue, projectedProfit, projectedOperatingProfit: projectedProfit !== null && futureOperatingCost !== null ? projectedProfit - futureOperatingCost : null, pendingProposals };
+    return { month: key, committed, pipeline, projectedRevenue, projectedProfit, projectedOperatingProfit: projectedProfit !== null && futureOperatingCost !== null ? projectedProfit - futureOperatingCost : null, pendingProposals, ...(unallocatedContracts ? { unallocatedContracts } : {}) };
   });
   const activeProgress = contracts.filter(p => p.contract.status === "active" && p.contract.confirmed_at);
   const lifecycleFirmIds = new Set(selected.filter(f => f.status === "active" && dbSupply.has(f.id)).map(f => f.id));

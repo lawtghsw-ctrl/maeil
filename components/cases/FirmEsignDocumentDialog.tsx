@@ -1,4 +1,5 @@
 "use client";
+import { DateInput } from "@/components/ui/DateInput";
 
 import { useEffect, useRef, useState } from "react";
 import type { CaseRecord, Client } from "@/lib/types";
@@ -46,7 +47,7 @@ export default function FirmEsignDocumentDialog({ open, client, caseRecord, onCl
       {!data && !error && <p className="text-sm text-slate-500">로펌 연결정보 확인 중...</p>}
       {data && <>
         <div className="rounded-lg border p-3 text-xs leading-6 text-slate-600"><b>{data.templateName || "이 사건유형 템플릿 미등록"}</b><p>현재 상태: {data.status}{data.fixedYear ? ` · 템플릿 고정연도 ${data.fixedYear}년` : ""}</p>{!data.configured && <p className="text-amber-700">로파워 관리자에게 이 로펌의 계정·템플릿 등록을 요청해주세요.</p>}</div>
-        {!data.sendBlocked && !attempted && <div className="grid gap-3 sm:grid-cols-2">{(Object.keys(labels) as (keyof Fields)[]).map(key => <Label key={key} text={labels[key]}><Input aria-label={`전자계약 ${key}`} type={key === "residentNumber" ? "password" : key === "contractDate" ? "date" : "text"} autoComplete="off" disabled={busy} value={form[key]} onChange={e => { setForm(previous => ({ ...previous, [key]: e.target.value })); setConfirmed(false); }}/></Label>)}</div>}
+        {!data.sendBlocked && !attempted && <div className="grid gap-3 sm:grid-cols-2">{(Object.keys(labels) as (keyof Fields)[]).map(key => <Label key={key} text={labels[key]}>{key === "contractDate" ? <DateInput aria-label={`전자계약 ${key}`} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-base sm:h-10 sm:text-sm" disabled={busy} value={form[key]} onValueChange={value => { setForm(previous => ({ ...previous, [key]: value })); setConfirmed(false); }}/> : <Input aria-label={`전자계약 ${key}`} type={key === "residentNumber" ? "password" : "text"} autoComplete="off" disabled={busy} value={form[key]} onChange={e => { setForm(previous => ({ ...previous, [key]: e.target.value })); setConfirmed(false); }}/>}</Label>)}</div>}
         {!data.sendBlocked && !attempted && <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><input aria-label="실제 전자계약 발송 확인" type="checkbox" checked={confirmed} disabled={busy || !data.configured} onChange={e => setConfirmed(e.target.checked)} className="mt-1"/>수신번호 {form.phone}와 계약 내용을 확인했으며, 고객에게 실제 서명 요청을 발송합니다.</label>}
       </>}
       <div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={onClose}>닫기</Button><Button variant="secondary" disabled={busy || !data} onClick={() => void run("status")}>서명상태 확인</Button><Button disabled={busy || !data?.configured || data.sendBlocked || attempted || !confirmed} onClick={() => void run("send")}>{busy ? "요청 중..." : "실제 서명 요청 전송"}</Button></div>

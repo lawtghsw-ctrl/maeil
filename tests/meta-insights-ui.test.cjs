@@ -16,6 +16,7 @@ function harness({ role = 'super_admin', active = true, auth } = {}) {
   const authJson = async (url, init) => { calls.push({ url, init }); return auth ? auth(url, init) : report(); };
   vm.runInNewContext(`(function(require,module,exports){${source}\n})`, { React, Date, Intl, AbortController, setTimeout, clearTimeout }, { filename: 'MetaInsights.tsx' })(name => {
     if (name === 'react') return React;
+      if (name === '@/components/ui/DateInput') return { DateInput: ({ onValueChange, onIncompleteChange, ...props }) => React.createElement('input', { ...props, type: 'date', onChange: event => onValueChange(event.target.value) }) };
     if (name === 'lucide-react') return new Proxy({}, { get: (_t, key) => props => React.createElement('svg', { ...props, 'data-icon': key }) });
     if (name === '@/lib/platform/client') return { authJson };
     if (name === '@/lib/store') return { useStoreSession: () => session };
@@ -39,7 +40,7 @@ test('firm admin and inactive super see no costs, tokens, or API calls', async (
 test('range changes abort old reads and ignore out-of-order old responses', async () => {
   const pending = [];
   const h = harness({ auth: () => { const d = deferred(); pending.push(d); return d.promise; } }); await h.mount();
-  await act(async () => { h.tree().root.findByProps({ 'aria-label': '광고 조회 시작일' }).props.onChange({ target: { value: '2026-09-01' } }); });
+  await act(async () => { h.tree().root.findByProps({ 'aria-label': '광고 조회 시작일' }).props.onValueChange('2026-09-01'); });
   assert.equal(h.calls[0].init.signal.aborted, true);
   await act(async () => pending[1].resolve(report({ totals: { ...report().totals, spend: 22000 } })));
   await act(async () => pending[0].resolve(report({ totals: { ...report().totals, spend: 99999 } })));

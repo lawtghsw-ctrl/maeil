@@ -6,6 +6,7 @@
 // 형식(YYYY-MM-DDTHH:mm)을 그대로 유지합니다.
 import type { ChangeEvent } from "react";
 import { kstDateStr } from "@/lib/consultation";
+import { DateInput } from "@/components/ui/DateInput";
 
 const RESERVATION_MINUTES = ["00", "10", "20", "30", "40", "50"] as const;
 const RESERVATION_HOURS = Array.from({ length: 24 }, (_, hour) => {
@@ -39,11 +40,11 @@ export function ReservationDateTimeEditor({
 
   return (
     <div className={`flex min-w-0 flex-wrap items-center gap-1 ${compact ? "sm:flex-nowrap" : "w-full sm:flex-nowrap"}`}>
-      <input
-        type="date"
+      <DateInput
         value={date}
         disabled={disabled}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => commit(e.target.value, hour || "10", minute || "00")}
+        aria-label="예약 날짜"
+        onValueChange={nextDate => commit(nextDate, hour || "10", minute || "00")}
         className={`${compact ? "w-[126px]" : "min-w-[122px] flex-1"} h-8 rounded-md border border-amber-200 bg-amber-50 px-2 text-[11px] font-semibold text-amber-900 outline-none focus:border-amber-400 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300`}
       />
       <select

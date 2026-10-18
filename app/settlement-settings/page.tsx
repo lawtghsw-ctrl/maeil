@@ -11,16 +11,22 @@ import {
   type IncentiveMode,
   type ManagementSettings,
   type StandardFeeRule,
+  type StaffCompensationRule,
   useManagementSettings,
 } from "@/lib/management-analytics";
 import { fmtWon } from "@/lib/format";
 import { Card, PageHeader } from "@/components/ui/Primitives";
+import { DateInput } from "@/components/ui/DateInput";
 
 import { useFirmSupply } from "@/lib/use-firm-supply";
 import { FirmSupplyCard } from "@/components/analytics/FirmSupplyCard";
 
 const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
-const INCENTIVE_MODES: IncentiveMode[] = ["회수매출%", "수임액%", "건당고정"];
+const INCENTIVE_MODES: { value: IncentiveMode; label: string; description: string }[] = [
+  { value: "건당고정", label: "건당 정액 (원)", description: "선택 기간 계약일의 담당 사건 수 × 건당 금액" },
+  { value: "수임액%", label: "수임료 기준 (%)", description: "선택 기간 계약일의 담당 사건 수임료 합계 × 비율 · 입금 여부와 무관" },
+  { value: "회수매출%", label: "실입금 기준 (%)", description: "선택 기간 납부일의 완료 입금 중 실제 납부액 합계 × 비율 · 이전 계약의 입금도 포함" },
+];
 const FEE_PAYERS: FeePayer[] = ["사무소 부담", "고객 부담", "해당 없음"];
 
 function todayIso() {
@@ -52,9 +58,12 @@ export default function SettlementSettingsPage() {
   const liveFirm = useRef(effectiveFirmId); liveFirm.current = effectiveFirmId;
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [unconfirmedIncentives, setUnconfirmedIncentives] = useState<string[]>([]);
+  const [compensationError, setCompensationError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(ensureStaffCompensations(activeSettings, workStaffNames));
+    setUnconfirmedIncentives([]); setCompensationError(null);
   }, [activeSettings, workStaffNames]);
 
   const month = currentMonth();
@@ -78,6 +87,26 @@ export default function SettlementSettingsPage() {
     patch("feeRules", draft.feeRules.map((row) => row.id === id ? { ...row, ...values } : row));
   }
 
+  function changeIncentiveMode(row: StaffCompensationRule, mode: IncentiveMode) {
+    const changesUnit = (row.incentiveMode === "건당고정") !== (mode === "건당고정");
+    const original = activeSettings.staffCompensations.find(item => item.staff === row.staff);
+    const restoresSavedValue = original?.incentiveMode === mode && original.incentiveValue === row.incentiveValue;
+    if (changesUnit) setUnconfirmedIncentives(previous => restoresSavedValue ? previous.filter(staff => staff !== row.staff) : [...new Set([...previous, row.staff])]);
+    setCompensationError(null);
+    patch("staffCompensations", draft.staffCompensations.map(item => item.staff === row.staff ? { ...item, incentiveMode: mode } : item));
+  }
+
+  function changeIncentiveValue(staff: string, raw: string) {
+    setUnconfirmedIncentives(previous => raw.trim() ? previous.filter(name => name !== staff) : [...new Set([...previous, staff])]);
+    setCompensationError(null);
+    patch("staffCompensations", draft.staffCompensations.map(item => item.staff === staff ? { ...item, incentiveValue: n(raw) } : item));
+  }
+
+  function hasChangedInvalidRate(row: StaffCompensationRule) {
+    const original = activeSettings.staffCompensations.find(item => item.staff === row.staff);
+    return row.incentiveMode !== "건당고정" && row.incentiveValue > 100 && (original?.incentiveMode !== row.incentiveMode || original.incentiveValue !== row.incentiveValue);
+  }
+
   function addFeeVersion(caseType: CaseType) {
     const latest = draft.feeRules.filter((row) => row.caseType === caseType).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
     const row: StandardFeeRule = {
@@ -88,6 +117,9 @@ export default function SettlementSettingsPage() {
   }
 
   async function handleSave(next = draft) {
+    if (unconfirmedIncentives.length) { setCompensationError(`${unconfirmedIncentives.join(", ")}의 인센티브 비율 또는 금액을 직접 입력해주세요.`); return; }
+    if (next.staffCompensations.some(hasChangedInvalidRate)) { setCompensationError("인센티브 비율은 0~100% 사이로 입력해주세요."); return; }
+    setCompensationError(null);
     const savingFirm = effectiveFirmId;
     setSaving(true); setSaved(false);
     try { const normalized = await save(next); if (liveFirm.current === savingFirm) { setDraft(normalized); setSaved(true); } }
@@ -118,9 +150,29 @@ export default function SettlementSettingsPage() {
         <Card className="p-5"><div className="text-xs font-bold text-slate-500">이번 달 입력 요약</div><div className="mt-3 space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-500">DB 구매비</span><b>{supply.data?.serviceMode==="crm_only"?"해당 없음":supply.data?.purchaseCost===null||!supply.data?"계약 확인 필요":fmtWon(supply.data.purchaseCost)}</b></div><div className="flex justify-between"><span className="text-slate-500">기본급 합계</span><b>{fmtWon(basePayroll)}</b></div><div className="flex justify-between"><span className="text-slate-500">월 고정 운영비</span><b>{fmtWon(fixedTotal)}</b></div></div></Card>
       </div>
 
-      <Card className="mt-4 overflow-hidden"><SectionTitle title="사무소 기준 수임료" sub="같은 사건유형이라도 적용 시작일별 버전을 남깁니다. 새 계약은 수임 당시 기준 스냅샷을 우선 적용합니다. 기존 계약은 계약일에 적용되는 기준으로 계산됩니다." /><div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr>{["사건유형","적용 시작일","기준 수임료","최저 허용 수임료","관리자 승인 할인액","관리"].map((h)=><th key={h} className="px-4 py-3 text-left">{h}</th>)}</tr></thead><tbody>{[...draft.feeRules].sort((a,b)=>a.caseType.localeCompare(b.caseType,"ko")||b.effectiveFrom.localeCompare(a.effectiveFrom)).map((row)=><tr key={row.id} className="border-t"><td className="px-4 py-3 font-bold">{row.caseType}</td><td className="px-4 py-3"><input type="date" value={row.effectiveFrom} onChange={(e)=>patchFee(row.id,{effectiveFrom:e.target.value})} className="h-9 rounded-lg border px-2"/></td><td className="px-4 py-3"><MoneyInput value={row.baseFee} onChange={(v)=>patchFee(row.id,{baseFee:v})}/></td><td className="px-4 py-3"><MoneyInput value={row.minFee} onChange={(v)=>patchFee(row.id,{minFee:v})}/></td><td className="px-4 py-3"><MoneyInput value={row.approvalDiscountAmount} onChange={(v)=>patchFee(row.id,{approvalDiscountAmount:v})}/></td><td className="px-4 py-3"><button onClick={()=>patch("feeRules",draft.feeRules.filter((x)=>x.id!==row.id))} className="rounded-lg border p-2 text-slate-400 hover:text-red-600"><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="flex flex-wrap gap-2 border-t p-4">{CASE_TYPE_OPTIONS.map((type)=><button key={type} onClick={()=>addFeeVersion(type)} className="rounded-lg border px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"><Plus size={12} className="mr-1 inline"/>{type} 새 기준</button>)}</div></Card>
+      <Card className="mt-4 overflow-hidden"><SectionTitle title="사무소 기준 수임료" sub="같은 사건유형이라도 적용 시작일별 버전을 남깁니다. 새 계약은 수임 당시 기준 스냅샷을 우선 적용합니다. 기존 계약은 계약일에 적용되는 기준으로 계산됩니다." /><div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr>{["사건유형","적용 시작일","기준 수임료","최저 허용 수임료","관리자 승인 할인액","관리"].map((h)=><th key={h} className="px-4 py-3 text-left">{h}</th>)}</tr></thead><tbody>{[...draft.feeRules].sort((a,b)=>a.caseType.localeCompare(b.caseType,"ko")||b.effectiveFrom.localeCompare(a.effectiveFrom)).map((row)=><tr key={row.id} className="border-t"><td className="px-4 py-3 font-bold">{row.caseType}</td><td className="px-4 py-3"><DateInput value={row.effectiveFrom} onValueChange={value=>patchFee(row.id,{effectiveFrom:value})} className="h-9 rounded-lg border px-2" aria-label="기준 수임료 적용 시작일"/></td><td className="px-4 py-3"><MoneyInput value={row.baseFee} onChange={(v)=>patchFee(row.id,{baseFee:v})}/></td><td className="px-4 py-3"><MoneyInput value={row.minFee} onChange={(v)=>patchFee(row.id,{minFee:v})}/></td><td className="px-4 py-3"><MoneyInput value={row.approvalDiscountAmount} onChange={(v)=>patchFee(row.id,{approvalDiscountAmount:v})}/></td><td className="px-4 py-3"><button onClick={()=>patch("feeRules",draft.feeRules.filter((x)=>x.id!==row.id))} className="rounded-lg border p-2 text-slate-400 hover:text-red-600"><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="flex flex-wrap gap-2 border-t p-4">{CASE_TYPE_OPTIONS.map((type)=><button key={type} onClick={()=>addFeeVersion(type)} className="rounded-lg border px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"><Plus size={12} className="mr-1 inline"/>{type} 새 기준</button>)}</div></Card>
 
-      <Card className="mt-4 overflow-hidden"><SectionTitle title="상담사별 보상 조건" sub="기본급 + 성과급 기준을 입력합니다. 데이터집계의 총 인건비·계약당 순이익·상담사별 기여이익에 반영됩니다." /><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr>{["상담사","계약 형태","월 기본급","성과급 기준","비율/금액","해지 시 환수"].map((h)=><th key={h} className="px-4 py-3 text-left">{h}</th>)}</tr></thead><tbody>{draft.staffCompensations.map((row)=><tr key={row.staff} className="border-t"><td className="px-4 py-3 font-bold">{row.staff}</td><td className="px-4 py-3"><select value={row.employmentType} onChange={(e)=>patch("staffCompensations",draft.staffCompensations.map((x)=>x.staff===row.staff?{...x,employmentType:e.target.value as "정규직"|"프리랜서"}:x))} className="h-9 rounded-lg border px-2"><option>정규직</option><option>프리랜서</option></select></td><td className="px-4 py-3"><MoneyInput value={row.baseSalary} onChange={(v)=>patch("staffCompensations",draft.staffCompensations.map((x)=>x.staff===row.staff?{...x,baseSalary:v}:x))}/></td><td className="px-4 py-3"><select value={row.incentiveMode} onChange={(e)=>patch("staffCompensations",draft.staffCompensations.map((x)=>x.staff===row.staff?{...x,incentiveMode:e.target.value as IncentiveMode}:x))} className="h-9 rounded-lg border px-2">{INCENTIVE_MODES.map((m)=><option key={m}>{m}</option>)}</select></td><td className="px-4 py-3"><div className="flex items-center gap-1"><input type="number" step="0.1" value={row.incentiveValue} onChange={(e)=>patch("staffCompensations",draft.staffCompensations.map((x)=>x.staff===row.staff?{...x,incentiveValue:n(e.target.value)}:x))} className="h-9 w-28 rounded-lg border px-3 text-right"/><span className="text-xs text-slate-400">{row.incentiveMode==="건당고정"?"원":"%"}</span></div></td><td className="px-4 py-3"><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={row.clawbackOnCancel} onChange={(e)=>patch("staffCompensations",draft.staffCompensations.map((x)=>x.staff===row.staff?{...x,clawbackOnCancel:e.target.checked}:x))}/> 적용</label></td></tr>)}</tbody></table></div></Card>
+      <Card className="mt-4 overflow-hidden">
+        <SectionTitle title="상담사별 인건비 · 인센티브" sub="월 기본급에 건당 정액 또는 수임료·실입금 기준 비율(%)을 더합니다. 총 인건비·계약당 순이익·상담사별 기여이익에 반영됩니다." />
+        <div className="overflow-x-auto"><table className="w-full min-w-[1150px] text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500"><tr>{["상담사", "계약 형태", "월 기본급", "인센티브 지급 방식", "비율 / 건당 금액", "취하 건 제외"].map(h => <th key={h} className="px-4 py-3 text-left">{h}</th>)}</tr></thead>
+          <tbody>{draft.staffCompensations.map(row => {
+            const fixed = row.incentiveMode === "건당고정";
+            const unconfirmed = unconfirmedIncentives.includes(row.staff);
+            const mode = INCENTIVE_MODES.find(item => item.value === row.incentiveMode);
+            return <tr key={row.staff} className="border-t align-top">
+              <td className="px-4 py-3 font-bold">{row.staff}</td>
+              <td className="px-4 py-3"><select aria-label={`${row.staff} 계약 형태`} value={row.employmentType} onChange={e => patch("staffCompensations", draft.staffCompensations.map(item => item.staff === row.staff ? { ...item, employmentType: e.target.value as "정규직" | "프리랜서" } : item))} className="h-9 rounded-lg border px-2"><option>정규직</option><option>프리랜서</option></select></td>
+              <td className="px-4 py-3"><MoneyInput value={row.baseSalary} onChange={value => patch("staffCompensations", draft.staffCompensations.map(item => item.staff === row.staff ? { ...item, baseSalary: value } : item))}/></td>
+              <td className="max-w-[320px] px-4 py-3"><select aria-label={`${row.staff} 인센티브 지급 방식`} value={row.incentiveMode} onChange={e => changeIncentiveMode(row, e.target.value as IncentiveMode)} className="h-9 rounded-lg border px-2">{INCENTIVE_MODES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select><p className="mt-2 text-[11px] leading-5 text-slate-500">{mode?.description}</p></td>
+              <td className="px-4 py-3"><div className="flex items-center gap-1"><input aria-label={`${row.staff} ${fixed ? "건당 인센티브 금액" : "인센티브 비율"}`} aria-invalid={unconfirmed || hasChangedInvalidRate(row)} type="number" min="0" max={fixed ? undefined : 100} step={fixed ? "1" : "0.1"} value={unconfirmed ? "" : row.incentiveValue} placeholder={fixed ? "금액 입력" : "비율 입력"} onChange={e => changeIncentiveValue(row.staff, e.target.value)} className="h-9 w-28 rounded-lg border px-3 text-right"/><span className="text-xs text-slate-500">{fixed ? "원 / 건" : "%"}</span></div>{unconfirmed && <p className="mt-2 max-w-48 text-[11px] leading-5 text-amber-700">단위 변경 · {fixed ? "금액" : "비율"}을 직접 입력해주세요.</p>}</td>
+              <td className="px-4 py-3"><label className="flex items-center gap-2 text-xs"><input aria-label={`${row.staff} 취하 건 제외`} type="checkbox" checked={row.clawbackOnCancel} onChange={e => patch("staffCompensations", draft.staffCompensations.map(item => item.staff === row.staff ? { ...item, clawbackOnCancel: e.target.checked } : item))}/> 적용</label><p className="mt-2 max-w-40 text-[11px] leading-5 text-slate-500">{row.clawbackOnCancel ? "취하 사건과 해당 입금은 인센티브 계산에서 제외" : "취하 사건과 해당 입금도 인센티브 계산에 포함"}</p></td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+        <div className="border-t bg-slate-50 px-5 py-3 text-xs leading-5 text-slate-500">수임료 기준은 계약일, 실입금 기준은 완료 입금의 납부일로 조회 기간을 판단합니다. 조건 변경은 마감되지 않은 조회 기간에 적용되며, 마감된 월은 당시 조건과 확정 합계를 유지합니다.</div>
+        {compensationError && <p role="alert" className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-xs font-semibold text-amber-800">{compensationError}</p>}
+      </Card>
 
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">

@@ -1,6 +1,6 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { readOperationsMeta } from "./operations-meta";
-import { buildOperationsReport, opsBounds, opsDate, shiftOpsMonth, validateOperationsConfig, type OperationSale, type CommercialProfile, type OperationFirm, type OperationLedger, type OperationsInput, type OperationsMonth, type OperationsResponse, type SupplyContract, type SupplyAdjustment, type OperationsClosing, type OperationLead, type OperationCase } from "./operations";
+import { buildOperationsReport, contractReceiptTotals, opsBounds, opsDate, shiftOpsMonth, validateOperationsConfig, type OperationSale, type CommercialProfile, type OperationFirm, type OperationLedger, type OperationsInput, type OperationsMonth, type OperationsResponse, type SupplyContract, type SupplyAdjustment, type OperationsClosing, type OperationLead, type OperationCase } from "./operations";
 
 type Admin = ReturnType<typeof createAdminClient>;
 type Result = { data: unknown[] | null; error: { message: string } | null };
@@ -36,7 +36,9 @@ export async function loadOperations(admin: Admin, month: string, includeDemo: b
   const [firms, contracts, adjustments, ledger, monthRows, settingRows, closings, commercialProfiles, sales, metaCosts, adSources, stageRows, caseRows] = await Promise.all([
     allOperationRows<OperationFirm>((f, t) => abort(admin.from("law_firms").select("id,name,status,firm_code,billing_type").order("id").range(f, t)), r => r.id),
     allOperationRows<SupplyContract>((f, t) => abort(admin.from("platform_supply_contracts").select("*").order("id").range(f, t)), r => r.id),
-    allOperationRows<SupplyAdjustment>((f, t) => abort(admin.from("platform_supply_adjustments").select("id,law_firm_id,contract_id,ledger_id,event_date,kind,quantity,amount,reason,created_at").gte("event_date", months[0] + "-01").lte("event_date", opsBounds(month).end).order("id").range(f, t)), r => r.id),
+    // Contract receipts are all-time facts. Existing monthly report/rows still
+    // apply their exact original date filters below.
+    allOperationRows<SupplyAdjustment>((f, t) => abort(admin.from("platform_supply_adjustments").select("id,law_firm_id,contract_id,ledger_id,event_date,kind,quantity,amount,reason,created_at").order("id").range(f, t)), r => r.id),
     allOperationRows<OperationLedger>((f, t) => abort(admin.from("lead_supply_ledger").select("id,law_firm_id,lead_id,classification,billable,billing_type,unit_price_snapshot,supplied_at,origin,supply_contract_id,supply_contract_revision,ad_source_id").neq("origin", "backfill").lt("supplied_at", end).order("id").range(f, t)), r => r.id),
     allOperationRows<OperationsMonth>((f, t) => abort(admin.from("platform_operations_months").select("*").gte("month", months[0]).lte("month", month).order("month").range(f, t)), r => r.month),
     allOperationRows<{ law_firm_id: string; value: unknown }>((f, t) => abort(admin.from("firm_settings").select("law_firm_id,value").eq("key", "management_analytics_v1").order("law_firm_id").range(f, t)), r => r.law_firm_id),
@@ -69,5 +71,5 @@ export async function loadOperations(admin: Admin, month: string, includeDemo: b
     return { month: m, revenue: r.totals.revenue, adSpend: r.totals.adSpend, profit: r.totals.profit };
   });
   const selectedLedger = ledger.filter(l => Date.parse(l.supplied_at) >= Date.parse(month + "-01T00:00:00+09:00")).sort((a, b) => b.supplied_at.localeCompare(a.supplied_at) || a.id.localeCompare(b.id));
-  return { firms, contracts, adjustments: adjustments.filter(a => a.event_date.slice(0, 7) === month), ledger: selectedLedger.slice(ledgerOffset, ledgerOffset + 500), ledgerTruncated: selectedLedger.length > ledgerOffset + 500, ledgerOffset, ledgerCount: selectedLedger.length, month: selectedMonth, closings, report, commercialProfiles };
+  return { firms, contracts, contractReceipts: contractReceiptTotals(contracts, adjustments), adjustments: adjustments.filter(a => a.event_date.slice(0, 7) === month), ledger: selectedLedger.slice(ledgerOffset, ledgerOffset + 500), ledgerTruncated: selectedLedger.length > ledgerOffset + 500, ledgerOffset, ledgerCount: selectedLedger.length, month: selectedMonth, closings, report, commercialProfiles };
 }
