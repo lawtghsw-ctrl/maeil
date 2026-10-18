@@ -18,7 +18,7 @@
 // 최종 서버 반영은 기존처럼 [저장] 버튼으로 확정하되, 작성 중 draft는 고객 ID별 localStorage에
 // 임시보관합니다. 팝업 닫힘/새로고침/세션 문제 뒤 다시 열면 자동 복구하며, 서버 저장 성공이
 // 확인된 뒤에만 임시본을 삭제합니다. 저장되지 않은 상태에서 닫을 때는 확인 경고도 표시합니다.
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   REQUIRED_CONSULTATION_FIELDS,
   checkConsultationRequired,
@@ -58,6 +58,7 @@ import { DebtListSection } from "./DebtListSection";
 import { ConsultationMemoSection } from "./ConsultationMemoSection";
 import { Download, ShieldCheck, ShieldAlert } from "lucide-react";
 import { fmtWon } from "@/lib/format";
+import type { ConsultationPdfMemoDraft, ConsultationPdfSnapshot } from "@/lib/consultation-pdf-data";
 
 type Updater<T> = (updater: T | ((prev: T) => T)) => void;
 
@@ -182,6 +183,16 @@ export function ConsultationModal({
   const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null);
   const [savePending, setSavePending] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pdfPending, setPdfPending] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const pdfSequence = useRef(0);
+  const pdfBusy = useRef(false);
+  const memoDraftRef = useRef<ConsultationPdfMemoDraft>();
+  const captureMemoDraft = useCallback((value: ConsultationPdfMemoDraft) => { memoDraftRef.current = value; }, []);
+  useEffect(() => {
+    pdfSequence.current++; pdfBusy.current = false; setPdfPending(false); setPdfError(null); memoDraftRef.current = undefined;
+    return () => { pdfSequence.current++; pdfBusy.current = false; };
+  }, [open, resetKey]);
 
   // 대상이 바뀌면(resetKey 변경) 서버 저장본을 기본값으로 채운 뒤, 같은 고객의 로컬 임시본이
   // 있으면 그 값을 우선 복구합니다. 팝업 닫힘/새로고침/세션 만료가 있어도 작성 중 내용이
@@ -363,6 +374,35 @@ export function ConsultationModal({
   const missingKeys = useMemo(() => new Set(completeness.missingFields.map((f) => f.key)), [completeness]);
   const requiredKeys = useMemo(() => new Set(REQUIRED_CONSULTATION_FIELDS.map((f) => f.key)), []);
 
+  async function exportPdf() {
+    if (!draftReady || pdfBusy.current) return;
+    pdfBusy.current = true;
+    const sequence = ++pdfSequence.current;
+    setPdfPending(true); setPdfError(null);
+    try {
+      // Capture before any lazy load so subsequent editing cannot change this export.
+      const snapshot: ConsultationPdfSnapshot = structuredClone({
+        name: allowNameEdit ? (editedName.trim() || displayName) : displayName,
+        phone: displayPhone, joinedAtLabel, caseNumberLabel, applicationType,
+        detailStage: showDetailStage ? detailStage : undefined,
+        reservationChoice, reservationAt, consultation: draft, result,
+        finance: showFinanceSummary ? { contractAmount, paidAmount, outstandingAmount: Math.max(0, outstandingAmount) } : undefined,
+        memoDraft: readOnly ? undefined : memoDraftRef.current,
+        exportedAt: new Date().toISOString(),
+        hasUnsavedChanges: hasUnsavedChanges || (!readOnly && !!memoDraftRef.current?.text.trim()),
+      });
+      const pdf = await import("@/lib/consultation-pdf");
+      if (sequence !== pdfSequence.current) return;
+      const blob = await pdf.createConsultationPdf(snapshot);
+      if (sequence !== pdfSequence.current) return;
+      pdf.downloadConsultationPdf(blob, snapshot);
+    } catch {
+      if (sequence === pdfSequence.current) setPdfError("PDF를 만들지 못했습니다. 작성 내용은 그대로 유지됩니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      if (sequence === pdfSequence.current) { pdfBusy.current = false; setPdfPending(false); }
+    }
+  }
+
   async function save() {
     if (readOnly || savePending) return;
     if (allowNameEdit && !editedName.trim()) {
@@ -539,7 +579,7 @@ export function ConsultationModal({
           </div>
 
           <div className="min-h-[190px] xl:col-start-1">
-            <ConsultationMemoSection memoLog={memoLog} setMemoLog={setMemoLog} />
+            <ConsultationMemoSection key={resetKey} memoLog={memoLog} setMemoLog={setMemoLog} onDraftChange={captureMemoDraft} />
           </div>
           <div className="min-h-[190px] xl:col-span-2 xl:col-start-2">
             <DebtListSection loanRecords={loanRecords} setLoanRecords={setLoanRecords} setAttachedFiles={setAttachedFiles} />
@@ -549,7 +589,10 @@ export function ConsultationModal({
       </fieldset>
 
       <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" className="h-7 sm:h-7 px-2 text-[10px]" onClick={exportPdf} disabled={pdfPending || !draftReady}>
+            <Download size={12} /> {pdfPending ? "PDF 만드는 중..." : "상담일지 A4 PDF 다운로드"}
+          </Button>
           {onExportExcel && (
             <Button variant="secondary" className="h-7 sm:h-7 px-2 text-[10px]" onClick={() => onExportExcel(draft)}>
               <Download size={12} /> 고객 상담 엑셀 다운로드
@@ -561,6 +604,7 @@ export function ConsultationModal({
           {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save} disabled={savePending}>{savePending ? "저장 중..." : "저장"}</Button>}
         </div>
       </div>
+      {pdfError && <p role="alert" className="mt-2 text-xs text-red-600">{pdfError}</p>}
     </Modal>
   );
 }

@@ -1,3 +1,5 @@
+import { buildSupplyConversionCohorts, supplyConversionUncertainty, type SupplyConversionResult, type SupplyConversionCase } from "../performance/supply-conversion";
+
 /** Platform-only commercial operations. Amounts are integer KRW; absent facts remain null. */
 export type SupplyContractStatus = "draft" | "active" | "paused" | "ended";
 export interface SupplyContract {
@@ -19,8 +21,8 @@ export interface OperationLedger {
 export function operationSupplyLabel(classification: string): string {
   return ({ new: "신규", reentry: "재유입", duplicate_external: "중복 · 동일 유입", duplicate_meta: "중복 · Meta", duplicate_phone: "중복 · 전화번호" } as Record<string, string>)[classification] ?? "확인 필요";
 }
-export interface OperationLead { id: string; law_firm_id: string; data: { convertedCaseId?: string; convertedClientId?: string; detailStage?: string; status?: string; stageUpdatedAt?: string; contactLog?: Array<{ at: string; type: string; connected?: boolean }> } }
-export interface OperationCase { id: string; law_firm_id: string; data: { status?: string; contractAmount?: number } }
+export interface OperationLead { id: string; law_firm_id: string; data: { assignedStaff?: string; convertedCaseId?: string; convertedClientId?: string; detailStage?: string; status?: string; stageUpdatedAt?: string; contactLog?: Array<{ at: string; type: string; connected?: boolean }> } }
+export interface OperationCase { id: string; law_firm_id: string; data: { fromLeadId?: string; status?: string; contractAmount?: number } }
 export interface OperationsConfig {
   goals: { newFirms: number | null; activeFirms: number | null; newMrr: number | null; supply: number | null; margin: number | null };
   costs: Array<{ id: string; name: string; amount: number; category: "fixed" | "sales_ad" }>;
@@ -47,6 +49,9 @@ export interface OperationsFirmMetrics {
   suppliedDb: number; phoneAttemptedDb: number; connectedDb: number; unconnectedDb: number; unknownConnectionDb: number; contactRate: number | null;
   consultedDb: number; missingConsultationDb: number; consultationRate: number | null;
   neglectedDb: number; stageRecordedDb: number; stageUnrecordedDb: number;
+  /** Absent in older, immutable month-closing snapshots. */
+  supplyCohort?: SupplyConversionResult["supplyCohort"];
+  matureCohort?: SupplyConversionResult["matureCohort"];
 }
 export interface OperationsReport {
   month: string; generatedAt: string; includeDemo: boolean; excludedDemo: number; firms: OperationsFirmMetrics[];
@@ -60,6 +65,8 @@ export interface OperationsReport {
   /** Compare inside the month lock before closing, so a concurrent receipt cannot disappear from a snapshot. */
   adjustmentCount: number;
   activeFirmCount: number; remainingRevenue: number | null;
+  /** Current-day lifecycle; endedFirms uses the recorded end_date, not an unrecorded cancellation date. */
+  contractLifecycle?: { asOf: string; activeFirms: number; newFirms: number; renewalFirms: number; endedFirms: number; monthlyQuantity: number | null };
   unregisteredFirms: number;
   alerts: Array<{ kind: "risk" | "warning" | "renewal"; firmId: string; message: string }>;
 }
@@ -193,7 +200,9 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
   const selected = demoFiltered.filter(f => !crmOnly.has(f.id));
   const selectedIds = new Set(selected.map(f => f.id));
   const leads = new Map(input.leads.map(l => [`${l.law_firm_id}\0${l.id}`, l]));
-  const cases = new Map(input.cases.map(c => [`${c.law_firm_id}\0${c.id}`, c]));
+  const conversionLeadsByFirm = new Map<string, OperationLead[]>(), conversionCasesByFirm = new Map<string, OperationCase[]>();
+  for (const lead of input.leads) { const group = conversionLeadsByFirm.get(lead.law_firm_id) ?? []; group.push(lead); conversionLeadsByFirm.set(lead.law_firm_id, group); }
+  for (const record of input.cases) { const group = conversionCasesByFirm.get(record.law_firm_id) ?? []; group.push(record); conversionCasesByFirm.set(record.law_firm_id, group); }
   const sourceNames = new Map((input.adSources ?? []).map(s => [`${s.law_firm_id}\0${s.id}`, s.name]));
   const stagesByFirm = new Map<string, Map<string, OperationLead>>();
   for (const lead of input.currentStageLeads ?? input.leads) {
@@ -205,6 +214,11 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
   const sources: OperationsReport["sources"] = [];
   const firms = selected.map(firm => {
     const all = ledgerByFirm.get(firm.id) ?? [];
+    const conversionInput = { firmId: firm.id, start: bounds.start, end: bounds.end, asOf: today,
+      leads: (conversionLeadsByFirm.get(firm.id) ?? []).map(l => ({ id: l.id, _lawFirmId: l.law_firm_id, assignedStaff: l.data.assignedStaff, convertedCaseId: l.data.convertedCaseId })),
+      cases: (conversionCasesByFirm.get(firm.id) ?? []).map(c => ({ id: c.id, _lawFirmId: c.law_firm_id, fromLeadId: c.data.fromLeadId, status: c.data.status, contractAmount: c.data.contractAmount } as SupplyConversionCase)) };
+    const conversion = buildSupplyConversionCohorts({ ...conversionInput, ledger: all });
+    const mature = conversion.matureCohort.supplied, converted = conversion.matureCohort.retained, missingConversions = supplyConversionUncertainty(conversion.matureCohort.quality);
     const rows = all.filter(r => kstDate(r.supplied_at).slice(0, 7) === month);
     const supplies = rows.filter(r => r.classification === "new" || r.classification === "reentry");
     const billed = rows.filter(r => r.billable);
@@ -224,10 +238,10 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
     // Distinct lead cohort: first supply within the selected month, not CRM contract-date cohort.
     const unique = new Map<string, OperationLedger>();
     for (const r of supplies) if (r.lead_id && (!unique.has(r.lead_id) || unique.get(r.lead_id)!.supplied_at > r.supplied_at)) unique.set(r.lead_id, r);
-    let mature = 0, converted = 0, missingConversions = 0, phoneAttempts = 0, phoneConnected = 0, phoneUnknownResults = 0;
+    let phoneAttempts = 0, phoneConnected = 0, phoneUnknownResults = 0;
     let phoneAttemptedDb = 0, connectedDb = 0, unconnectedDb = 0, unknownConnectionDb = 0, consultedDb = 0, missingConsultationDb = 0;
     const firstCallMinutes: number[] = [];
-    const sourceGroups = new Map<string, { denominator: number; numerator: number; missing: number }>();
+    const sourceGroups = new Map<string, OperationLedger[]>();
     for (const row of unique.values()) {
       const lead = leads.get(`${firm.id}\0${row.lead_id}`);
       const calls = Array.isArray(lead?.data.contactLog) ? lead.data.contactLog.filter(log => log && log.type === "phone" && Number.isFinite(Date.parse(log.at)) && Date.parse(log.at) >= Date.parse(row.supplied_at) && Date.parse(log.at) <= now.getTime()) : [];
@@ -247,15 +261,16 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
         if (lead.data.convertedClientId || ["상담", "설득필요", "착수금 안내"].includes(stage ?? "")) consultedDb++;
       }
       if (calls.length) firstCallMinutes.push((calls.reduce((earliest, c) => Math.min(earliest, Date.parse(c.at)), Infinity) - Date.parse(row.supplied_at)) / 60000);
-      if ((Date.parse(today + "T00:00:00Z") - Date.parse(kstDate(row.supplied_at) + "T00:00:00Z")) / 86400000 < 60) continue;
-      mature++;
-      const source = row.ad_source_id ?? "미연결"; const group = sourceGroups.get(source) ?? { denominator: 0, numerator: 0, missing: 0 }; group.denominator++;
-      const target = lead?.data.convertedCaseId ? cases.get(`${firm.id}\0${lead.data.convertedCaseId}`) : undefined;
-      if (!lead || (lead.data.convertedCaseId && !target)) { missingConversions++; group.missing++; }
-      else if (target && typeof target.data.contractAmount !== "boolean" && Number.isFinite(Number(target.data.contractAmount)) && Number(target.data.contractAmount) > 0 && target.data.status !== "취하") { converted++; group.numerator++; }
-      sourceGroups.set(source, group);
     }
-    for (const [source, group] of sourceGroups) sources.push({ firmName: firm.name, source, sourceName: sourceNames.get(`${firm.id}\0${source}`), ...group, rate: group.missing ? null : ratio(group.numerator, group.denominator) });
+    // Attribute a repeated DB to its earliest delivery's source. Missing links
+    // stay in that source's provisional denominator instead of disappearing.
+    const conversionUnique = new Map<string, OperationLedger>();
+    for (const row of supplies) if (row.lead_id && row.origin && (!conversionUnique.has(row.lead_id) || Date.parse(row.supplied_at) < Date.parse(conversionUnique.get(row.lead_id)!.supplied_at))) conversionUnique.set(row.lead_id, row);
+    for (const row of [...conversionUnique.values(), ...supplies.filter(r => !r.lead_id || !r.origin)]) { const source = row.ad_source_id ?? "미연결"; const group = sourceGroups.get(source) ?? []; group.push(row); sourceGroups.set(source, group); }
+    for (const [source, rows] of sourceGroups) {
+      const cohort = buildSupplyConversionCohorts({ ...conversionInput, ledger: rows }).matureCohort;
+      if (cohort.supplied || supplyConversionUncertainty(cohort.quality)) sources.push({ firmName: firm.name, source, sourceName: sourceNames.get(`${firm.id}\0${source}`), denominator: cohort.supplied, numerator: cohort.retained, missing: supplyConversionUncertainty(cohort.quality), rate: cohort.conversionRate });
+    }
     let neglectedDb = 0, stageRecordedDb = 0, stageUnrecordedDb = 0;
     for (const lead of stagesByFirm.get(firm.id)?.values() ?? []) {
       // Match the existing firm report's terminalLead; do not reinterpret stages.
@@ -272,7 +287,7 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
       receivable: revenue !== null && paid !== null ? revenue - paid : null, adSpend, adSource, profit, margin: profit !== null && revenue !== null ? ratio(profit, revenue) : null,
       cpl: adSpend !== null && supplies.length + replacements ? adSpend / (supplies.length + replacements) : null,
       averagePrice: revenue !== null && billed.length ? revenue / billed.length : null, replacementRate: ratio(replacements, supplies.length + replacements),
-      mature, converted, missingConversions, conversionRate: missingConversions ? null : ratio(converted, mature), absence: unconnectedDb, absenceRate: unknownConnectionDb ? null : ratio(unconnectedDb, phoneAttemptedDb),
+      ...conversion, mature, converted, missingConversions, conversionRate: conversion.matureCohort.conversionRate, absence: unconnectedDb, absenceRate: unknownConnectionDb ? null : ratio(unconnectedDb, phoneAttemptedDb),
       unlinked, contractCount: input.contracts.filter(c => c.law_firm_id === firm.id && c.status === "active" && c.start_date <= bounds.end && c.end_date >= bounds.start).length,
       phoneAttempts, phoneConnected, phoneConnectionRate: phoneUnknownResults ? null : ratio(phoneConnected, phoneAttempts), firstCallMedianMinutes, firstCallSamples: firstCallMinutes.length,
       suppliedDb, phoneAttemptedDb, connectedDb, unconnectedDb, unknownConnectionDb, contactRate: unknownConnectionDb || !phoneAttemptedDb || unlinked ? null : ratio(connectedDb, suppliedDb),
@@ -333,6 +348,16 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
     return { month: key, committed, pipeline, projectedRevenue, projectedProfit, projectedOperatingProfit: projectedProfit !== null && futureOperatingCost !== null ? projectedProfit - futureOperatingCost : null, pendingProposals };
   });
   const activeProgress = contracts.filter(p => p.contract.status === "active" && p.contract.confirmed_at);
+  const lifecycleFirmIds = new Set(selected.filter(f => f.status === "active" && dbSupply.has(f.id)).map(f => f.id));
+  const lifecycleContracts = input.contracts.filter(c => lifecycleFirmIds.has(c.law_firm_id) && c.confirmed_at && c.status !== "draft" && opsDate(c.start_date) && opsDate(c.end_date));
+  const currentContracts = lifecycleContracts.filter(c => c.status === "active" && c.start_date <= today && c.end_date >= today);
+  const renewalEnd = new Date(Date.parse(today + "T00:00:00Z") + 45 * 86400000).toISOString().slice(0, 10);
+  const firmCount = (rows: SupplyContract[]) => new Set(rows.map(c => c.law_firm_id)).size;
+  const contractLifecycle = { asOf: today, activeFirms: firmCount(currentContracts),
+    newFirms: firmCount(lifecycleContracts.filter(c => c.start_date >= bounds.start && c.start_date <= bounds.end)),
+    renewalFirms: firmCount(currentContracts.filter(c => c.end_date <= renewalEnd)),
+    endedFirms: firmCount(lifecycleContracts.filter(c => c.end_date >= bounds.start && c.end_date <= bounds.end)),
+    monthlyQuantity: currentContracts.some(c => !Number.isSafeInteger(c.monthly_quantity) || Number(c.monthly_quantity) <= 0) ? null : sum(currentContracts.map(c => c.monthly_quantity!)) };
   const remainingRevenue = activeProgress.length ? knownSum(activeProgress.map(p => p.remaining !== null && p.contract.unit_price !== null ? p.remaining * p.contract.unit_price : null)) : null;
   const alerts: OperationsReport["alerts"] = [];
   for (const p of activeProgress) {
@@ -345,6 +370,6 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
   }
   return { month, generatedAt: now.toISOString(), includeDemo, excludedDemo: input.firms.length - demoFiltered.length, firms, totals, contracts, operatingCost, operatingProfit, projectedRevenue, projectedProfit,
     projectedOperatingProfit: projectedProfit !== null && operatingCost !== null ? projectedProfit - operatingCost : null, trend: [], sources, forecastMonths, peopleCosts,
-    adjustmentCount: input.adjustments.filter(a => a.event_date.slice(0, 7) === month).length, activeFirmCount: new Set(activeProgress.map(p => p.contract.law_firm_id)).size, remainingRevenue, alerts,
+    adjustmentCount: input.adjustments.filter(a => a.event_date.slice(0, 7) === month).length, activeFirmCount: new Set(activeProgress.map(p => p.contract.law_firm_id)).size, contractLifecycle, remainingRevenue, alerts,
     unregisteredFirms: selected.filter(f => !dbSupply.has(f.id)).length };
 }

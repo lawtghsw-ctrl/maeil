@@ -36,8 +36,8 @@ const access = require('../lib/management-access.ts');
 const server = require('../lib/firm-reporting-server.ts');
 const route = require('../app/api/admin/firm-supply/route.ts');
 const firm = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
-const row = (id, patch={}) => ({ id, law_firm_id: firm, lead_id: `lead-${id}`, supplied_at: '2026-07-01T00:00:00Z', billable: true, unit_price_snapshot: 100, ...patch });
-const summary = (rows, cases=[]) => reporting.summarizeFirmSupply(firm,'2026-07-01','2026-10-31',rows,[],0,cases,'2026-10-18');
+const row = (id, patch={}) => ({ id, law_firm_id: firm, lead_id: `lead-${id}`, supplied_at: '2026-07-01T00:00:00Z', classification:'new',origin:'ingest',billable: true, unit_price_snapshot: 100, ...patch });
+const summary = (rows, cases=[]) => reporting.summarizeFirmSupply(firm,'2026-07-01','2026-10-31',rows,[],0,cases.map((c,i)=>({id:`case-${i}`,...c})),'2026-10-18',rows.filter(r=>r.lead_id).map(r=>({id:r.lead_id,_lawFirmId:r.law_firm_id,assignedStaff:''})));
 const settings = () => structuredClone(core.DEFAULT_MANAGEMENT_SETTINGS);
 
 test('actual receipts preserve zero and use old scheduled amount only when absent',()=>{ assert.equal(reporting.actualPayment({amount:100,actualPaidAmount:0}),0); assert.equal(reporting.actualPayment({amount:100,actualPaidAmount:35}),35); assert.equal(reporting.actualPayment({amount:100}),100); });

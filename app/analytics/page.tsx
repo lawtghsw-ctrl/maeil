@@ -34,8 +34,10 @@ function AnalyticsWorkspace() {
     const sequence = ++scopeRequest.current;
     setScopeError(null);
     const cached = firmDirectory.find(row => row.id === id);
-    if (cached) { enterSuperAdminFirmScope(cached); return; }
     try {
+      await authJson("/api/platform/firm-view", { method: "POST", body: JSON.stringify({ lawFirmId: id, action: "enter" }) });
+      if (sequence !== scopeRequest.current) return;
+      if (cached) { enterSuperAdminFirmScope(cached); return; }
       const { firm } = await authJson<{ firm: { id: string; firm_code: string; name: string; status: string } }>(`/api/platform/firms/${encodeURIComponent(id)}`);
       if (sequence !== scopeRequest.current) return;
       if (firm.id !== id || !["active", "suspended"].includes(firm.status)) throw new Error("로펌 정보를 확인하지 못했습니다.");

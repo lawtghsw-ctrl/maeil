@@ -243,9 +243,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const currentStaff = profile?.platformRole === "super_admin" ? undefined : profile?.staffName;
   const isAdmin = profile?.role === "admin";
   const isGlobalSuperAdmin = profile?.platformRole === "super_admin" && !superAdminFirmScope;
-  const effectiveFirmId =
-    profile?.lawFirmId ||
-    (profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : undefined);
+  const effectiveFirmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
 
   const globalViewPermissions = useMemo(() => new Set<PermissionKey>([
     "dashboard.view","dashboard.company_metrics","dashboard.company_todo","dashboard.finance","dashboard.installment_calendar","dashboard.schedule_calendar","dashboard.statistics",
@@ -397,7 +395,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         role:p.role==="admin" ? "admin" : "staff",platformRole:p.platform_role || "staff",lawFirmId:p.law_firm_id || undefined,
         staffName:asStaffName(p.staff_name || p.display_name),isActive:true,isWorkStaff:p.is_work_staff!==false,permissions:(p.permissions ?? {}) as PermissionMap,
       };
-      const identityFirm = resolvedProfile.platformRole === "super_admin" && superAdminFirmScope?.id ? superAdminFirmScope.id : resolvedProfile.lawFirmId;
+      const identityFirm = resolvedProfile.platformRole === "super_admin" ? superAdminFirmScope?.id : resolvedProfile.lawFirmId;
       if (readScopeRef.current && readScopeRef.current.firmId !== identityFirm) {
         readScopeRef.current=null; loadedExtrasRef.current.clear(); setReadyExtras([]); setReadScopeKey(""); clearBusinessData(); setLoading(true);
       }
@@ -408,7 +406,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         id:firm.id,firmCode:String(firm.firm_code),name:firm.name,status:firm.status==="suspended" ? "suspended" : "active",
       }));
       const firmNames=new Map(firms.map(firm=>[firm.id,firm.name]));
-      let targetFirmId=resolvedProfile.lawFirmId;
+      let targetFirmId=resolvedProfile.platformRole==="super_admin"?undefined:resolvedProfile.lawFirmId;
       if (resolvedProfile.platformRole==="super_admin" && superAdminFirmScope?.id) {
         const scopedFirm=firms.find(firm=>firm.id===superAdminFirmScope.id);
         if (!scopedFirm) { exitSuperAdminFirmScope(); throw new Error("선택한 로펌 정보를 찾지 못했습니다."); }
@@ -424,12 +422,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
       setFirmDirectory(previous=>retainEqual(previous,firms));
       const routeTable=routeStoreTable(pathnameRef.current);
-      const tables=ENTITY_STORE_TABLES.filter(table=>CORE_STORE_TABLES.includes(table as typeof CORE_STORE_TABLES[number]) || loadedExtrasRef.current.has(table) || table===routeTable);
+      const tables=globalMode?[]:ENTITY_STORE_TABLES.filter(table=>CORE_STORE_TABLES.includes(table as typeof CORE_STORE_TABLES[number]) || loadedExtrasRef.current.has(table) || table===routeTable);
       const versions={...dataVersions.current};
       const [entities,directoryRes,settingsRes]=await Promise.all([
         Promise.all(tables.map(async table=>[table,await fetchEntityTable<unknown>(table,globalMode ? undefined : targetFirmId,firmNames)] as const)),
         globalMode
-          ? supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("is_work_staff",true).order("display_name")
+          ? Promise.resolve({data:[],error:null})
           : supabase.from("profiles").select("id,display_name,role,platform_role,law_firm_id,staff_name,is_active,is_work_staff,permissions").eq("law_firm_id",targetFirmId!).eq("is_work_staff",true).order("display_name"),
         globalMode ? Promise.resolve({data:null,error:null}) : supabase.from("firm_settings").select("key,value").eq("law_firm_id",targetFirmId!),
       ]);
@@ -465,7 +463,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (profileResult.error) throw profileResult.error;
     if (activeResult.error || activeResult.data!==true || retainEqual(scope.profileRow,profileResult.data)!==scope.profileRow) { await bootstrapData(batch); return; }
     const routeTable=routeStoreTable(pathnameRef.current);
-    const tables=[...batch.tables].filter((table):table is StoreEntityTable=>ENTITY_STORE_TABLES.includes(table as StoreEntityTable)
+    const tables=[...batch.tables].filter((table):table is StoreEntityTable=>Boolean(scope.firmId)&&ENTITY_STORE_TABLES.includes(table as StoreEntityTable)
       && (CORE_STORE_TABLES.includes(table as typeof CORE_STORE_TABLES[number]) || loadedExtrasRef.current.has(table) || table===routeTable));
     // Re-read the affected whole table so deletes/RLS-invisible rows disappear.
     // Preserve the original query's server row cap and response order.
@@ -488,7 +486,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   },[supabase,superAdminFirmScope?.id,superAdminFirmScope?.name,superAdminFirmScope?.firmCode,superAdminFirmScope?.status,invalidateScope,refreshQueue,reloadData]);
   useEffect(()=>{
     const table=routeStoreTable(pathname);
-    if (table && readScopeKey && !loadedExtrasRef.current.has(table)) {
+    if (table && readScopeKey && readScopeRef.current?.firmId && !loadedExtrasRef.current.has(table)) {
       const scopeAtStart=readScopeRef.current;
       const isCurrent=refreshQueue.checkpoint();
       void refreshQueue.enqueue({tables:[table]}).finally(()=>{
@@ -531,14 +529,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       timer=setTimeout(()=>{void refreshQueue.enqueue({full,tables:[...changed]});full=false;changed.clear();},180);
     };
     const channel=supabase.channel(`lawpower-live:${readScopeKey}`);
-    for(const table of [...ENTITY_STORE_TABLES,"app_settings","firm_settings","profiles","law_firms"]){
+    const subscribedTables=scope.firmId?[...ENTITY_STORE_TABLES,"app_settings","firm_settings","profiles","law_firms"]:["law_firms"];
+    for(const table of subscribedTables){
       const filter=scope.firmId && table!=="app_settings" ? `${table==="law_firms" ? "id" : "law_firm_id"}=eq.${scope.firmId}` : undefined;
       for(const event of ["INSERT","UPDATE"] as const) channel.on("postgres_changes",{event,schema:"public",table,...(filter?{filter}:{})},()=>schedule(table));
       // Supabase cannot tenant-filter DELETE events; fresh scoped reads are safe
       // even if RLS strips the old payload down to its primary key.
       channel.on("postgres_changes",{event:"DELETE",schema:"public",table},()=>schedule(table));
     }
-    if(scope.firmId)channel.on("postgres_changes",{event:"UPDATE",schema:"public",table:"profiles",filter:`id=eq.${scope.userId}`},()=>schedule("profiles"));
+    channel.on("postgres_changes",{event:"UPDATE",schema:"public",table:"profiles",filter:`id=eq.${scope.userId}`},()=>schedule("profiles"));
     let subscribedOnce=false;
     channel.subscribe(status=>{if(status==="SUBSCRIBED"){if(subscribedOnce)schedule("profiles");subscribedOnce=true;}});
     const onFocus=()=>{if(document.visibilityState==="visible")schedule("profiles");};
@@ -1189,7 +1188,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }), [loading, syncError, currentUser, profile, staffDirectory, workStaffNames, firmDirectory,
     superAdminFirmScope, enterSuperAdminFirmScope, exitSuperAdminFirmScope, isAdmin, currentStaff, can, reloadData, signOut]);
   const routeTable = routeStoreTable(pathname);
-  const waitingForRoute = !!readScopeKey && !!routeTable && !readyExtras.includes(routeTable);
+  const waitingForRoute = !!effectiveFirmId && !!readScopeKey && !!routeTable && !readyExtras.includes(routeTable);
   return (
     <AppStoreSessionContext.Provider value={sessionValue}>
     <AppStoreContext.Provider value={value}>

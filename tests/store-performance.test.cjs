@@ -118,7 +118,7 @@ let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++pass
   await check('Suspension clears business data and signs out',async()=>{fixture.active=false;await emit('app_leads');assert.equal(fixture.signOuts,1);assert.deepEqual(store.leads,[]);assert.equal(store.profile,null);});
   await unmount();
   await mount(true);
-  await check('Global superadmin preserves original all-firm query scope',()=>{assert.equal(store.leads.length,2);assert.ok(fixture.calls.filter(x=>x.table==='app_leads').every(x=>x.filters.length===0));});
+  await check('Global superadmin loads aggregates separately without customer entities or all-firm staff profiles',()=>{assert.deepEqual(store.leads,[]);assert.deepEqual(store.clients,[]);assert.deepEqual(store.cases,[]);assert.deepEqual(store.staffDirectory,[]);assert.ok(!fixture.calls.some(x=>['app_leads','app_clients','app_cases','app_installments','app_schedule_items'].includes(x.table)));assert.ok(fixture.calls.filter(x=>x.table==='profiles').every(x=>x.filters.some(([key,value])=>key==='id'&&value==='user-1')));assert.ok(fixture.channels.filter(x=>x.active).every(x=>x.handlers.every(h=>h.filter.table==='law_firms'||h.filter.table==='profiles'&&h.filter.event==='UPDATE'&&h.filter.filter==='id=eq.user-1')));});
   await check('Repeated platform mount exit while already global is a safe no-op',async()=>{const before=fixture.authCalls,previous=store.leads;await act(async()=>{session.exitSuperAdminFirmScope();session.exitSuperAdminFirmScope();});await tick();assert.equal(store.loading,false);assert.equal(store.leads,previous);assert.equal(fixture.authCalls,before);assert.ok(!JSON.stringify(view.toJSON()).includes('데이터를 불러오는 중'));});
   await check('Scope change drops late old snapshot, retains child state, exposes only new firm',async()=>{const originalDraft=draft;draft.set('firm-1','keep');const hold=fixture.hold('app_leads');fixture.emit('app_leads');await tick();await act(async()=>session.enterSuperAdminFirmScope({id:'firm-2',firmCode:'2222222222',name:'Firm Two',status:'active'}));assert.equal(mounts,1);assert.equal(draft,originalDraft);hold.resolve();await tick();assert.deepEqual(store.leads.map(x=>x.id),['L2']);assert.deepEqual(store.clients.map(x=>x.id),['C2']);assert.equal(draft.get('firm-1'),'keep');assert.equal(mounts,1);});
   await check('Selecting identical firm metadata preserves loaded scope without a spinner',async()=>{const before=fixture.authCalls,previous=store.leads;await act(async()=>session.enterSuperAdminFirmScope({...session.superAdminFirmScope}));await tick();assert.equal(store.loading,false);assert.equal(store.leads,previous);assert.equal(fixture.authCalls,before);assert.equal(mounts,1);});
@@ -146,6 +146,39 @@ let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++pass
   await unmount();
   await mount(false,'/',fixture=>{fixture.db.profiles[0].is_active=false;});
   await check('Inactive profile retains the original specific error message',()=>{assert.equal(store.syncError,'비활성 계정입니다. 관리자에게 계정 활성화를 요청해주세요.');assert.equal(store.profile,null);assert.deepEqual(store.leads,[]);});
+  await unmount();
+  for(const route of ['/changes','/board']){
+    await mount(true,route,fixture=>{fixture.db.profiles[0].law_firm_id='firm-1';});
+    await check(`Global direct ${route} entry with a legacy profile firm does not load private rows or wait forever`,async()=>{
+      assert.equal(store.loading,false);assert.equal(store.profile.lawFirmId,'firm-1');assert.equal(session.superAdminFirmScope,null);
+      assert.ok(!JSON.stringify(view.toJSON()).includes('데이터를 불러오는 중'));
+      for(const rows of [store.leads,store.clients,store.cases,store.installments,store.changeLog,store.posts,store.staffDirectory])assert.deepEqual(rows,[]);
+      assert.ok(fixture.calls.every(call=>['profiles','law_firms','rpc:is_active_user'].includes(call.table)));
+      const before=fixture.calls.length;await emit('profiles','UPDATE',{id:'other-staff',law_firm_id:'firm-2'});await emit('app_leads','UPDATE',{law_firm_id:'firm-1'});
+      assert.equal(fixture.calls.length,before);
+      await navigate('/');await navigate(route);assert.ok(!JSON.stringify(view.toJSON()).includes('데이터를 불러오는 중'));
+      assert.equal(fixture.calls.length,before);
+    });
+    await unmount();
+  }
+  await mount(true,'/',fixture=>{fixture.db.profiles[0].law_firm_id='firm-1';});
+  await check('Selected firm wins over a superadmin legacy profile firm for reads and existing-record updates',async()=>{
+    assert.deepEqual(store.leads,[]);assert.ok(!fixture.calls.some(call=>call.table.startsWith('app_')));
+    const firmOneBefore=JSON.stringify(Object.fromEntries(Object.entries(fixture.db).map(([table,rows])=>[table,rows.filter(row=>row.law_firm_id==='firm-1')])));
+    await act(async()=>session.enterSuperAdminFirmScope({id:'firm-2',firmCode:'2222222222',name:'Firm Two',status:'active'}));await tick();
+    assert.deepEqual(store.leads.map(row=>row.id),['L2']);assert.deepEqual(store.clients.map(row=>row.id),['C2']);
+    assert.equal(store.profile.lawFirmId,'firm-1');const before=fixture.calls.length;
+    let saved;await act(async()=>{saved=await store.updateLead('L2',{name:'Selected tenant update'});});await tick();
+    assert.equal(saved,true);assert.equal(store.syncError,null);
+    const writes=fixture.calls.slice(before).filter(call=>call.table==='app_leads'&&call.operation!=='select');
+    assert.equal(writes.length,1);assert.equal(writes[0].operation,'update');
+    assert.ok(writes[0].filters.some(([key,value])=>key==='law_firm_id'&&value==='firm-2'));
+    assert.equal(fixture.db.app_leads.find(row=>row.id==='L2').law_firm_id,'firm-2');
+    assert.equal(fixture.db.app_leads.find(row=>row.id==='L2').data.name,'Selected tenant update');
+    assert.equal(firmOneBefore,JSON.stringify(Object.fromEntries(Object.entries(fixture.db).map(([table,rows])=>[table,rows.filter(row=>row.law_firm_id==='firm-1')]))));
+    await act(async()=>session.exitSuperAdminFirmScope());await tick();
+    assert.deepEqual(store.leads,[]);assert.deepEqual(store.clients,[]);assert.equal(store.profile.lawFirmId,'firm-1');
+  });
   await unmount();
   console.log(`PASS ${passed} store checks; actual React renderer, offline Supabase fixture, zero network calls.`);
 })().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{global.setTimeout=realTimeout;Module._load=originalLoad;});

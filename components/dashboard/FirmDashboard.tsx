@@ -28,6 +28,7 @@ import { actualPayment, isValidRetainer, leadStageDays } from "@/lib/firm-report
 import { useFirmSupply } from "@/lib/use-firm-supply";
 import { closedTotalsForRange } from "@/lib/management-core";
 import { recordManagementExport } from "@/lib/management-export-client";
+import { LeadRetainerConversionCard } from "@/components/analytics/LeadRetainerConversionCard";
 
 function monthRange(){const d=new Date();const y=d.getFullYear(),m=d.getMonth()+1;return{start:`${y}-${String(m).padStart(2,"0")}-01`,end:`${y}-${String(m).padStart(2,"0")}-${String(new Date(y,m,0).getDate()).padStart(2,"0")}`}}
 function stageOf(lead:DbLead){return lead.detailStage??DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status]}
@@ -95,13 +96,14 @@ export default function FirmDashboard(){
   const paymentSummary=useMemo(()=>{const rows=installments.filter(i=>i.dueDate.startsWith(paymentMonth));const done=rows.filter(i=>i.status==="완료").reduce((s,i)=>s+actualPayment(i),0);const expected=rows.filter(i=>i.status!=="완료").reduce((s,i)=>s+i.amount,0);return{paid:done,expected,total:done+expected}},[installments,paymentMonth]);
   const hearingItems=useMemo<CalendarItem[]>(()=>scheduleItems.filter(s=>s.date.startsWith(hearingMonth)).map(s=>{const c=s.caseId?caseById.get(s.caseId):undefined;const client=c?clientById.get(c.clientId):undefined;return{id:s.id,date:s.date,label:client?.name??"-",sub:`${s.type} · ${s.title}`,done:s.done,amount:0}}),[scheduleItems,hearingMonth,caseById,clientById]);
 
-  const topCards=[[UserPlus,"당일신규 DB",top.newToday,"문자인사 완료"],[PhoneMissed,"컨택 필요 DB",top.contact,"단계별 컨택 대상"],[CalendarClock,"재통화약속 DB",top.recall,"예약 일정"],[PhoneCall,"상담중 DB",top.consulting,"현재 상담 단계"],[CheckCircle2,"상담완료 DB",top.completed,"후속 단계 포함"],[FileSignature,"계약건",periodCases.length,can("dashboard.finance")?fmtWon(contractSales):"선택 기간"]] as const;
+  const topCards=[[UserPlus,"당일신규 DB",top.newToday,"문자인사 완료"],[PhoneMissed,"컨택 필요 DB",top.contact,"단계별 컨택 대상"],[CalendarClock,"재통화약속 DB",top.recall,"예약 일정"],[PhoneCall,"상담중 DB",top.consulting,"현재 상담 단계"],[CheckCircle2,"상담완료 DB",top.completed,"후속 단계 포함"],[FileSignature,"기간 수임",periodCases.length,can("dashboard.finance")?`${fmtWon(contractSales)} · 계약일 기준`:"계약일 기준"]] as const;
 
   return <>
     <PageHeader title="대시보드" description={manager?(globalSuperView?"전체 로펌 운영 현황과 관리자 핵심지표를 확인합니다.":"영업 현황과 함께 계약 1건당 순이익·회수매출·DB 방치 위험을 바로 확인합니다."):"허용된 담당범위의 영업 현황과 일정을 확인합니다."} action={<DateRangePicker start={start} end={end} onChange={(s,e)=>{setStart(s);setEnd(e)}}/>}/>
     {manager&&(settingsError||supply.error)&&<Card className="mb-4 border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">설정/공급 자료 확인 필요: {settingsError||supply.error} 비용과 이익을 0원으로 해석하지 마세요.</Card>}
     {closed&&<Card className="mb-4 bg-emerald-50 p-3 text-xs text-emerald-800">선택한 완전한 월의 총 수임·입금·비용은 마감 확정값입니다. 상세 원장은 현재 저장된 업무 자료입니다.</Card>}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{topCards.map(([Icon,label,value,sub])=><Card key={label} className="p-4"><div className="flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><Icon size={16} className="text-blue-500"/></div><div className="mt-3 text-2xl font-black">{value}건</div><div className="mt-1 text-[11px] text-slate-400">{sub}</div></Card>)}</div>
+    {manager&&!globalSuperView&&<div className="mt-4 space-y-2">{supply.data?.supplyCohort?<LeadRetainerConversionCard start={start} end={end} basis="supply" totalDb={supply.data.supplyCohort.supplied} retainedDb={supply.data.supplyCohort.retained} conversionRate={supply.data.supplyCohort.conversionRate}/>:<Card className="p-4 text-xs text-slate-500">{supply.loading?"공급 원장 기준 수임 성과를 불러오는 중입니다.":"공급 원장 기준 수임 성과 확인 필요 · 0건으로 추정하지 않습니다."}</Card>}<Link href="/analytics" className="inline-flex px-1 text-xs font-semibold text-indigo-700">직원별 공급 DB·수임 전환 비교 →</Link></div>}
 
     {manager&&<>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><KpiCard label="계약 1건당 순이익" value={costKnown?fmtWon(netPer):"비용 확인 필요"}/><KpiCard label="회수 매출" value={fmtWon(paid)}/><KpiCard label="계약 / 월 목표" value={`${periodCases.length} / ${targetContracts || 0}건`}/><KpiCard label="회수율" value={`${collectionRate.toFixed(1)}%`}/><KpiCard label="DB 구매비" value={supply.data?.serviceMode==="crm_only"?"공급계약 없음":costKnown?fmtWon(acq):"계약 확인 필요"}/><KpiCard label="인건비" value={settingsError?"설정 확인 필요":fmtWon(labor)}/><KpiCard label="현재 미수금" value={fmtWon(receivable)}/><KpiCard label="현금 영업이익" value={costKnown?fmtWon(cashProfit):"비용 확인 필요"}/></div>

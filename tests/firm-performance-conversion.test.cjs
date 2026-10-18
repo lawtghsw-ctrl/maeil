@@ -200,8 +200,8 @@ test('shared conversion card renders the exact period, numerator and denominator
   const Card = module.LeadRetainerConversionCard ?? module.default;
   assert.equal(typeof Card, 'function');
   const html = renderToStaticMarkup(React.createElement(Card, { start, end, totalDb: 5, retainedDb: 2 }));
-  assert.match(html, /설정 기간 총 DB.*수임 전환율/); assert.match(html, /40(?:\.0)?%/);
-  assert.match(html, /수임 전환 2건 \/ 총 DB 5건/); assert.match(html, /로펌 전체 DB/);
+  assert.match(html, /월 접수 DB.*수임 전환율/); assert.match(html, /40(?:\.0)?%/);
+  assert.match(html, /수임 전환 2건 \/ 월 접수 DB 5건/); assert.match(html, /로펌 전체 DB/);
   assert.ok(html.includes(start)); assert.ok(html.includes(end));
   const empty = renderToStaticMarkup(React.createElement(Card, { start, end, totalDb: 0, retainedDb: 0 }));
   assert.match(empty, /기간 DB 없음/); assert.match(empty, /—/); assert.doesNotMatch(empty, /NaN|Infinity/);
@@ -212,6 +212,7 @@ test('firm overview renders contract conversion alongside the existing client co
     'next/dynamic': { __esModule: true, default: () => () => null },
     'next/link': { __esModule: true, default: ({ children, ...props }) => React.createElement('a', props, children) },
     '@/lib/platform/client': { authJson: () => { throw new Error('Network is forbidden'); } },
+    '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: null, loading: false, error: null }) },
     '@/components/ui/DateRangePicker': { DateRangePicker: () => null },
   });
   const input = report(), before = JSON.stringify(input);
@@ -220,8 +221,20 @@ test('firm overview renders contract conversion alongside the existing client co
   assert.match(html, /DB 고객전환율/); assert.match(html, /60\.0%/); assert.match(html, /유효 수임/);
   assert.equal(JSON.stringify(input), before);
   const filtered = renderToStaticMarkup(React.createElement(FirmPerformanceView, { report: report(fixture(), 'A'), selectedStaff: 'A', canManageLawyers: false }));
-  assert.match(filtered, /A 담당 DB/); assert.match(filtered, /수임 전환 2건 \/ 총 DB 2건/); assert.match(filtered, /100\.0%/);
+  assert.match(filtered, /A 담당 DB/); assert.match(filtered, /수임 전환 2건 \/ 월 접수 DB 2건/); assert.match(filtered, /100\.0%/);
 });
+
+function supplyFixture(rangeStart = start, rangeEnd = end) {
+  const quality = { unlinkedRows: 0, missingLeads: 0, duplicateSupplyRows: 0, unknownSupplyRows: 0, invalidSupplyDates: 0, unresolvedContracts: 0 };
+  const current = rangeStart.startsWith('2026-10') ? { supplied: 4, retained: 1, conversionRate: 25, staff: [
+    { key: 'A', name: 'A', kind: 'staff', db: 3, contractedDb: 1, conversionRate: 100 / 3 },
+    { key: 'B', name: 'B', kind: 'staff', db: 1, contractedDb: 0, conversionRate: 0 },
+    { key: 'No activity', name: 'No activity', kind: 'staff', db: 0, contractedDb: 0, conversionRate: null },
+  ], quality: { ...quality } } : { supplied: 0, retained: 0, conversionRate: null, staff: [], quality: { ...quality } };
+  return { firmId: 'firm-a', start: rangeStart, end: rangeEnd, serviceMode: 'crm_only', contracts: [], suppliedCount: 4, billableCount: 0,
+    replacedCount: 0, purchaseCost: 0, knownPurchaseCost: 0, missingPriceCount: 0, unlinkedCount: 0, monthly: [], weekly: [], byLead: [],
+    supplyCohort: current, matureCohort: { supplied: 1, retained: 1, conversionRate: 100, staff: [{ key: 'A', name: 'A', kind: 'staff', db: 1, contractedDb: 1, conversionRate: 100 }], cutoff: '2026-08-19', quality: { ...quality } } };
+}
 
 function renderLegacy(input, rangeStart, rangeEnd, manager = true, tableObserver) {
   const management = load('lib/management-core.ts');
@@ -243,8 +256,9 @@ function renderLegacy(input, rangeStart, rangeEnd, manager = true, tableObserver
         firmDirectory: [{ id: 'firm-a', status: 'active' }], profile: { role: manager ? 'admin' : 'staff', platformRole: manager ? 'firm_admin' : 'staff', lawFirmId: 'firm-a' } }) },
       '@/lib/management-analytics': { ...management, useManagementSettings: () => ({ globalSuperView: false, effectiveFirmId: 'firm-a',
         activeSettings: management.DEFAULT_MANAGEMENT_SETTINGS, settingsByFirm: {}, loading: false, error: null }) },
-      '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: { serviceMode: 'crm_only', purchaseCost: 0, byLead: [], matureCohort: { supplied: 0, retained: 0 } }, loading: false, error: null }) },
-      '@/components/ui/DateRangePicker': { DateRangePicker: () => null },
+      '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: supplyFixture(rangeStart, rangeEnd), loading: false, error: null }) },
+
+    '@/components/ui/DateRangePicker': { DateRangePicker: () => null },
       '@/components/analytics/FirmOperationsDetails': { FirmOperationsDetails: () => null },
       '@/components/analytics/FirmSupplyCard': { FirmSupplyCard: () => null },
       '@/lib/analytics-excel': { exportAnalyticsMeetingWorkbook: forbidden },
@@ -256,11 +270,11 @@ function renderLegacy(input, rangeStart, rangeEnd, manager = true, tableObserver
 test('default firm analytics renders the new cohort card for the selected dates and keeps it hidden from ordinary staff', () => {
   const input = freeze(fixture()), before = JSON.stringify(input);
   const current = renderLegacy(input, start, end);
-  assert.match(current, /설정 기간 총 DB.*수임 전환율/); assert.match(current, /수임 전환 2건 \/ 총 DB 5건/); assert.match(current, /40\.0%/);
+  assert.match(current, /월 접수 DB.*수임 전환율/); assert.match(current, /수임 전환 2건 \/ 월 접수 DB 5건/); assert.match(current, /40\.0%/);
   const later = renderLegacy(input, '2026-11-01', '2026-11-30');
-  assert.match(later, /2026-11-01 ~ 2026-11-30/); assert.match(later, /수임 전환 1건 \/ 총 DB 1건/); assert.match(later, /100\.0%/);
+  assert.match(later, /2026-11-01 ~ 2026-11-30/); assert.match(later, /수임 전환 1건 \/ 월 접수 DB 1건/); assert.match(later, /100\.0%/);
   const staff = renderLegacy(input, start, end, false);
-  assert.doesNotMatch(staff, /설정 기간 총 DB/); assert.match(staff, /관리자만 사용할 수 있습니다/);
+  assert.doesNotMatch(staff, /공급 원장 기준 수임 전환 성과|월 접수 DB/); assert.match(staff, /관리자만 사용할 수 있습니다/);
   assert.equal(JSON.stringify(input), before);
 });
 
@@ -315,12 +329,12 @@ test('default analytics staff rows reconcile to the same cohort card and retain 
     A: { db: 2, contractedDb: 2 }, B: { db: 3, contractedDb: 0 }, 'No activity': { db: 0, contractedDb: 0 }, '미지정': { db: 1, contractedDb: 1 }, 'Former staff': { db: 0, contractedDb: 0 },
   });
   assert.equal(props.rows.reduce((sum, row) => sum + row.db, 0), 6); assert.equal(props.rows.reduce((sum, row) => sum + row.contractedDb, 0), 3);
-  assert.match(html, /수임 전환 3건 \/ 총 DB 6건/); assert.match(html, /50\.0%/);
+  assert.match(html, /수임 전환 3건 \/ 월 접수 DB 6건/); assert.match(html, /50\.0%/);
   let later;
   const laterHtml = renderLegacy(input, '2026-11-01', '2026-11-30', true, value => { later = value; });
   assert.equal(later.rows.reduce((sum, row) => sum + row.db, 0), 1); assert.equal(later.rows.reduce((sum, row) => sum + row.contractedDb, 0), 1);
   assert.equal(staffCounts(later.rows).A.db, 1); assert.equal(staffCounts(later.rows).A.contractedDb, 1);
-  assert.match(laterHtml, /수임 전환 1건 \/ 총 DB 1건/);
+  assert.match(laterHtml, /수임 전환 1건 \/ 월 접수 DB 1건/);
   let empty;
   const emptyHtml = renderLegacy(input, '2027-01-01', '2027-01-31', true, value => { empty = value; });
   for (const name of ['A', 'B', 'No activity', 'Former staff']) assert.deepEqual(staffCounts(empty.rows)[name], { db: 0, contractedDb: 0 });
@@ -330,23 +344,109 @@ test('default analytics staff rows reconcile to the same cohort card and retain 
   assert.equal(staffRenderCount, 0); assert.equal(JSON.stringify(input), before);
 });
 
-test('selecting a staff member keeps the full firm comparison while the summary card follows that staff', () => {
+test('selecting a staff member preserves the whole supply cohort and keeps intake conversion separate', () => {
   let props;
   const { StaffRetainerConversionTable } = load('components/analytics/StaffRetainerConversionTable.tsx');
   const { FirmPerformanceView } = load('components/analytics/FirmPerformance.tsx', {
     'next/dynamic': { __esModule: true, default: () => () => null },
     'next/link': { __esModule: true, default: ({ children, ...rest }) => React.createElement('a', rest, children) },
     '@/lib/platform/client': { authJson: () => { throw new Error('Network is forbidden'); } },
+    '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: null, loading: false, error: null }) },
     '@/components/ui/DateRangePicker': { DateRangePicker: () => null },
-    './StaffRetainerConversionTable': { StaffRetainerConversionTable: value => { props = value; return React.createElement(StaffRetainerConversionTable, value); } },
+    './StaffRetainerConversionTable': { StaffRetainerConversionTable: value => { if (value.rows.length === 3) props = value; return React.createElement(StaffRetainerConversionTable, value); } },
   });
   const input = report(fixture(), 'A'), before = JSON.stringify(input);
-  const html = renderToStaticMarkup(React.createElement(FirmPerformanceView, { report: input, selectedStaff: 'A', canManageLawyers: false }));
-  assert.ok(props); assert.deepEqual(staffCounts(props.rows), staffCounts(input.staff));
-  assert.deepEqual(staffCounts(props.rows), { A: { db: 2, contractedDb: 2 }, B: { db: 3, contractedDb: 0 }, 'No activity': { db: 0, contractedDb: 0 } });
-  assert.equal(props.rows.reduce((sum, row) => sum + row.db, 0), 5);
-  assert.match(html, /A 담당 DB/); assert.match(html, /수임 전환 2건 \/ 총 DB 2건/);
+  const supply = freeze({ data: supplyFixture(), loading: false, error: null });
+  const html = renderToStaticMarkup(React.createElement(FirmPerformanceView, { report: input, supply, selectedStaff: 'A', canManageLawyers: false }));
+  assert.ok(props); assert.deepEqual(staffCounts(props.rows), staffCounts(supply.data.supplyCohort.staff));
+  assert.equal(props.basis, 'supply'); assert.equal(props.totalConversionRate, 25);
+  assert.equal(props.rows.reduce((sum, row) => sum + row.db, 0), 4);
+  assert.match(html, /A 담당 DB/); assert.match(html, /수임 전환 2건 \/ 월 접수 DB 2건/);
   const total = renderedRows(html).find(row => row[0].includes('합계'));
-  assert.ok(total); assert.equal(Number(total[1].replace(/[^\d.]/g, '')), 5); assert.equal(Number(total[2].replace(/[^\d.]/g, '')), 2); assert.match(total[3], /40\.0%/);
+  assert.ok(total); assert.equal(Number(total[1].replace(/[^\d.]/g, '')), 4); assert.equal(Number(total[2].replace(/[^\d.]/g, '')), 1); assert.match(total[3], /25\.0%/);
+  assert.match(html, /수임 전환 1건 \/ 월 공급 DB 4건/); assert.match(html, /접수일 기준 참고 지표/);
   assert.equal(JSON.stringify(input), before);
+});
+
+test('supply UI keeps ledger counts distinct from intake and separates the 60-day cohort for CRM-only firms', () => {
+  const data = freeze(supplyFixture()), before = JSON.stringify(data);
+  const { SupplyRetainerConversion } = load('components/analytics/SupplyRetainerConversion.tsx');
+  const html = renderToStaticMarkup(React.createElement(SupplyRetainerConversion, { start, end, data, loading: false, error: null }));
+  assert.match(html, /수임 전환 1건 \/ 월 공급 DB 4건 · 1\/4/); assert.match(html, /25\.0%/);
+  assert.match(html, /공급 원장 공급일 기준/); assert.match(html, /어드민 이용 계약/); assert.match(html, /DB 구매비는 적용하지 않습니다/);
+  assert.doesNotMatch(html, /공급계약 대상 아님|접수일 기준/);
+  assert.match(html, /60일 경과 공급 성과 · 별도 참고/); assert.match(html, /2026-08-19까지 공급되어 60일이 지난/);
+  assert.match(html, /직원별 60일 경과 공급 DB/); assert.match(html, /참고 · DB 30건 미만/);
+  assert.match(html, /text-slate-400/); assert.equal(JSON.stringify(data), before);
+  const legacy = renderLegacy(freeze(fixture()), start, end);
+  assert.ok(legacy.indexOf('월 공급 DB') < legacy.indexOf('접수일 기준 참고 지표'));
+  assert.match(legacy, /수임 전환 1건 \/ 월 공급 DB 4건/);
+  assert.match(legacy, /수임 전환 2건 \/ 월 접수 DB 5건/);
+  assert.match(legacy, /공급 성과 새로고침/); assert.match(legacy, /공급 성과는 별도 조회 결과/);
+  assert.match(legacy, /DB 고객|전환/);
+});
+
+test('unknown supply linkage never becomes a derived 0% and staff totals preserve the provisional denominator', () => {
+  const { SupplyRetainerConversion } = load('components/analytics/SupplyRetainerConversion.tsx');
+  const data = supplyFixture();
+  data.supplyCohort = { supplied: 5, retained: 1, conversionRate: null, quality: { ...data.supplyCohort.quality, unlinkedRows: 1, duplicateSupplyRows: 2 }, staff: [
+    ...data.supplyCohort.staff, { key: 'unlinked', name: '담당 확인 필요(미연결 공급)', kind: 'unlinked', db: 1, contractedDb: 0, conversionRate: null },
+  ] };
+  freeze(data); const before = JSON.stringify(data);
+  const html = renderToStaticMarkup(React.createElement(SupplyRetainerConversion, { start, end, data, loading: false, error: null }));
+  const top = html.slice(0, html.indexOf('<table'));
+  assert.match(top, /확인 필요/); assert.doesNotMatch(top, /20\.0%|0\.0%/); assert.match(top, /1\/5/);
+  assert.match(html, /원본 DB 연결 없는 공급 1건/); assert.match(html, /중복 공급 기록 2건/);
+  const rows = renderedRows(html), unresolved = rows.find(row => row[0].startsWith('담당 확인 필요'));
+  assert.match(unresolved[3], /확인 필요/); assert.match(unresolved[3], /0\/1/);
+  const total = rows.find(row => row[0] === '전체 합계');
+  assert.equal(total[1], '5건'); assert.equal(total[2], '1건'); assert.match(total[3], /확인 필요/); assert.match(total[3], /1\/5/);
+  assert.equal(JSON.stringify(data), before);
+});
+
+test('supply display handles empty, partial-period, stale, loading and error results without false zero measurements', () => {
+  const { SupplyRetainerConversion } = load('components/analytics/SupplyRetainerConversion.tsx');
+  const render = props => renderToStaticMarkup(React.createElement(SupplyRetainerConversion, { start, end, data: supplyFixture(), loading: false, error: null, ...props }));
+  const partial = supplyFixture('2026-10-05', '2026-10-18');
+  assert.match(render({ start: partial.start, end: partial.end, data: partial }), /기간 공급 DB/);
+  const empty = supplyFixture('2027-01-01', '2027-01-31');
+  const emptyHtml = render({ start: empty.start, end: empty.end, data: empty });
+  assert.match(emptyHtml, /기간 DB 없음 · 0\/0/); assert.doesNotMatch(emptyHtml, /NaN|Infinity/);
+  for (const [props, expected] of [[{ loading: true }, /불러오는 중/], [{ error: 'synthetic unavailable' }, /공급 성과 확인 필요/], [{ start: '2026-11-01', end: '2026-11-30' }, /선택 기간의 공급 성과/], [{ data: null }, /확인할 수 없습니다/]]) {
+    const html = render(props); assert.match(html, expected); assert.doesNotMatch(html, /수임 전환 0건|0\.0%|25\.0%/);
+  }
+});
+
+test('CRM-only supply purchase panel retains real supply records while applying no DB purchase fee', () => {
+  const { FirmSupplyCard } = load('components/analytics/FirmSupplyCard.tsx');
+  const data = supplyFixture(), html = renderToStaticMarkup(React.createElement(FirmSupplyCard, { data, loading: false, error: null }));
+  assert.match(html, /공급 원장 건수/); assert.match(html, /4건/); assert.match(html, /0원/);
+  assert.doesNotMatch(html, /등록된 공급계약이 없습니다|공급 계약 대상 아님/);
+});
+
+test('supply refresh invalidates old output immediately and aborted requests cannot overwrite current results', async () => {
+  let state, previousDependencies, cleanup, pendingEffect;
+  const requests = [];
+  const { useFirmSupply } = load('lib/use-firm-supply.ts', {
+    react: { useState: initial => { if (!state) state = initial; return [state, value => { state = value; }]; },
+      useEffect: (effect, dependencies) => { if (!previousDependencies || dependencies.some((value, index) => value !== previousDependencies[index])) { previousDependencies = dependencies; pendingEffect = effect; } } },
+    '@/lib/platform/client': { authJson: (url, init) => new Promise((resolve, reject) => { requests.push({ url, init, resolve, reject }); }) },
+  });
+  const render = (revision = 0, enabled = true) => {
+    const output = useFirmSupply('firm-a', start, end, enabled, revision);
+    if (pendingEffect) { cleanup?.(); const effect = pendingEffect; pendingEffect = null; cleanup = effect(); }
+    return output;
+  };
+  const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
+  assert.equal(render().loading, true); assert.equal(requests.length, 1);
+  const first = supplyFixture(); requests[0].resolve(first); await settle();
+  assert.equal(render().data, first); assert.equal(requests.length, 1);
+  const refreshing = render(1); assert.equal(refreshing.data, null); assert.equal(refreshing.loading, true);
+  assert.equal(requests[0].init.signal.aborted, true); assert.equal(requests.length, 2);
+  render(2); assert.equal(requests[1].init.signal.aborted, true); assert.equal(requests.length, 3);
+  const latest = supplyFixture(); latest.supplyCohort.retained = 2;
+  requests[2].resolve(latest); await settle(); requests[1].resolve(first); await settle();
+  assert.equal(render(2).data, latest); assert.equal(requests.length, 3);
+  assert.equal(requests[2].init.cache, 'no-store'); assert.match(requests[2].url, /firm-supply\?firmId=firm-a&start=2026-10-01&end=2026-10-31/);
+  const disabled = render(2, false); assert.equal(disabled.data, null); assert.equal(disabled.loading, false); assert.equal(requests[2].init.signal.aborted, true);
 });

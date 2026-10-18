@@ -2,20 +2,23 @@
 
 // 상담메모는 별도 버튼/팝업으로 숨기지 않고 상담일지 하단에 항상 보이도록 배치합니다.
 // 왼쪽에서 바로 입력하고, 아래에는 최신순 메모를 짧은 내부 스크롤로 확인할 수 있습니다.
-import { useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { useStoreSession as useStore } from "@/lib/store";
 import type { MemoLogEntry, MemoLogTag } from "@/lib/types";
 import { Button } from "@/components/ui/Primitives";
 import { SectionCard, compactTextareaClass } from "./shared";
 import { fmtDateTime } from "@/lib/format";
 import { Plus } from "lucide-react";
+import type { ConsultationPdfMemoDraft } from "@/lib/consultation-pdf-data";
 
 type Updater<T> = (updater: T | ((prev: T) => T)) => void;
 
-export function ConsultationMemoSection({ memoLog, setMemoLog }: { memoLog: MemoLogEntry[]; setMemoLog: Updater<MemoLogEntry[]> }) {
+export function ConsultationMemoSection({ memoLog, setMemoLog, onDraftChange }: { memoLog: MemoLogEntry[]; setMemoLog: Updater<MemoLogEntry[]>; onDraftChange?: (draft: ConsultationPdfMemoDraft) => void }) {
   const { profile, currentUser } = useStore();
   const [memoDraft, setMemoDraft] = useState("");
   const [memoTag, setMemoTag] = useState<MemoLogTag>("일반");
+  const draftStaff = profile?.displayName || currentUser?.email || "사용자";
+  useEffect(() => { onDraftChange?.({ text: memoDraft, tag: memoTag, staff: draftStaff }); }, [memoDraft, memoTag, draftStaff, onDraftChange]);
 
   function addMemoEntry() {
     if (!memoDraft.trim() && memoTag === "일반") return;

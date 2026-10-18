@@ -33,7 +33,7 @@ export async function loadOperations(admin: Admin, month: string, includeDemo: b
   const months = Array.from({ length: 6 }, (_, i) => shiftOpsMonth(month, i - 5));
   const end = shiftOpsMonth(month, 1) + "-01T00:00:00+09:00";
   const abort = (q: any) => signal ? q.abortSignal(signal) : q;
-  const [firms, contracts, adjustments, ledger, monthRows, settingRows, closings, commercialProfiles, sales, metaCosts, adSources, stageRows] = await Promise.all([
+  const [firms, contracts, adjustments, ledger, monthRows, settingRows, closings, commercialProfiles, sales, metaCosts, adSources, stageRows, caseRows] = await Promise.all([
     allOperationRows<OperationFirm>((f, t) => abort(admin.from("law_firms").select("id,name,status,firm_code,billing_type").order("id").range(f, t)), r => r.id),
     allOperationRows<SupplyContract>((f, t) => abort(admin.from("platform_supply_contracts").select("*").order("id").range(f, t)), r => r.id),
     allOperationRows<SupplyAdjustment>((f, t) => abort(admin.from("platform_supply_adjustments").select("id,law_firm_id,contract_id,ledger_id,event_date,kind,quantity,amount,reason,created_at").gte("event_date", months[0] + "-01").lte("event_date", opsBounds(month).end).order("id").range(f, t)), r => r.id),
@@ -45,21 +45,21 @@ export async function loadOperations(admin: Admin, month: string, includeDemo: b
     allOperationRows<OperationSale>((f, t) => abort(admin.from("platform_sales_leads").select("id,stage,data,proposal,signed_at,law_firm_id").order("id").range(f, t)), r => r.id),
     readOperationsMeta(admin, months, allOperationRows, signal, now),
     allOperationRows<{ id: string; law_firm_id: string; name: string }>((f, t) => abort(admin.from("ad_sources").select("id,law_firm_id,name").order("id").range(f, t)), r => r.id),
-    allOperationRows<any>((f, t) => abort(admin.from("app_leads").select("id,law_firm_id,convertedClientId:data->>convertedClientId,convertedCaseId:data->>convertedCaseId,detailStage:data->>detailStage,status:data->>status,stageUpdatedAt:data->>stageUpdatedAt").order("id").range(f, t)), r => r.id),
+    allOperationRows<any>((f, t) => abort(admin.from("app_leads").select("id,law_firm_id,assignedStaff:data->>assignedStaff,convertedClientId:data->>convertedClientId,convertedCaseId:data->>convertedCaseId,detailStage:data->>detailStage,status:data->>status,stageUpdatedAt:data->>stageUpdatedAt").order("id").range(f, t)), r => r.id),
+    // Both explicit fromLeadId links and reverse convertedCaseId links are
+    // needed. Do not limit contracts to pointers present in this month's DBs.
+    allOperationRows<any>((f, t) => abort(admin.from("app_cases").select("id,law_firm_id,fromLeadId:data->>fromLeadId,status:data->>status,contractAmount:data->>contractAmount").order("id").range(f, t)), r => r.id),
   ]);
   for (const row of monthRows) row.config = validateOperationsConfig(row.config);
   const leadIds = [...new Set(ledger.filter(l => l.lead_id && Date.parse(l.supplied_at) >= Date.parse(months[0] + "-01T00:00:00+09:00")).map(l => l.lead_id!))];
-  const leads: OperationLead[] = [], cases: OperationCase[] = [];
+  const currentStageLeads: OperationLead[] = stageRows.map(({ id, law_firm_id, ...data }) => ({ id, law_firm_id, data }));
+  const leadsByFirmId = new Map(currentStageLeads.map(row => [`${row.law_firm_id}\0${row.id}`, row]));
+  const cases: OperationCase[] = caseRows.map(({ id, law_firm_id, ...data }) => ({ id, law_firm_id, data }));
   for (let i = 0; i < leadIds.length; i += 100) {
-    const rows = await allOperationRows<any>((f, t) => abort(admin.from("app_leads").select("id,law_firm_id,convertedCaseId:data->>convertedCaseId,convertedClientId:data->>convertedClientId,detailStage:data->>detailStage,status:data->>status,stageUpdatedAt:data->>stageUpdatedAt,contactLog:data->contactLog").in("id", leadIds.slice(i, i + 100)).order("id").range(f, t)), r => r.id);
-    leads.push(...rows.map(({ id, law_firm_id, ...data }) => ({ id, law_firm_id, data })));
+    const rows = await allOperationRows<any>((f, t) => abort(admin.from("app_leads").select("id,law_firm_id,assignedStaff:data->>assignedStaff,convertedCaseId:data->>convertedCaseId,convertedClientId:data->>convertedClientId,detailStage:data->>detailStage,status:data->>status,stageUpdatedAt:data->>stageUpdatedAt,contactLog:data->contactLog").in("id", leadIds.slice(i, i + 100)).order("id").range(f, t)), r => r.id);
+    for (const { id, law_firm_id, ...data } of rows) leadsByFirmId.set(`${law_firm_id}\0${id}`, { id, law_firm_id, data });
   }
-  const caseIds = [...new Set(leads.map(l => l.data.convertedCaseId).filter((id): id is string => Boolean(id)))];
-  for (let i = 0; i < caseIds.length; i += 100) {
-    const rows = await allOperationRows<any>((f, t) => abort(admin.from("app_cases").select("id,law_firm_id,status:data->>status,contractAmount:data->>contractAmount").in("id", caseIds.slice(i, i + 100)).order("id").range(f, t)), r => r.id);
-    cases.push(...rows.map(({ id, law_firm_id, ...data }) => ({ id, law_firm_id, data })));
-  }
-  const currentStageLeads = stageRows.map(({ id, law_firm_id, ...data }) => ({ id, law_firm_id, data }));
+  const leads = [...leadsByFirmId.values()];
   const input: OperationsInput = { firms, contracts, adjustments, ledger, leads, cases, monthRows, adSpend: legacyAds(settingRows, months), commercialProfiles, sales, metaCosts, adSources, currentStageLeads };
   const selectedMonth = monthRows.find(m => m.month === month) ?? null;
   const report = !includeDemo && selectedMonth?.closed_at && selectedMonth.snapshot ? structuredClone(selectedMonth.snapshot) : buildOperationsReport(input, month, includeDemo, now);

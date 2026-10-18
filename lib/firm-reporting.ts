@@ -1,4 +1,5 @@
 import type { CaseRecord, DbLead, Installment } from "@/lib/types";
+import { buildSupplyConversionCohorts, type SupplyConversionResult } from "./performance/supply-conversion";
 
 /** Cash is the actual recorded amount. An explicit zero never falls back to the schedule. */
 export function actualPayment(row: Pick<Installment, "amount" | "actualPaidAmount">): number {
@@ -49,16 +50,17 @@ export interface FirmSupplySummary {
   monthly: { month: string; suppliedCount: number; billableCount: number; purchaseCost: number | null }[];
   weekly: { week: string; suppliedCount: number; billableCount: number }[];
   byLead: { leadId: string; purchaseCost: number | null }[];
-  matureCohort: { supplied: number; retained: number; conversionRate: number | null; cutoff: string };
+  supplyCohort: SupplyConversionResult["supplyCohort"];
+  matureCohort: SupplyConversionResult["matureCohort"];
 }
-export type SupplyLedgerRow = { id: string; law_firm_id: string; lead_id: string | null; supplied_at: string; billable: boolean; unit_price_snapshot: number | null };
+export type SupplyLedgerRow = { id: string; law_firm_id: string; lead_id: string | null; supplied_at: string; billable: boolean; unit_price_snapshot: number | null; classification?: string | null; origin?: string | null };
 
-export function summarizeFirmSupply(firmId: string, start: string, end: string, ledger: SupplyLedgerRow[], contracts: FirmSupplyContract[], replacedCount: number, cases: CaseRecord[], asOf = kstDay(new Date().toISOString())): FirmSupplySummary {
-  const result: FirmSupplySummary = { firmId, start, end, serviceMode: "db_supply", contracts, suppliedCount: 0, billableCount: 0, replacedCount, purchaseCost: 0, knownPurchaseCost: 0, missingPriceCount: 0, unlinkedCount: 0, monthly: [], weekly: [], byLead: [], matureCohort: { supplied: 0, retained: 0, conversionRate: null, cutoff: maturityCutoff(asOf) } };
+export function summarizeFirmSupply(firmId: string, start: string, end: string, ledger: SupplyLedgerRow[], contracts: FirmSupplyContract[], replacedCount: number, cases: CaseRecord[], asOf = kstDay(new Date().toISOString()), cohortLeads: DbLead[] = [], staffNames: string[] = []): FirmSupplySummary {
+  const conversion = buildSupplyConversionCohorts({ firmId, start, end, ledger, cases, leads: cohortLeads, staffNames, asOf });
+  const result: FirmSupplySummary = { firmId, start, end, serviceMode: "db_supply", contracts, suppliedCount: 0, billableCount: 0, replacedCount, purchaseCost: 0, knownPurchaseCost: 0, missingPriceCount: 0, unlinkedCount: 0, monthly: [], weekly: [], byLead: [], ...conversion };
   const months = new Map<string, { month: string; suppliedCount: number; billableCount: number; purchaseCost: number | null }>();
   const weeks = new Map<string, { week: string; suppliedCount: number; billableCount: number }>();
   const leads = new Map<string, number | null>();
-  const retained = new Set(cases.filter(isValidRetainer).map(row => row.fromLeadId).filter(Boolean));
   for (const row of ledger) {
     if (row.law_firm_id !== firmId) throw new Error("FORBIDDEN");
     const day = kstDay(row.supplied_at);
@@ -85,15 +87,10 @@ export function summarizeFirmSupply(firmId: string, start: string, end: string, 
       const previous = leads.get(row.lead_id);
       leads.set(row.lead_id, cost === null || previous === null ? null : (previous ?? 0) + cost);
     }
-    if (day <= result.matureCohort.cutoff) {
-      result.matureCohort.supplied++;
-      if (row.lead_id && retained.has(row.lead_id)) result.matureCohort.retained++;
-    }
   }
   result.purchaseCost = result.missingPriceCount ? null : result.knownPurchaseCost;
   result.monthly = [...months.values()].sort((a, b) => a.month.localeCompare(b.month));
   result.weekly = [...weeks.values()].sort((a, b) => a.week.localeCompare(b.week));
   result.byLead = [...leads].map(([leadId, purchaseCost]) => ({ leadId, purchaseCost }));
-  if (result.matureCohort.supplied) result.matureCohort.conversionRate = result.matureCohort.retained / result.matureCohort.supplied * 100;
   return result;
 }

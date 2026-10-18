@@ -63,6 +63,20 @@ test('bottleneck UI names recorded metrics, grays small DB denominators, and pre
   const old = harness('components/platform/OperationsOverview.tsx', 'OpsHome'); delete old.response.report.firms[0].suppliedDb; delete old.response.report.firms[0].phoneAttemptedDb; delete old.response.report.firms[0].stageRecordedDb;
   await old.mount(); assert.match(text(old.tree().toJSON()), /마감 당시 미집계/); assert.ok(!text(old.tree().toJSON()).includes('undefined')); old.close();
 });
+test('home separates current contract lifecycle and monthly supply conversion from mature-cohort conversion', async () => {
+  const h = harness('components/platform/OperationsOverview.tsx', 'OpsHome');
+  h.response.report.contractLifecycle = { asOf: '2026-10-18', activeFirms: 2, newFirms: 1, renewalFirms: 1, endedFirms: 0, monthlyQuantity: 150 };
+  h.response.report.firms[0].supplyCohort = { supplied: 20, retained: 3, conversionRate: 15 };
+  await h.mount(); const rendered = text(h.tree().toJSON());
+  assert.match(rendered, /계약 활성 로펌/); assert.match(rendered, /2026-10-18/);
+  assert.match(rendered, /45일 내 갱신 확인/); assert.match(rendered, /조회월 계약 종료일 도래/);
+  assert.match(rendered, /3\/20 · 15\.0% · 참고/);
+  const cell = h.tree().root.findAllByType('td').find(c => text(c).startsWith('3/20'));
+  assert.match(cell.props.className, /text-slate-400/);
+  assert.ok(rendered.indexOf('공급 계약 이행') < rendered.indexOf('DB 원가 · 공급 마진 요약'));
+  assert.ok(rendered.indexOf('DB 원가 · 공급 마진 요약') < rendered.indexOf('로펌별 상담 병목'));
+  h.close();
+});
 test('month changes cancel reads and ignore older out-of-order responses', async () => {
   const pending = []; const h = harness('components/platform/OperationsOverview.tsx', 'OperationsCosts', { auth: () => { const d = deferred(); pending.push(d); return d.promise; } }); await h.mount();
   await act(async () => h.tree().root.findByProps({ 'aria-label': '운영 조회월' }).props.onChange({ target: { value: '2026-08' } })); assert.equal(h.calls[0].init.signal.aborted, true);

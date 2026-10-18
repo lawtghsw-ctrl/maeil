@@ -55,7 +55,7 @@ export default function FirmDirectory({ initialTab = "overview" }: { initialTab?
 
   async function create(){if(!form.name.trim())return;setBusy(true);setError(null);try{await authJson('/api/platform/firms',{method:'POST',body:JSON.stringify(form)});setOpen(false);setForm({name:"",representativeName:"",businessNumber:"",phone:"",adminName:"",adminEmail:"",adminPassword:""});await load()}catch(e){setError(e instanceof Error?e.message:"생성 실패")}finally{setBusy(false)}}
   async function toggle(f:Firm){if(!confirm(`${f.name}을(를) ${f.status==="active"?"이용정지":"활성화"}할까요?`))return;try{await authJson('/api/platform/firms',{method:'PATCH',body:JSON.stringify({id:f.id,status:f.status==="active"?'suspended':'active'})});await load()}catch(e){alert(e instanceof Error?e.message:'변경 실패')}}
-  async function enterFirm(f:Firm){try{await authJson('/api/platform/firm-view',{method:'POST',body:JSON.stringify({lawFirmId:f.id,action:'enter'})})}catch{}enterSuperAdminFirmScope({id:f.id,firmCode:f.firm_code,name:f.name,status:f.status});window.location.href='/'}
+  async function enterFirm(f:Firm){try{await authJson('/api/platform/firm-view',{method:'POST',body:JSON.stringify({lawFirmId:f.id,action:'enter'})});enterSuperAdminFirmScope({id:f.id,firmCode:f.firm_code,name:f.name,status:f.status});window.location.href='/'}catch(e){setError(e instanceof Error?e.message:'로펌 열람 기록을 남기지 못했습니다. 다시 시도해주세요.')}}
 
 
   const tabs: [Tab, string][] = [["overview", "등록 로펌"], ["performance", "로펌별 판매 성과"], ["activity", "전체 활동로그"]];

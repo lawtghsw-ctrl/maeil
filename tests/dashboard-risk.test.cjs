@@ -14,6 +14,7 @@ function load(file,source){if(source===undefined&&modules.has(file))return modul
   if(name==='@/lib/use-firm-supply')return{useFirmSupply:()=>({data:{purchaseCost:0,serviceMode:'crm_only'},error:null,loading:false})};
   if(name==='./types')return load('lib/types.ts');
   if(name.startsWith('@/lib/'))return load(name.slice(2)+'.ts');
+  if(name.startsWith('.')){const target=path.resolve(root,path.dirname(file),name);const resolved=['.ts','.tsx'].map(ext=>target+ext).find(candidate=>fs.existsSync(candidate));if(resolved)return load(path.relative(root,resolved));}
   throw Error('Unmocked dependency '+name);
  };
  vm.runInNewContext(code,{module:m,exports:m.exports,require:req,Date:FixedDate,crypto,fetch:()=>{throw Error('Network forbidden');}},{filename:file});modules.set(file,m.exports);return m.exports;

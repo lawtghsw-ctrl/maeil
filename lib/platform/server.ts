@@ -97,7 +97,8 @@ export async function writePlatformAudit(
   admin: ReturnType<typeof createAdminClient>,
   request: NextRequest,
   profile: { id?: string; display_name?: string | null; staff_name?: string | null; email?: string | null; platform_role?: string | null },
-  entry: { lawFirmId?: string | null; action: string; targetType: string; targetId?: string | null; detail?: Record<string, unknown> }
+  entry: { lawFirmId?: string | null; action: string; targetType: string; targetId?: string | null; detail?: Record<string, unknown> },
+  options: { required?: boolean } = {},
 ) {
   try {
     const rawIp = requestIp(request);
@@ -116,8 +117,9 @@ export async function writePlatformAudit(
       ip_hash: ipHash,
       user_agent: userAgent,
     });
-    if (error) console.error("플랫폼 감사로그 저장 실패", error);
+    if (error) throw error;
   } catch (error) {
     console.error("플랫폼 감사로그 저장 실패", error);
+    if (options.required) throw new Error("로펌 열람 기록을 남기지 못했습니다. 잠시 후 다시 시도해주세요.");
   }
 }

@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
 function load(file, deps = {}) {
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { Date, Map, Set, Buffer, structuredClone, console })(name => { if (name in deps) return deps[name]; throw new Error('Unexpected dependency ' + name); }, module, module.exports);
+  vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { Date, Map, Set, Buffer, structuredClone, console })(name => { if (name in deps) return deps[name]; if (name.startsWith('.')) return load(path.relative(root, path.resolve(root, path.dirname(file), name + '.ts')), deps); throw new Error('Unexpected dependency ' + name); }, module, module.exports);
   return module.exports;
 }
 const ops = load('lib/platform/operations.ts');
@@ -222,4 +222,27 @@ test('advertising spreadsheet preview rejects mismatched firm, duplicate, blank,
     const preview = importer.previewOperationsAds([header, ...rows], [firm]); assert.ok(preview.errors.length); assert.throws(() => importer.mergeOperationsAds([], preview));
   }
   const merged = importer.mergeOperationsAds([{ firmId, amount: 5, note: '' }], valid); assert.equal(merged.length, 2); assert.equal(merged[0].amount, 1000);
+});
+
+test('contract lifecycle separates today-active firms from selected-month overlap and uses recorded end dates', () => {
+  const contracts=[{...contract,id:'ended',start_date:'2026-10-01',end_date:'2026-10-10',status:'ended'},
+    {...contract,id:'current',start_date:'2026-09-01',end_date:'2026-11-01',monthly_quantity:100},
+    {...contract,id:'future',start_date:'2026-10-20',end_date:'2026-12-31',monthly_quantity:500},
+    {...contract,id:'unconfirmed',confirmed_at:null,monthly_quantity:999}];
+  const r=report({contracts},'2026-10','2026-10-18T00:00:00Z');
+  assert.equal(r.activeFirmCount,1);assert.equal(r.contractLifecycle.asOf,'2026-10-18');assert.equal(r.contractLifecycle.activeFirms,1);
+  assert.equal(r.contractLifecycle.newFirms,1);assert.equal(r.contractLifecycle.endedFirms,1);assert.equal(r.contractLifecycle.renewalFirms,1);assert.equal(r.contractLifecycle.monthlyQuantity,100);
+});
+test('contract lifecycle excludes CRM-only, unregistered, suspended, draft and TEST by default', () => {
+  const ids=['crm','unregistered','suspended','draft','demo'];
+  const firms=[firm,...ids.map(id=>({...firm,id,status:id==='suspended'?'suspended':'active',name:id==='demo'?'TEST':id,firm_code:id==='demo'?'0000000000':id}))];
+  const contracts=ids.map(id=>({...contract,id,law_firm_id:id,status:id==='draft'?'draft':'active'}));
+  const profiles=[{law_firm_id:firmId,service_mode:'db_supply'},...ids.filter(id=>id!=='unregistered').map(id=>({law_firm_id:id,service_mode:id==='crm'?'crm_only':'db_supply'}))];
+  const r=report({firms,contracts,commercialProfiles:profiles},'2026-10','2026-10-18T00:00:00Z');
+  assert.equal(r.contractLifecycle.activeFirms,0);assert.equal(r.contractLifecycle.newFirms,0);assert.equal(r.contractLifecycle.monthlyQuantity,0);
+});
+test('contract lifecycle honors inclusive renewal boundary and does not invent missing monthly quantities', () => {
+  const contracts=[{...contract,end_date:'2026-12-02',monthly_quantity:null},{...contract,id:'later',end_date:'2026-12-03',law_firm_id:otherId}];
+  const r=report({contracts,firms:[firm,{...firm,id:otherId}],commercialProfiles:[{law_firm_id:firmId,service_mode:'db_supply'},{law_firm_id:otherId,service_mode:'db_supply'}]},'2026-10','2026-10-18T00:00:00Z');
+  assert.equal(r.contractLifecycle.activeFirms,2);assert.equal(r.contractLifecycle.renewalFirms,1);assert.equal(r.contractLifecycle.monthlyQuantity,null);
 });

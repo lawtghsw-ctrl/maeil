@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       targetType: "law_firm",
       targetId: lawFirmId,
       detail: { firmName: firm.name, firmCode: firm.firm_code, firmStatus: firm.status },
-    });
+    }, { required: true });
     return NextResponse.json({ ok: true });
   } catch (err) {
     const e = platformError(err);

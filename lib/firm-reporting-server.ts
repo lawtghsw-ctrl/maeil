@@ -1,6 +1,6 @@
 import { requirePlatformUser } from "@/lib/platform/server";
 import { summarizeFirmSupply, type FirmSupplyContract, type SupplyLedgerRow } from "@/lib/firm-reporting";
-import type { CaseRecord } from "@/lib/types";
+import type { CaseRecord, DbLead } from "@/lib/types";
 
 type Admin = Awaited<ReturnType<typeof requirePlatformUser>>["admin"];
 export async function readFirmRows(admin: Admin, table: string, firmId: string, columns: string): Promise<Record<string, any>[]> {
@@ -20,18 +20,23 @@ export async function readFirmRows(admin: Admin, table: string, firmId: string, 
   }
 }
 export async function readFirmSupply(admin: Admin, firmId: string, start: string, end: string) {
-  const [contracts, ledger, adjustments, cases] = await Promise.all([
+  const [contracts, ledger, adjustments, cases, leads, staff] = await Promise.all([
     readFirmRows(admin, "platform_supply_contracts", firmId, "id,law_firm_id,product,category,unit_price,monthly_quantity,start_date,end_date,status,confirmed_at"),
-    readFirmRows(admin, "lead_supply_ledger", firmId, "id,law_firm_id,lead_id,supplied_at,billable,unit_price_snapshot"),
+    readFirmRows(admin, "lead_supply_ledger", firmId, "id,law_firm_id,lead_id,supplied_at,billable,unit_price_snapshot,classification,origin"),
     readFirmRows(admin, "platform_supply_adjustments", firmId, "id,law_firm_id,event_date,kind,quantity"),
-    readFirmRows(admin, "app_cases", firmId, "id,law_firm_id,data"),
+    readFirmRows(admin, "app_cases", firmId, "id,law_firm_id,fromLeadId:data->>fromLeadId,status:data->>status,contractAmount:data->>contractAmount"),
+    readFirmRows(admin, "app_leads", firmId, "id,law_firm_id,assignedStaff:data->>assignedStaff,convertedCaseId:data->>convertedCaseId"),
+    readFirmRows(admin, "profiles", firmId, "id,law_firm_id,staff_name,display_name,platform_role,is_work_staff"),
   ]);
   const visibleContracts: FirmSupplyContract[] = contracts.map(row => ({ id: row.id, product: row.product, category: row.category, unitPrice: row.unit_price === null ? null : Number(row.unit_price), monthlyQuantity: row.monthly_quantity, startDate: row.start_date, endDate: row.end_date, status: row.status, confirmedAt: row.confirmed_at }));
   const replaced = adjustments.filter(row => row.kind === "replacement" && row.event_date >= start && row.event_date <= end).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const { data: commercial, error: commercialError } = await admin.from("platform_firm_commercial_profiles").select("law_firm_id,service_mode").eq("law_firm_id", firmId).maybeSingle();
   if (commercialError) throw new Error("로펌 이용 계약 분류를 읽지 못했습니다.");
   if (commercial && commercial.law_firm_id !== firmId) throw new Error("FORBIDDEN");
-  const summary = summarizeFirmSupply(firmId, start, end, ledger as SupplyLedgerRow[], visibleContracts, replaced, cases.map(row => ({ ...row.data, id: row.id } as CaseRecord)));
+  const staffNames = staff.filter(row => row.is_work_staff === true && ["staff", "firm_admin"].includes(row.platform_role || "staff")).map(row => String(row.staff_name || row.display_name || "").trim()).filter(Boolean);
+  const summary = summarizeFirmSupply(firmId, start, end, ledger as SupplyLedgerRow[], visibleContracts, replaced,
+    cases.map(row => ({ id: row.id, _lawFirmId: row.law_firm_id, fromLeadId: row.fromLeadId, status: row.status, contractAmount: row.contractAmount } as CaseRecord)),
+    undefined, leads.map(row => ({ id: row.id, _lawFirmId: row.law_firm_id, assignedStaff: row.assignedStaff, convertedCaseId: row.convertedCaseId } as DbLead)), staffNames);
   summary.serviceMode = commercial?.service_mode === "crm_only" ? "crm_only" : commercial?.service_mode === "db_supply" ? "db_supply" : "unregistered";
   if (summary.serviceMode === "crm_only") { summary.purchaseCost = 0; summary.knownPurchaseCost = 0; summary.missingPriceCount = 0; summary.contracts = []; summary.byLead = []; summary.monthly = summary.monthly.map(row => ({ ...row, purchaseCost: 0 })); }
   if (summary.serviceMode === "unregistered") summary.purchaseCost = null;

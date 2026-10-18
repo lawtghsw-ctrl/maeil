@@ -3,8 +3,8 @@ import { useEffect, useState } from "react";
 import { authJson } from "@/lib/platform/client";
 import type { FirmSupplySummary } from "@/lib/firm-reporting";
 
-export function useFirmSupply(firmId: string | undefined, start: string, end: string, enabled = true) {
-  const key = enabled && firmId ? `${firmId}:${start}:${end}` : "";
+export function useFirmSupply(firmId: string | undefined, start: string, end: string, enabled = true, revision = 0) {
+  const key = enabled && firmId ? `${firmId}:${start}:${end}:${revision}` : "";
   const [state, setState] = useState<{ key: string; data: FirmSupplySummary | null; error: string | null; loading: boolean }>({ key: "", data: null, error: null, loading: false });
   useEffect(() => {
     if (!key || !firmId) return;

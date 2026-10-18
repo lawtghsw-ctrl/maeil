@@ -108,7 +108,7 @@ export default function PlatformFirmDetailPage() {
 
   async function enterAdmin(path = "/"){
     if(!data?.firm) return;
-    try { await authJson("/api/platform/firm-view", { method: "POST", body: JSON.stringify({ lawFirmId: data.firm.id, action: "enter" }) }); } catch {}
+    try { await authJson("/api/platform/firm-view", { method: "POST", body: JSON.stringify({ lawFirmId: data.firm.id, action: "enter" }) }); } catch(e) { setError(e instanceof Error?e.message:"로펌 열람 기록을 남기지 못했습니다. 다시 시도해주세요."); return; }
     enterSuperAdminFirmScope({
       id:data.firm.id,
       firmCode:String(data.firm.firm_code),
