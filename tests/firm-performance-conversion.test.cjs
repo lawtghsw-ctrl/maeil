@@ -223,15 +223,23 @@ test('firm overview renders contract conversion alongside the existing client co
   assert.match(filtered, /A 담당 DB/); assert.match(filtered, /수임 전환 2건 \/ 총 DB 2건/); assert.match(filtered, /100\.0%/);
 });
 
-test('default firm analytics renders the new cohort card for the selected dates and keeps it hidden from ordinary staff', () => {
-  const input = freeze(fixture()), before = JSON.stringify(input), management = load('lib/management-core.ts');
+function renderLegacy(input, rangeStart, rangeEnd, manager = true, tableObserver) {
+  const management = load('lib/management-core.ts');
   const forbidden = () => { throw new Error('External action is forbidden'); };
-  function render(rangeStart, rangeEnd, manager = true) {
-    let stateIndex = 0;
-    const initialState = [rangeStart, rangeEnd, '요약', '전체'];
-    const { default: LegacyAnalytics } = load('components/analytics/LegacyAnalytics.tsx', {
+  let stateIndex = 0;
+  const initialState = [rangeStart, rangeEnd, '요약', '전체'];
+  const tableMock = tableObserver ? {
+    './StaffRetainerConversionTable': { StaffRetainerConversionTable: props => {
+      tableObserver(props);
+      return React.createElement(load('components/analytics/StaffRetainerConversionTable.tsx').StaffRetainerConversionTable, props);
+    } },
+  } : {};
+  const { default: LegacyAnalytics } = load('components/analytics/LegacyAnalytics.tsx', {
+      ...tableMock,
       react: { ...React, useState: initial => React.useState(stateIndex < initialState.length ? initialState[stateIndex++] : initial) },
-      '@/lib/store': { useStore: () => ({ ...input, workStaffNames: input.staffNames, caseDocuments: {}, superAdminFirmScope: null,
+      '@/lib/store': { useStore: () => ({ ...input, workStaffNames: input.staffNames,
+        staffDirectory: input.staffDirectory ?? input.staffNames.map((name, index) => ({ id: `staff-${index}`, lawFirmId: 'firm-a', isWorkStaff: true, platformRole: 'staff', staffName: name })),
+        caseDocuments: {}, superAdminFirmScope: null,
         firmDirectory: [{ id: 'firm-a', status: 'active' }], profile: { role: manager ? 'admin' : 'staff', platformRole: manager ? 'firm_admin' : 'staff', lawFirmId: 'firm-a' } }) },
       '@/lib/management-analytics': { ...management, useManagementSettings: () => ({ globalSuperView: false, effectiveFirmId: 'firm-a',
         activeSettings: management.DEFAULT_MANAGEMENT_SETTINGS, settingsByFirm: {}, loading: false, error: null }) },
@@ -242,13 +250,103 @@ test('default firm analytics renders the new cohort card for the selected dates 
       '@/lib/analytics-excel': { exportAnalyticsMeetingWorkbook: forbidden },
       '@/lib/management-export-client': { recordManagementExport: forbidden },
     });
-    return renderToStaticMarkup(React.createElement(LegacyAnalytics));
-  }
-  const current = render(start, end);
+  return renderToStaticMarkup(React.createElement(LegacyAnalytics));
+}
+
+test('default firm analytics renders the new cohort card for the selected dates and keeps it hidden from ordinary staff', () => {
+  const input = freeze(fixture()), before = JSON.stringify(input);
+  const current = renderLegacy(input, start, end);
   assert.match(current, /설정 기간 총 DB.*수임 전환율/); assert.match(current, /수임 전환 2건 \/ 총 DB 5건/); assert.match(current, /40\.0%/);
-  const later = render('2026-11-01', '2026-11-30');
+  const later = renderLegacy(input, '2026-11-01', '2026-11-30');
   assert.match(later, /2026-11-01 ~ 2026-11-30/); assert.match(later, /수임 전환 1건 \/ 총 DB 1건/); assert.match(later, /100\.0%/);
-  const staff = render(start, end, false);
+  const staff = renderLegacy(input, start, end, false);
   assert.doesNotMatch(staff, /설정 기간 총 DB/); assert.match(staff, /관리자만 사용할 수 있습니다/);
+  assert.equal(JSON.stringify(input), before);
+});
+
+function renderedRows(html) {
+  const text = value => value.replace(/<!--[^]*?-->/g, '').replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+  return [...html.matchAll(/<tr\b[^>]*>([^]*?)<\/tr>/g)].map(row => [...row[1].matchAll(/<t[dh]\b[^>]*>([^]*?)<\/t[dh]>/g)].map(cell => text(cell[1])));
+}
+function staffCounts(rows) {
+  return Object.fromEntries(rows.map(row => [row.name, { db: row.db, contractedDb: row.contractedDb }]));
+}
+
+test('staff conversion table renders per-person counts, a weighted total and deferred zero-DB rates without mutating rows', () => {
+  const { StaffRetainerConversionTable } = load('components/analytics/StaffRetainerConversionTable.tsx');
+  const rows = freeze([
+    { key: 'a', name: 'A', db: 2, contractedDb: 2 }, { key: 'b', name: 'B', db: 3, contractedDb: 0 },
+    { key: 'none', name: 'No activity', db: 0, contractedDb: 0 }, { key: 'unassigned', name: '미지정', db: 1, contractedDb: 1 },
+  ]), before = JSON.stringify(rows);
+  const html = renderToStaticMarkup(React.createElement(StaffRetainerConversionTable, { start, end, rows }));
+  const cells = renderedRows(html);
+  for (const [name, db, contracted, rate] of [['A', 2, 2, '100.0%'], ['B', 3, 0, '0.0%'], ['No activity', 0, 0, '—'], ['미지정', 1, 1, '100.0%']]) {
+    const row = cells.find(cells => cells[0] === name);
+    assert.ok(row, `Missing staff row: ${name}`);
+    assert.equal(Number(row[1].replace(/[^\d.]/g, '')), db); assert.equal(Number(row[2].replace(/[^\d.]/g, '')), contracted); assert.ok(row[3].includes(rate));
+  }
+  const total = cells.find(row => row[0].includes('합계'));
+  assert.ok(total); assert.equal(Number(total[1].replace(/[^\d.]/g, '')), 6); assert.equal(Number(total[2].replace(/[^\d.]/g, '')), 3); assert.match(total[3], /50\.0%/);
+  assert.ok(html.includes(start)); assert.ok(html.includes(end)); assert.equal(JSON.stringify(rows), before);
+  const empty = renderToStaticMarkup(React.createElement(StaffRetainerConversionTable, { start, end, rows: [] }));
+  assert.doesNotMatch(empty, /NaN|Infinity/);
+});
+
+test('default analytics staff rows reconcile to the same cohort card and retain unassigned and registered zero-activity staff', () => {
+  const input = fixture();
+  input.leads.push(lead('unassigned', { assignedStaff: '   ' }), { ...input.leads[0] });
+  input.cases.push(contract('unassigned-contract', 'unassigned', { assignedStaff: 'B', contractDate: '2026-11-05' }));
+  input.cases.push(contract('historical-case', undefined, { assignedStaff: 'Former staff', contractDate: '2020-01-01', contractAmount: 0 }));
+  input.staffDirectory = [
+    { lawFirmId: 'firm-a', isWorkStaff: true, platformRole: 'staff', staffName: 'A' },
+    { lawFirmId: 'firm-a', isWorkStaff: true, platformRole: 'firm_admin', staffName: 'B' },
+    { lawFirmId: 'firm-a', isWorkStaff: true, platformRole: 'staff', staffName: '', displayName: 'No activity' },
+    { lawFirmId: 'firm-b', isWorkStaff: true, platformRole: 'staff', staffName: 'Other firm only' },
+    { lawFirmId: 'firm-a', isWorkStaff: true, platformRole: 'super_admin', staffName: 'Platform admin only' },
+    { lawFirmId: 'firm-a', isWorkStaff: false, platformRole: 'staff', staffName: 'Not work staff' },
+  ];
+  input.staffNames.push('Fallback name only');
+  freeze(input); const before = JSON.stringify(input);
+  let props;
+  const html = renderLegacy(input, start, end, true, value => { props = value; });
+  assert.ok(props, 'The default analytics view must render the shared staff comparison');
+  assert.equal(props.start, start); assert.equal(props.end, end);
+  assert.deepEqual(staffCounts(props.rows), {
+    A: { db: 2, contractedDb: 2 }, B: { db: 3, contractedDb: 0 }, 'No activity': { db: 0, contractedDb: 0 }, '미지정': { db: 1, contractedDb: 1 }, 'Former staff': { db: 0, contractedDb: 0 },
+  });
+  assert.equal(props.rows.reduce((sum, row) => sum + row.db, 0), 6); assert.equal(props.rows.reduce((sum, row) => sum + row.contractedDb, 0), 3);
+  assert.match(html, /수임 전환 3건 \/ 총 DB 6건/); assert.match(html, /50\.0%/);
+  let later;
+  const laterHtml = renderLegacy(input, '2026-11-01', '2026-11-30', true, value => { later = value; });
+  assert.equal(later.rows.reduce((sum, row) => sum + row.db, 0), 1); assert.equal(later.rows.reduce((sum, row) => sum + row.contractedDb, 0), 1);
+  assert.equal(staffCounts(later.rows).A.db, 1); assert.equal(staffCounts(later.rows).A.contractedDb, 1);
+  assert.match(laterHtml, /수임 전환 1건 \/ 총 DB 1건/);
+  let empty;
+  const emptyHtml = renderLegacy(input, '2027-01-01', '2027-01-31', true, value => { empty = value; });
+  for (const name of ['A', 'B', 'No activity', 'Former staff']) assert.deepEqual(staffCounts(empty.rows)[name], { db: 0, contractedDb: 0 });
+  assert.ok(empty.rows.every(row => row.db === 0 && row.contractedDb === 0)); assert.match(emptyHtml, /기간 DB 없음/);
+  let staffRenderCount = 0;
+  renderLegacy(input, start, end, false, () => { staffRenderCount++; });
+  assert.equal(staffRenderCount, 0); assert.equal(JSON.stringify(input), before);
+});
+
+test('selecting a staff member keeps the full firm comparison while the summary card follows that staff', () => {
+  let props;
+  const { StaffRetainerConversionTable } = load('components/analytics/StaffRetainerConversionTable.tsx');
+  const { FirmPerformanceView } = load('components/analytics/FirmPerformance.tsx', {
+    'next/dynamic': { __esModule: true, default: () => () => null },
+    'next/link': { __esModule: true, default: ({ children, ...rest }) => React.createElement('a', rest, children) },
+    '@/lib/platform/client': { authJson: () => { throw new Error('Network is forbidden'); } },
+    '@/components/ui/DateRangePicker': { DateRangePicker: () => null },
+    './StaffRetainerConversionTable': { StaffRetainerConversionTable: value => { props = value; return React.createElement(StaffRetainerConversionTable, value); } },
+  });
+  const input = report(fixture(), 'A'), before = JSON.stringify(input);
+  const html = renderToStaticMarkup(React.createElement(FirmPerformanceView, { report: input, selectedStaff: 'A', canManageLawyers: false }));
+  assert.ok(props); assert.deepEqual(staffCounts(props.rows), staffCounts(input.staff));
+  assert.deepEqual(staffCounts(props.rows), { A: { db: 2, contractedDb: 2 }, B: { db: 3, contractedDb: 0 }, 'No activity': { db: 0, contractedDb: 0 } });
+  assert.equal(props.rows.reduce((sum, row) => sum + row.db, 0), 5);
+  assert.match(html, /A 담당 DB/); assert.match(html, /수임 전환 2건 \/ 총 DB 2건/);
+  const total = renderedRows(html).find(row => row[0].includes('합계'));
+  assert.ok(total); assert.equal(Number(total[1].replace(/[^\d.]/g, '')), 5); assert.equal(Number(total[2].replace(/[^\d.]/g, '')), 2); assert.match(total[3], /40\.0%/);
   assert.equal(JSON.stringify(input), before);
 });

@@ -44,6 +44,7 @@ import { recordManagementExport } from "@/lib/management-export-client";
 import { kstPerformanceDate } from "@/lib/performance/firm";
 import { getRetainedLeadIds } from "@/lib/performance/lead-retainer-conversion";
 import { LeadRetainerConversionCard } from "./LeadRetainerConversionCard";
+import { StaffRetainerConversionTable, type StaffRetainerConversionRow } from "./StaffRetainerConversionTable";
 
 const TABS = ["요약", "팀 · 인원", "상담 운영", "DB 구매 · 유입", "수임 · 매출", "사건 · 수납"] as const;
 type Tab = typeof TABS[number];
@@ -74,7 +75,7 @@ function downloadCsv(rows: Array<Record<string,string|number>>, filename:string)
 }
 
 export default function AnalyticsPage(){
-  const { leads,cases,clients,installments,workStaffNames,profile,superAdminFirmScope,firmDirectory,caseDocuments }=useStore();
+  const { leads,cases,clients,installments,workStaffNames,staffDirectory=[],profile,superAdminFirmScope,firmDirectory,caseDocuments }=useStore();
   const manager=isManagerProfile(profile);
   const { globalSuperView,effectiveFirmId,activeSettings,settingsByFirm,loading:settingsLoading,error:settingsError }=useManagementSettings(profile,superAdminFirmScope,workStaffNames);
   const init=monthRange(); const [start,setStart]=useState(init.start); const [end,setEnd]=useState(init.end); const [tab,setTab]=useState<Tab>("요약"); const [staffFilter,setStaffFilter]=useState("전체");
@@ -85,15 +86,30 @@ export default function AnalyticsPage(){
   const dbRetainerConversion=useMemo(()=>{
     const uniqueLeads=Array.from(firstByKey(leads,l=>l.id).values());
     const retainedIds=getRetainedLeadIds(uniqueLeads,cases);
+    const byStaff=new Map<string,StaffRetainerConversionRow>();
+    const staffRow=(value?:string)=>{
+      const name=typeof value==="string"&&value.trim()?value.trim():"미지정";
+      let row=byStaff.get(name);
+      if(!row){row={key:name,name,db:0,contractedDb:0};byStaff.set(name,row);}
+      return row;
+    };
+    for(const person of staffDirectory){
+      if(person.lawFirmId===effectiveFirmId&&person.isWorkStaff&&["staff","firm_admin"].includes(person.platformRole||"staff")){
+        const name=(person.staffName||person.displayName)?.trim();
+        if(name)staffRow(name);
+      }
+    }
+    for(const record of cases)staffRow(record.assignedStaff);
     let totalDb=0,retainedDb=0;
     for(const lead of uniqueLeads){
+      const row=staffRow(lead.assignedStaff);
       const received=kstPerformanceDate(lead.receivedAt);
       if(!received||received<start||received>end)continue;
-      totalDb++;
-      if(retainedIds.has(lead.id))retainedDb++;
+      totalDb++;row.db++;
+      if(retainedIds.has(lead.id)){retainedDb++;row.contractedDb++;}
     }
-    return {totalDb,retainedDb};
-  },[leads,cases,start,end]);
+    return {totalDb,retainedDb,staffRows:Array.from(byStaff.values())};
+  },[leads,cases,start,end,staffDirectory,effectiveFirmId]);
   const periodCases=useMemo(()=>cases.filter(c=>inDateRange(c.contractDate,start,end)),[cases,start,end]);
   const rangeCases=useMemo(()=>periodCases.filter(isValidRetainer),[periodCases]);
   const retainedLeadIds=useMemo(()=>new Set(cases.filter(isValidRetainer).map(c=>c.fromLeadId).filter(Boolean)),[cases]);
@@ -344,8 +360,9 @@ export default function AnalyticsPage(){
     <Card className="mb-4 p-3 text-xs text-slate-500">유입은 접수일, 수임은 유상·취하 제외 계약일, 실입금은 납부일 기준입니다. 공급 전환율은 오늘 기준 공급 후 60일 이상 경과한 DB 코호트이며 분모 30건 미만은 판단을 유예합니다. 전화 시도·컨택은 새 구조화 기록만 집계하며 과거 미기록은 확인 불가입니다.</Card>
     {(supply.error||!costKnown)&&<Card className="mb-4 border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">{supply.loading?"공급 원장을 불러오는 중입니다.":supply.error||"공급 단가가 미확정입니다. 구매비 및 이익을 확정할 수 없습니다."}</Card>}
     {closed&&<Card className="mb-4 bg-emerald-50 p-3 text-xs text-emerald-800">완전한 월의 수임·실입금·비용은 서버에서 확정한 마감 합계입니다. 상세 원장은 현재 업무 자료이며 과거 입력을 소급 변경하지 않습니다.</Card>}
-    <div className="mb-4"><LeadRetainerConversionCard start={start} end={end} {...dbRetainerConversion}/></div>
+    <div className="mb-4"><LeadRetainerConversionCard start={start} end={end} totalDb={dbRetainerConversion.totalDb} retainedDb={dbRetainerConversion.retainedDb}/></div>
     <div className="mb-4 flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">{TABS.map(t=><button key={t} onClick={()=>setTab(t)} className={`rounded-xl px-4 py-2 text-sm font-bold ${tab===t?"bg-blue-600 text-white":"text-slate-600 hover:bg-slate-50"}`}>{t}</button>)}</div>
+    {!globalSuperView&&(tab==="요약"||tab==="팀 · 인원")&&<div className="mb-4"><StaffRetainerConversionTable start={start} end={end} rows={dbRetainerConversion.staffRows}/></div>}
 
     {tab==="요약"&&<div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><KpiCard label="계약 1건당 순이익" value={costKnown?fmtWon(contractNet):"비용 확인 필요"}/><KpiCard label="회수 매출" value={fmtWon(cashSales)}/><KpiCard label="계약 / 목표" value={`${contractCount} / ${contractTarget || 0}건`}/><div className={(supply.data?.matureCohort.supplied??0)<30?"opacity-60":""}><KpiCard label="60일 경과 공급 → 수임" value={supply.data?.serviceMode==="crm_only"?"공급계약 대상 아님":supply.data?ratioLabel(supply.data.matureCohort.retained,supply.data.matureCohort.supplied):"공급 원장 확인 필요"}/></div><KpiCard label="평균 실수임료" value={fmtWon(averageFee)}/><KpiCard label="평균 할인율" value={standardKnown?`${discountRate.toFixed(1)}% · 기록 ${standardKnown}/${rangeCases.length}건`:"기준 기록 없음"}/><KpiCard label="DB 구매비" value={supply.data?.serviceMode==="crm_only"?"공급계약 없음":costKnown?fmtWon(acquisitionCost):"단가 확인 필요"}/><KpiCard label="첫 전화 시도 중앙값" value={minuteText(median(contactSpeeds))}/><KpiCard label="자체 분납 비율" value={`${pct(selfInstallments,rangeCases.length).toFixed(1)}%`}/><KpiCard label="현금 기준 영업이익" value={costKnown?fmtWon(cashProfit):"비용 확인 필요"}/></div>
