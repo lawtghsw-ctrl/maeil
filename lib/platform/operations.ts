@@ -44,7 +44,11 @@ export interface OperationsClosing { id: string; month: string; action: "close" 
 export interface ContractProgress {
   contract: SupplyContract; firmName: string; expectedToDate: number | null; totalExpected: number | null;
   delivered: number; remaining: number | null; fulfillment: number | null; forecast: number | null;
-  neededPerDay: number | null; status: "normal" | "warning" | "risk" | "unregistered";
+  neededPerDay: number | null; status: "normal" | "warning" | "risk" | "unregistered" | "scheduled";
+  /** Absent in immutable legacy month snapshots. */
+  planningBasis?: "confirmed_periods" | "unconfigured";
+  agreementAmount?: number | null; remainingAmount?: number | null;
+  legacyTotalEstimate?: number | null; outsidePeriodDeliveries?: number;
 }
 export interface OperationsFirmMetrics {
   firmId: string; firmName: string; supplied: number; billable: number; replacements: number;
@@ -68,11 +72,15 @@ export interface OperationsReport {
   projectedRevenue: number | null; projectedProfit: number | null; projectedOperatingProfit: number | null;
   trend: Array<{ month: string; revenue: number | null; adSpend: number | null; profit: number | null }>;
   sources: Array<{ firmName: string; source: string; sourceName?: string; denominator: number; numerator: number; missing: number; rate: number | null }>;
-  forecastMonths: Array<{ month: string; committed: number; pipeline: number; projectedRevenue: number; projectedProfit: number | null; projectedOperatingProfit: number | null; pendingProposals: number; unallocatedContracts?: number }>;
+  forecastMonths: Array<{ month: string; committed: number | null; pipeline: number; projectedRevenue: number | null; projectedProfit: number | null; projectedOperatingProfit: number | null; pendingProposals: number; unallocatedContracts?: number; unconfiguredContracts?: number; agreementBasis?: "period_start"; knownCommitted?: number }>;
   peopleCosts: Array<{ id: string; name: string; incentive: number; total: number; automatic: boolean }>;
   /** Compare inside the month lock before closing, so a concurrent receipt cannot disappear from a snapshot. */
   adjustmentCount: number;
   activeFirmCount: number; remainingRevenue: number | null;
+  /** Missing on historical snapshots; never reinterpret their stored figures. */
+  remainingAgreementBasis?: "confirmed_periods";
+  unconfiguredAgreements?: number;
+  knownRemainingAgreement?: number;
   /** Current-day lifecycle; endedFirms uses the recorded end_date, not an unrecorded cancellation date. */
   contractLifecycle?: { asOf: string; activeFirms: number; newFirms: number; renewalFirms: number; endedFirms: number; monthlyQuantity: number | null };
   unregisteredFirms: number;
@@ -93,7 +101,9 @@ export const OPERATIONS_DEFINITIONS = [
   "60일 경과 공급의 현재 유효 계약(금액 양수·취하 제외) 전환율입니다. 분모 30건 미만은 회색 참고값이며 분자/분모를 함께 표시합니다.",
   "컨택 기록이 있는 전화 시도 DB 중 연결 기록이 전혀 없고 모든 결과가 미연결인 DB를 부재로 집계합니다. 컨택율은 연결 DB/공급 DB, 상담진행률은 명시적으로 상담에 도달한 DB/공급 DB입니다. 반복 공급은 같은 DB를 한 번만 계산하며 과거 미기록은 추정하지 않습니다.",
   "방치 DB는 현재 진행 중인 DB 전체 중 유효한 단계 변경 기록이 7일 이상 경과한 건수입니다. 단계 변경 기록이 없는 과거 DB는 확인 불가로 따로 표시합니다.",
-  "계약일부터 달력월 실제 일수로 약정량을 일할합니다. 예측은 현재 일평균 공급 속도를 계약 종료일까지 유지한 경우입니다.",
+  "확정 약정은 저장된 회차·수량·부분기간 조건을 사용합니다. 현재 이행 계획은 회차 수량을 해당 회차 날짜에 균등 배분한 운영 참고값이며, 총량 계약은 전체 계약기간에 배분합니다. 실제 공급은 계약에 연결된 기간 내 원장만 셉니다.",
+  "잔여 약정가치는 확정 총약정금액에서 연결 공급건수 × 계약 단가를 뺀 미공급분입니다. 실제 미수금·실입금과 다릅니다. 조건 미등록 계약은 확정 합계에 추정하지 않습니다.",
+  "향후 월별 확정 약정은 회차 시작월에 회차 금액을 한 번씩 표시합니다. 총량 계약은 시작월 한 번이며, 선입금·후불과 무관한 약정계획으로 현금흐름이나 회계상 매출 인식이 아닙니다.",
 ] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function opsUuid(v: unknown): v is string { return typeof v === "string" && UUID.test(v); }
@@ -119,8 +129,7 @@ export interface ContractBillingPlan {
   totalQuantity: number | null; totalAmount: number | null;
   periods: Array<{ number: number; start: string; end: string; days: number; fullDays: number; partial: boolean; extraIncluded: boolean; quantity: number | null; amount: number | null; dueDate: string | null }>;
 }
-/** This is an explicit agreement preview, never actual receipts or ledger revenue.
- * Existing calendar-prorated operations forecasts are intentionally unchanged.
+/** This is an explicit agreement plan, never actual receipts or ledger revenue.
  * Contract-month anchors are clamped from the original start day (no Feb drift).
  * Monthly amounts are rounded once per payment period to whole KRW.
  */
@@ -244,6 +253,20 @@ export function plannedSupply(contract: Pick<SupplyContract, "start_date" | "end
     month = shiftOpsMonth(month, 1);
   }
   return total;
+}
+/** Operational pacing only: spread each agreed period quantity over its actual days.
+ * An included extra period carries zero additional quantity; a total agreement
+ * has a single period spanning its entire term. Unknown terms stay unknown.
+ */
+export function agreementSupplyThrough(plan: ContractBillingPlan, through: string): number | null {
+  if (!plan.configured || plan.totalQuantity === null) return null;
+  if (!opsDate(through)) throw new Error("이행 기준일을 확인해주세요.");
+  return sum(plan.periods.map(period => {
+    if (through < period.start) return 0;
+    if (through >= period.end) return period.quantity!;
+    const elapsed = (Date.parse(through) - Date.parse(period.start)) / 86400000 + 1;
+    return period.quantity! * elapsed / period.days;
+  }));
 }
 function sum(xs: number[]): number { const value = xs.reduce((a, b) => a + b, 0); if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) throw new Error("집계 금액이 계산 범위를 초과했습니다."); return value; }
 const ratio = (n: number, d: number) => d > 0 ? n / d * 100 : null;
@@ -388,16 +411,23 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
     consultedDb: sum(firms.map(f => f.consultedDb)), missingConsultationDb: sum(firms.map(f => f.missingConsultationDb)), consultationRate: firms.some(f => f.missingConsultationDb) ? null : ratio(sum(firms.map(f => f.consultedDb)), sum(firms.map(f => f.suppliedDb))),
     neglectedDb: sum(firms.map(f => f.neglectedDb)), stageRecordedDb: sum(firms.map(f => f.stageRecordedDb)), stageUnrecordedDb: sum(firms.map(f => f.stageUnrecordedDb)) };
   const contracts = input.contracts.filter(c => selectedIds.has(c.law_firm_id) && c.start_date <= bounds.end && c.end_date >= bounds.start).map(contract => {
-    const expectedToDate = plannedSupply(contract, through), totalExpected = plannedSupply(contract, contract.end_date);
-    const delivered = (ledgerByFirm.get(contract.law_firm_id) ?? []).filter(l => l.supply_contract_id === contract.id && (l.classification === "new" || l.classification === "reentry") && kstDate(l.supplied_at) <= through).length;
+    const plan = contractBillingPlan(contract), configured = plan.configured && Boolean(contract.confirmed_at);
+    const expectedToDate = configured ? agreementSupplyThrough(plan, through) : null, totalExpected = configured ? plan.totalQuantity : null;
+    const linked = (ledgerByFirm.get(contract.law_firm_id) ?? []).filter(l => l.supply_contract_id === contract.id && (l.classification === "new" || l.classification === "reentry") && kstDate(l.supplied_at) <= through);
+    const delivered = linked.filter(l => kstDate(l.supplied_at) >= contract.start_date && kstDate(l.supplied_at) <= contract.end_date).length;
     const remaining = totalExpected === null ? null : Math.max(0, totalExpected - delivered);
+    const agreementAmount = configured ? plan.totalAmount : null;
+    const remainingAmount = agreementAmount !== null && contract.unit_price !== null ? Math.max(0, sum([agreementAmount, -delivered * contract.unit_price])) : null;
     const elapsed = Math.max(0, (Date.parse((through < contract.end_date ? through : contract.end_date)) - Date.parse(contract.start_date)) / 86400000 + 1);
     const duration = (Date.parse(contract.end_date) - Date.parse(contract.start_date)) / 86400000 + 1;
-    const daysLeft = Math.max(0, (Date.parse(contract.end_date) - Date.parse(through)) / 86400000);
+    const remainingStart = through < contract.start_date ? contract.start_date : new Date(Date.parse(through + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
+    const daysLeft = Math.max(0, (Date.parse(contract.end_date) - Date.parse(remainingStart)) / 86400000 + 1);
     const forecast = totalExpected && elapsed ? delivered / elapsed * duration / totalExpected * 100 : null;
     const fulfillment = expectedToDate ? delivered / expectedToDate * 100 : null;
-    const status: ContractProgress["status"] = forecast === null || !contract.confirmed_at ? "unregistered" : forecast < config.rules.fulfillmentRisk ? "risk" : forecast < config.rules.fulfillmentWarning ? "warning" : "normal";
-    return { contract, firmName: selected.find(f => f.id === contract.law_firm_id)?.name ?? "", expectedToDate, totalExpected, delivered, remaining, fulfillment, forecast, neededPerDay: remaining !== null && daysLeft ? remaining / daysLeft : null, status };
+    const status: ContractProgress["status"] = !configured || totalExpected === null ? "unregistered" : through < contract.start_date ? "scheduled" : forecast === null ? "unregistered" : forecast < config.rules.fulfillmentRisk ? "risk" : forecast < config.rules.fulfillmentWarning ? "warning" : "normal";
+    return { contract, firmName: selected.find(f => f.id === contract.law_firm_id)?.name ?? "", expectedToDate, totalExpected, delivered, remaining, fulfillment, forecast, neededPerDay: remaining !== null && daysLeft ? remaining / daysLeft : null, status,
+      planningBasis: configured ? "confirmed_periods" as const : "unconfigured" as const, agreementAmount, remainingAmount,
+      ...(!configured ? { legacyTotalEstimate: plannedSupply(contract, contract.end_date) } : {}), outsidePeriodDeliveries: linked.length - delivered };
   });
   const sales = (input.sales ?? []).filter(s => !s.law_firm_id || selectedIds.has(s.law_firm_id));
   const peopleCosts = config.people.map(p => { const incentive = incentiveForPerson(p, sales, month); return { id: p.id, name: p.name, incentive: incentive.amount, total: p.base + incentive.amount + p.employerCost, automatic: incentive.automatic }; });
@@ -409,11 +439,13 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
   const operatingProfit = profit !== null && operatingCost !== null ? profit - operatingCost * (factor ? 1 / factor : 0) : null;
   const forecastMonths = Array.from({ length: 3 }, (_, i) => {
     const key = shiftOpsMonth(month, i + 1), b = opsBounds(key), prior = new Date(Date.parse(b.start) - 86400000).toISOString().slice(0, 10);
-    const activeContracts = input.contracts.filter(c => selectedIds.has(c.law_firm_id) && c.status === "active" && c.confirmed_at && c.unit_price && c.start_date <= b.end && c.end_date >= b.start);
-    // A whole-term agreement has no monthly allocation. Keep the legacy money
-    // calculation intact, but mark its incomplete totals for honest display.
-    const unallocatedContracts = activeContracts.filter(c => c.billing_terms?.quantityBasis === "total").length;
-    const committed = sum(activeContracts.map(c => ((plannedSupply(c, b.end) ?? 0) - (plannedSupply(c, prior) ?? 0)) * c.unit_price!));
+    const activeContracts = input.contracts.filter(c => selectedIds.has(c.law_firm_id) && c.status === "active" && c.confirmed_at && c.start_date <= b.end && c.end_date >= b.start);
+    // Attribute agreed money to the period's start month, never to a guessed
+    // payment date. Whole-term agreements have one start-month amount.
+    const plans = activeContracts.map(c => contractBillingPlan(c));
+    const unconfiguredContracts = plans.filter(p => !p.configured || p.totalAmount === null).length;
+    const knownCommitted = sum(plans.filter(p => p.configured && p.totalAmount !== null).flatMap(p => p.periods.filter(period => period.start.slice(0, 7) === key).map(period => period.amount!)));
+    const committed = unconfiguredContracts ? null : knownCommitted;
     let pendingProposals = 0; const values: number[] = [];
     for (const sale of sales) {
       const weight = ({ "미팅예정": config.rules.pipelineMeeting, "제안 · 조건협의": config.rules.pipelineProposal, "계약서발송": config.rules.pipelineSent, "서명완료": sale.signed_at ? 100 : 0 } as Record<string, number>)[sale.stage];
@@ -424,10 +456,10 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
       const plan = { start_date: p.startDate, end_date: p.endDate, monthly_quantity: p.quantity };
       values.push(((plannedSupply(plan, b.end) ?? 0) - (plannedSupply(plan, prior) ?? 0)) * p.unitPrice * weight / 100);
     }
-    const pipeline = sum(values), projectedRevenue = committed + pipeline;
-    const projectedProfit = config.goals.margin === null ? null : projectedRevenue * config.goals.margin / 100;
+    const pipeline = sum(values), projectedRevenue = committed === null ? null : sum([committed, pipeline]);
+    const projectedProfit = config.goals.margin === null || projectedRevenue === null ? null : projectedRevenue * config.goals.margin / 100;
     const futureOperatingCost = monthRow && (config.costs.length || config.people.length) ? sum([...config.costs.map(c => c.amount), ...config.people.map(p => p.base + incentiveForPerson(p, sales, key).amount + p.employerCost)]) : null;
-    return { month: key, committed, pipeline, projectedRevenue, projectedProfit, projectedOperatingProfit: projectedProfit !== null && futureOperatingCost !== null ? projectedProfit - futureOperatingCost : null, pendingProposals, ...(unallocatedContracts ? { unallocatedContracts } : {}) };
+    return { month: key, committed, pipeline, projectedRevenue, projectedProfit, projectedOperatingProfit: projectedProfit !== null && futureOperatingCost !== null ? projectedProfit - futureOperatingCost : null, pendingProposals, agreementBasis: "period_start" as const, knownCommitted, ...(unconfiguredContracts ? { unconfiguredContracts } : {}) };
   });
   const activeProgress = contracts.filter(p => p.contract.status === "active" && p.contract.confirmed_at);
   const lifecycleFirmIds = new Set(selected.filter(f => f.status === "active" && dbSupply.has(f.id)).map(f => f.id));
@@ -440,7 +472,9 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
     renewalFirms: firmCount(currentContracts.filter(c => c.end_date <= renewalEnd)),
     endedFirms: firmCount(lifecycleContracts.filter(c => c.end_date >= bounds.start && c.end_date <= bounds.end)),
     monthlyQuantity: currentContracts.some(c => !Number.isSafeInteger(c.monthly_quantity) || Number(c.monthly_quantity) <= 0) ? null : sum(currentContracts.map(c => c.monthly_quantity!)) };
-  const remainingRevenue = activeProgress.length ? knownSum(activeProgress.map(p => p.remaining !== null && p.contract.unit_price !== null ? p.remaining * p.contract.unit_price : null)) : null;
+  const unconfiguredAgreements = activeProgress.filter(p => p.planningBasis !== "confirmed_periods" || p.remainingAmount === null).length;
+  const remainingRevenue = activeProgress.length ? knownSum(activeProgress.map(p => p.remainingAmount)) : null;
+  const knownRemainingAgreement = sum(activeProgress.flatMap(p => p.remainingAmount === null ? [] : [p.remainingAmount]));
   const alerts: OperationsReport["alerts"] = [];
   for (const p of activeProgress) {
     if (p.status === "risk" || p.status === "warning") {
@@ -452,6 +486,6 @@ export function buildOperationsReport(input: OperationsInput, month: string, inc
   }
   return { month, generatedAt: now.toISOString(), includeDemo, excludedDemo: input.firms.length - demoFiltered.length, firms, totals, contracts, operatingCost, operatingProfit, projectedRevenue, projectedProfit,
     projectedOperatingProfit: projectedProfit !== null && operatingCost !== null ? projectedProfit - operatingCost : null, trend: [], sources, forecastMonths, peopleCosts,
-    adjustmentCount: input.adjustments.filter(a => a.event_date.slice(0, 7) === month).length, activeFirmCount: new Set(activeProgress.map(p => p.contract.law_firm_id)).size, contractLifecycle, remainingRevenue, alerts,
+    adjustmentCount: input.adjustments.filter(a => a.event_date.slice(0, 7) === month).length, activeFirmCount: new Set(activeProgress.map(p => p.contract.law_firm_id)).size, contractLifecycle, remainingRevenue, remainingAgreementBasis: "confirmed_periods", unconfiguredAgreements, knownRemainingAgreement, alerts,
     unregisteredFirms: selected.filter(f => !dbSupply.has(f.id)).length };
 }

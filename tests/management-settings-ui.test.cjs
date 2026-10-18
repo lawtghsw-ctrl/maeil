@@ -81,3 +81,12 @@ test('changing percent to fixed requires a money input; reversing an unedited un
 test('unchanged historical percentage remains saved as-is instead of silently rewriting old settings',async()=>{
  const{tree,writes}=await mountCompensation({incentiveMode:'수임액%',incentiveValue:125});await act(async()=>{saveButton(tree).props.onClick();await tick();});assert.equal(writes[0].staffCompensations[0].incentiveValue,125);await act(async()=>tree.unmount());
 });
+
+test('active DB cap is a read-only common standard and opening settings never saves it',async()=>{
+ setupPage();const writes=[];pageSave=async next=>{writes.push(next);return next;};let tree;
+ await act(async()=>{tree=renderer.create(React.createElement(SettingsPage));});
+ const cap=tree.root.findByProps({'aria-describedby':'active-db-cap-policy'});
+ assert.equal(cap.props.value,40);assert.equal(cap.props.readOnly,true);assert.equal(cap.props.onChange,undefined);
+ assert.match(textOf(tree.root),/전 로펌 공통 · 1인 40건/);assert.equal(writes.length,0);
+ await act(async()=>tree.unmount());
+});

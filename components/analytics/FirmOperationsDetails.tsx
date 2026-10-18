@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import type { DbLead, CaseRecord } from "@/lib/types";
 import { isValidRetainer, ratioLabel, structuredContacts } from "@/lib/firm-reporting";
 import { Card } from "@/components/ui/Primitives";
+import { InfoHelp } from "@/components/ui/InfoHelp";
 
 export function FirmOperationsDetails({ leads, cases }: { leads: DbLead[]; cases: CaseRecord[] }) {
   const data = useMemo(() => {
@@ -28,8 +29,8 @@ export function FirmOperationsDetails({ leads, cases }: { leads: DbLead[]; cases
   }, [leads, cases]);
   return <div className="grid gap-4 xl:grid-cols-2">
     <Card className="p-5"><h3 className="text-sm font-black">미수임 · 불가 사유</h3><div className="mt-3 space-y-2">{data.reasons.map(([reason,count])=><div key={reason} className="flex justify-between text-sm"><span>{reason}</span><b>{count}건</b></div>)}{!data.reasons.length&&<p className="text-sm text-slate-500">선택 기간 종료 DB가 없습니다.</p>}</div></Card>
-    <Card className="p-5"><h3 className="text-sm font-black">컨택 횟수별 수임 전환</h3><p className="mt-1 text-xs text-slate-500">구조화 기록 {data.known}/{leads.length}건 · 과거 미기록 제외 · 분모 30건 미만 판단 유예</p><div className="mt-3 space-y-2">{data.buckets.map(row=><div key={row.label} className={`flex justify-between text-sm ${row.db<30?"text-slate-400":""}`}><span>{row.label}</span><b>{ratioLabel(row.retained,row.db)}</b></div>)}</div></Card>
-    <Card className="p-5"><h3 className="text-sm font-black">재접촉 연결</h3><p className={`mt-3 font-black ${data.recontact<30?"text-slate-400":""}`}>{ratioLabel(data.reconnected,data.recontact)}</p><p className="mt-1 text-xs text-slate-500">첫 전화 미연결 후 두 번째 이상 전화한 DB 중 이후 연결 기록이 있는 비율입니다.</p></Card>
-    <Card className="p-5"><h3 className="text-sm font-black">입력 완결성</h3><p className={`mt-3 font-black ${leads.length<30?"text-slate-400":""}`}>{ratioLabel(data.complete,leads.length)}</p><p className="mt-1 text-xs text-slate-500">이름·연락처·담당자·유입경로, 종료 DB의 선택 사유 기준입니다. 신입 적응기간은 입사일 자료가 없어 자동 추정하지 않습니다.</p></Card>
+    <Card className="p-5"><h3 className="text-sm font-black">컨택 횟수별 수임 전환</h3><InfoHelp className="mt-1" summary={`컨택 기록 ${data.known}/${leads.length}건`}>접수일 기준 DB의 구조화 컨택 기록만 집계합니다. 과거 미기록은 제외하고 분모 30건 미만은 회색 참고값으로 표시합니다.</InfoHelp><div className="mt-3 space-y-2">{data.buckets.map(row=><div key={row.label} className={`flex justify-between text-sm ${row.db<30?"text-slate-400":""}`}><span>{row.label}</span><b>{ratioLabel(row.retained,row.db)}</b></div>)}</div></Card>
+    <Card className="p-5"><h3 className="text-sm font-black">재접촉 연결</h3><p className={`mt-3 font-black ${data.recontact<30?"text-slate-400":""}`}>{ratioLabel(data.reconnected,data.recontact)}</p><InfoHelp className="mt-1" summary="재통화 DB 중 연결 비율">첫 전화 미연결 후 두 번째 이상 전화한 DB 중 이후 연결 기록이 있는 비율입니다.</InfoHelp></Card>
+    <Card className="p-5"><h3 className="text-sm font-black">입력 완결성</h3><p className={`mt-3 font-black ${leads.length<30?"text-slate-400":""}`}>{ratioLabel(data.complete,leads.length)}</p><InfoHelp className="mt-1" summary="기본 정보 · 종료 사유 기준">이름·연락처·담당자·유입경로, 종료 DB의 선택 사유 기준입니다. 신입 적응기간은 입사일 자료가 없어 자동 추정하지 않습니다.</InfoHelp></Card>
   </div>;
 }

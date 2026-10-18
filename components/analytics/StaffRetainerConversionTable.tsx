@@ -1,4 +1,5 @@
 import { conversionPeriodLabel } from "./LeadRetainerConversionCard";
+import { InfoHelp } from "@/components/ui/InfoHelp";
 
 export interface StaffRetainerConversionRow {
   key: string;
@@ -26,7 +27,7 @@ export function StaffRetainerConversionTable({ start, end, rows, selectedStaff, 
     const value = basis === "supply" ? row.conversionRate : row.contractedDb / row.db * 100;
     return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)}%` : "확인 필요";
   };
-  const rateCell = (row: { db: number; contractedDb: number; conversionRate?: number | null }) => <><span>{rate(row)}</span><span className="mt-1 block text-[11px] font-normal text-slate-500">{row.contractedDb}/{row.db}{row.db > 0 && row.db < 30 ? " · 참고" : ""}</span></>;
+  const rateCell = (row: { db: number; contractedDb: number; conversionRate?: number | null }) => <span>{row.contractedDb}/{row.db} · {rate(row)}{row.db > 0 && row.db < 30 ? " · 참고" : ""}</span>;
   const label = cohortLabel ?? `${conversionPeriodLabel(start, end)} ${basis === "supply" ? "공급" : "접수"} DB`;
   return <section aria-label="직원별 DB 수임 전환 비교" className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
     <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
@@ -55,6 +56,6 @@ export function StaffRetainerConversionTable({ start, end, rows, selectedStaff, 
         </tr></tfoot>
       </table>
     </div>
-    <p className="border-t border-slate-100 px-4 py-3 text-xs leading-5 text-slate-500 sm:px-5">수임 전환율 = 수임 전환 DB ÷ {label} × 100. 합계는 전체 건수로 계산합니다. 취하·0원 계약 제외, 같은 DB의 여러 계약은 1건으로 집계합니다. DB 30건 미만은 회색 참고값, DB가 없으면 —, 연결이 불명확하면 확인 필요로 표시합니다. 과거 배정 시점·담당자 변경 이력은 추정하지 않습니다.</p>
+    <div className="border-t border-slate-100 px-4 py-3 sm:px-5"><InfoHelp summary="수임 / DB · 전환율 · 현재 담당자 기준">수임 전환율 = 수임 전환 DB ÷ {label} × 100. 합계는 전체 건수로 계산합니다. 취하·0원 계약 제외, 같은 DB의 여러 계약은 1건으로 집계합니다. DB 30건 미만은 회색 참고값, DB가 없으면 —, 계약 연결이 불명확하면 확인 필요로 표시합니다. 연결 누락 공급은 제외하며 과거 담당자 변경 이력은 추정하지 않습니다.</InfoHelp></div>
   </section>;
 }

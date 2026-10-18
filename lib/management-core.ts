@@ -13,6 +13,8 @@ import {
 import { actualPayment, firstCallMinutes, structuredContacts } from "@/lib/firm-reporting";
 
 export const MANAGEMENT_SETTINGS_KEY = "management_analytics_v1";
+/** One workload standard for every firm; never rewrites stored assignments. */
+export const ACTIVE_DB_CAP = 40;
 
 export type AcquisitionMode = "direct_ads" | "db_purchase";
 export type EmploymentType = "정규직" | "프리랜서";
@@ -108,7 +110,7 @@ export const DEFAULT_MANAGEMENT_SETTINGS: ManagementSettings = {
   acquisitionMode: "direct_ads",
   dbPurchaseUnitCost: 0,
   monthlyContractTarget: 50,
-  activeDbCap: 40,
+  activeDbCap: ACTIVE_DB_CAP,
   neglectedDays: 7,
   minimumContactAttempts: 5,
   feeRules: CASE_TYPE_OPTIONS.map((type) => feeRule(type, type === "개인파산" ? 3_000_000 : 4_000_000)),
@@ -141,7 +143,7 @@ export function normalizeManagementSettings(value: unknown): ManagementSettings 
     acquisitionMode: raw.acquisitionMode === "db_purchase" ? "db_purchase" : "direct_ads",
     dbPurchaseUnitCost: Math.max(0, num(raw.dbPurchaseUnitCost)),
     monthlyContractTarget: Math.max(0, num(raw.monthlyContractTarget, 50)),
-    activeDbCap: Math.max(1, num(raw.activeDbCap, 40)),
+    activeDbCap: ACTIVE_DB_CAP,
     neglectedDays: Math.max(1, num(raw.neglectedDays, 7)),
     minimumContactAttempts: Math.max(1, num(raw.minimumContactAttempts, 5)),
     feeRules: Array.isArray(raw.feeRules) && raw.feeRules.length ? raw.feeRules.map((r) => ({

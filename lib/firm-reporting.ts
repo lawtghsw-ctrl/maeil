@@ -1,5 +1,5 @@
 import type { CaseRecord, DbLead, Installment } from "@/lib/types";
-import { buildSupplyConversionCohorts, type SupplyConversionResult } from "./performance/supply-conversion";
+import { buildSupplyConversionCohorts, buildPeriodSupplyContracts, type SupplyConversionResult, type SupplyPeriodContracts } from "./performance/supply-conversion";
 
 /** Cash is the actual recorded amount. An explicit zero never falls back to the schedule. */
 export function actualPayment(row: Pick<Installment, "amount" | "actualPaidAmount">): number {
@@ -52,12 +52,14 @@ export interface FirmSupplySummary {
   byLead: { leadId: string; purchaseCost: number | null }[];
   supplyCohort: SupplyConversionResult["supplyCohort"];
   matureCohort: SupplyConversionResult["matureCohort"];
+  periodContracts: SupplyPeriodContracts;
 }
 export type SupplyLedgerRow = { id: string; law_firm_id: string; lead_id: string | null; supplied_at: string; billable: boolean; unit_price_snapshot: number | null; classification?: string | null; origin?: string | null };
 
 export function summarizeFirmSupply(firmId: string, start: string, end: string, ledger: SupplyLedgerRow[], contracts: FirmSupplyContract[], replacedCount: number, cases: CaseRecord[], asOf = kstDay(new Date().toISOString()), cohortLeads: DbLead[] = [], staffNames: string[] = []): FirmSupplySummary {
   const conversion = buildSupplyConversionCohorts({ firmId, start, end, ledger, cases, leads: cohortLeads, staffNames, asOf });
-  const result: FirmSupplySummary = { firmId, start, end, serviceMode: "db_supply", contracts, suppliedCount: 0, billableCount: 0, replacedCount, purchaseCost: 0, knownPurchaseCost: 0, missingPriceCount: 0, unlinkedCount: 0, monthly: [], weekly: [], byLead: [], ...conversion };
+  const periodContracts = buildPeriodSupplyContracts({ firmId, start, end, ledger, cases, leads: cohortLeads });
+  const result: FirmSupplySummary = { firmId, start, end, serviceMode: "db_supply", contracts, suppliedCount: 0, billableCount: 0, replacedCount, purchaseCost: 0, knownPurchaseCost: 0, missingPriceCount: 0, unlinkedCount: 0, monthly: [], weekly: [], byLead: [], ...conversion, periodContracts };
   const months = new Map<string, { month: string; suppliedCount: number; billableCount: number; purchaseCost: number | null }>();
   const weeks = new Map<string, { week: string; suppliedCount: number; billableCount: number }>();
   const leads = new Map<string, number | null>();

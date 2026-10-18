@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
+import { InfoHelp } from "@/components/ui/InfoHelp";
 
 export const CHART_COLORS = ["#4f46e5", "#10b981", "#f59e0b", "#0ea5e9", "#8b5cf6", "#f43f5e", "#64748b"];
 export const numberText = (value: number) => Math.round(value).toLocaleString("ko-KR");
@@ -13,7 +14,7 @@ export function compactMoney(value: number) {
 
 export function PerformancePanel({ title, description, action, children, className = "" }: { title: string; description?: string; action?: ReactNode; children: ReactNode; className?: string }) {
   return <section className={`min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm ${className}`}>
-    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5"><div><h2 className="text-sm font-bold text-slate-900">{title}</h2>{description && <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>}</div>{action}</div>
+    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5"><div><h2 className="text-sm font-bold text-slate-900">{title}</h2>{description && <InfoHelp className="mt-1" summary="집계 기준">{description}</InfoHelp>}</div>{action}</div>
     {children}
   </section>;
 }
@@ -26,7 +27,7 @@ export function PerformanceMetric({ label, value, caption, previous, current, po
     <div className={`text-xs font-semibold ${dark ? "text-indigo-200" : "text-slate-500"}`}>{label}</div>
     <div className="mt-3 break-words text-2xl font-extrabold tracking-tight sm:text-[27px]">{value}</div>
     {comparable && <div className={`mt-2 flex items-center gap-1 text-[11px] font-semibold ${dark ? "text-indigo-200" : change !== null && change > 0 ? "text-emerald-700" : "text-slate-500"}`}><Icon size={13}/>{change === null ? previous === 0 && current === 0 ? "이전 기간과 동일" : "이전 기간 실적 없음" : `${change > 0 ? "+" : ""}${change.toFixed(1)}${points ? "%p" : "%"} · 이전 기간 대비`}</div>}
-    {caption && <div className={`mt-2 text-[11px] leading-5 ${dark ? "text-indigo-200/80" : "text-slate-400"}`}>{caption}</div>}
+    {caption && (caption.length > 36 ? <InfoHelp className="mt-2" summary="집계 기준">{caption}</InfoHelp> : <div className={`mt-2 text-[11px] leading-5 ${dark ? "text-indigo-200/80" : "text-slate-400"}`}>{caption}</div>)}
   </div>;
 }
 

@@ -70,20 +70,24 @@ test('sidebar keeps platform costs and sales away from law-firm accounts', () =>
 });
 test('firm dashboard shows the server supply denominator separately from contract-date totals for managers only', () => {
   const management = load('lib/management-core.ts');
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth() + 1;
+  const start = `${y}-${String(m).padStart(2,'0')}-01`, end = `${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+  const quality = {unlinkedRows:0,missingLeads:0,duplicateSupplyRows:0,unknownSupplyRows:0,invalidSupplyDates:0,unresolvedContracts:0};
+  const cohort = {supplied:20,retained:3,conversionRate:15,excludedSupplyRows:0,quality,staff:[{key:'staff:A',name:'A',kind:'staff',db:20,contractedDb:3,conversionRate:15}]};
   function render(manager) {
     const { default: Dashboard } = load('components/dashboard/FirmDashboard.tsx', {
       'next/link': { __esModule: true, default: ({ children, ...props }) => React.createElement('a', props, children) },
       '@/lib/store': { useStore: () => ({ clients: [], cases: [], installments: [], scheduleItems: [], leads: [], isAdmin: manager, currentStaff: 'Synthetic staff', can: () => true,
         profile: { platformRole: manager ? 'firm_admin' : 'staff', role: manager ? 'admin' : 'staff' }, superAdminFirmScope: null, workStaffNames: [], firmDirectory: [] }) },
       '@/lib/management-analytics': { ...management, useManagementSettings: () => ({ globalSuperView: false, effectiveFirmId: 'firm-a', activeSettings: management.DEFAULT_MANAGEMENT_SETTINGS, settingsByFirm: {}, loading: false, error: null }) },
-      '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: { purchaseCost: 0, serviceMode: 'crm_only', supplyCohort: { supplied: 20, retained: 3, conversionRate: 15 } }, loading: false, error: null }) },
+      '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: {start,end,purchaseCost:0,serviceMode:'crm_only',supplyCohort:cohort,matureCohort:{...cohort,cutoff:start}}, loading: false, error: null }) },
       '@/components/ui/DateRangePicker': { DateRangePicker: () => null }, '@/components/charts/MonthCalendar': { MonthCalendar: () => null },
       '@/lib/management-export-client': { recordManagementExport: () => { throw new Error('Writes prohibited'); } },
     });
     return renderToStaticMarkup(React.createElement(Dashboard));
   }
   const manager = render(true);
-  assert.match(manager, /월 공급 DB/); assert.match(manager, /수임 전환 3건 \/ 월 공급 DB 20건/); assert.match(manager, /15\.0%/);
-  assert.match(manager, /기간 수임/); assert.match(manager, /계약일 기준/);
+  assert.match(manager, /월 공급 DB/); assert.match(manager, /수임 3건 \/ 공급 DB 20건 · 수임전환율 15\.0%/);
+  assert.match(manager, /전체 수임 · 계약일/); assert.match(manager, /계약일 기준/);
   assert.doesNotMatch(render(false), /월 공급 DB|직원별 공급 DB/);
 });

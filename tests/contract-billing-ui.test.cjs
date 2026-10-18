@@ -60,11 +60,28 @@ test('contract scope rejects ordinary managers and issues no operations request'
   const h=setup({role:'firm_admin'});await h.mount();assert.equal(h.calls.length,0);assert.match(text(h.tree().toJSON()),/슈퍼관리자 전용/);h.close();
 });
 
-test('future forecast shows unknown rather than zero for whole-term contracts and preserves old snapshots',async()=>{
+test('old immutable forecast keeps unallocated unknowns and explicitly labels its former calendar basis',async()=>{
   const h=harness('components/platform/OperationsOverview.tsx','OpsHome');
+  delete h.response.report.remainingAgreementBasis;h.response.report.remainingRevenue=76612903;
   h.response.report.forecastMonths=[{month:'2026-11',committed:0,pipeline:120,projectedRevenue:120,projectedProfit:60,projectedOperatingProfit:40,pendingProposals:0,unallocatedContracts:1},{month:'2026-12',committed:12345,pipeline:0,projectedRevenue:12345,projectedProfit:100,projectedOperatingProfit:50,pendingProposals:0}];
-  await h.mount();assert.match(text(h.tree().toJSON()),/달력 일할 운영 추정/);assert.match(text(h.tree().toJSON()),/회차 약정금액·실입금과 다릅니다/);const rows=h.tree().root.findAllByType('tr');const unknown=rows.find(r=>text(r).startsWith('2026-11'));
-  assert.equal((text(unknown).match(/월 배분 확인 필요/g)||[]).length,4);assert.match(text(unknown),/총량 계약 1건/);assert.equal(text(unknown.findAllByType('td')[1]),'월 배분 확인 필요');assert.match(text(rows.find(r=>text(r).startsWith('2026-12'))),/12,345원/);h.close();
+  await h.mount();assert.match(text(h.tree().toJSON()),/마감 당시 달력 일할 기준/);assert.match(text(h.tree().toJSON()),/예상 입금·실제 청구매출·회계상 매출 인식으로 보지 않습니다/);const rows=h.tree().root.findAllByType('tr');const unknown=rows.find(r=>text(r).startsWith('2026-11'));
+  assert.equal((text(unknown).match(/월 배분 확인 필요/g)||[]).length,4);assert.match(text(unknown),/총량 계약 1건/);assert.equal(text(unknown.findAllByType('td')[1]),'월 배분 확인 필요');assert.match(text(rows.find(r=>text(r).startsWith('2026-12'))),/12,345원/);assert.match(text(h.tree().toJSON()),/잔여 약정액 · 마감 당시 기준76,612,903원/);h.close();
+});
+
+test('current home displays confirmed undelivered agreement and future-start status separately from actual billing or payment',async()=>{
+  const h=harness('components/platform/OperationsOverview.tsx','OpsHome');
+  Object.assign(h.response.report,{remainingAgreementBasis:'confirmed_periods',remainingRevenue:75000000,knownRemainingAgreement:75000000,unconfiguredAgreements:0});
+  const contract={...legacy(),billing_terms:{version:1,quantityBasis:'monthly',totalQuantity:null,cycleBasis:'contract_month',paymentTiming:'unspecified',lastPartial:'included'}};
+  h.response.report.contracts=[{contract,firmName:'실자료 로펌',planningBasis:'confirmed_periods',totalExpected:1500,expectedToDate:0,delivered:0,remaining:1500,remainingAmount:75000000,agreementAmount:75000000,forecast:null,fulfillment:null,neededPerDay:1500/94,status:'scheduled'}];
+  h.response.report.forecastMonths=[{month:'2027-01',committed:0,knownCommitted:0,pipeline:0,projectedRevenue:0,projectedProfit:null,projectedOperatingProfit:null,pendingProposals:0,agreementBasis:'period_start'}];
+  await h.mount();const rendered=text(h.tree().toJSON());assert.match(rendered,/잔여 약정가치 · 미공급분75,000,000원/);assert.match(rendered,/실제 미수금 아님/);assert.match(rendered,/시작 전/);assert.match(rendered,/회차 시작월 기준/);assert.match(rendered,/예상 입금·실제 청구매출·회계상 매출 인식으로 보지 않습니다/);assert.ok(!rendered.includes('76,612,903'));assert.equal(posts(h).length,0);h.close();
+});
+
+test('incomplete agreement totals remain unknown while only the known subtotal is labeled',async()=>{
+  const h=harness('components/platform/OperationsOverview.tsx','OpsHome');
+  Object.assign(h.response.report,{remainingAgreementBasis:'confirmed_periods',remainingRevenue:null,knownRemainingAgreement:75000000,unconfiguredAgreements:1});
+  h.response.report.forecastMonths=[{month:'2026-11',committed:null,knownCommitted:25000000,pipeline:0,projectedRevenue:null,projectedProfit:null,projectedOperatingProfit:null,pendingProposals:0,agreementBasis:'period_start',unconfiguredContracts:1}];
+  await h.mount();const rendered=text(h.tree().toJSON());assert.match(rendered,/잔여 약정가치 · 미공급분확인 필요/);assert.match(rendered,/조건 미확인 1건 · 확인된 부분 75,000,000원 · 전체 합계 미확정/);assert.match(rendered,/확인된 부분 25,000,000원 · 전체 미확정/);assert.match(rendered,/약정 조건 1건 미확인/);h.close();
 });
 test('legacy edit preserves unregistered terms, commas and reference-only calendar preview',async()=>{
   const h=setup();await h.mount();await edit(h);
@@ -85,7 +102,7 @@ test('confirmed three-installment 75-million agreement labels included two days 
   const rows=h.tree().root.findAllByType('tr');
   for(const number of [1,2,3]){const row=rows.find(r=>text(r).startsWith(`${number}회`));assert.ok(row);assert.equal(text(row.findAllByType('td')[4]),'25,000,000원');}
   const included=rows.find(r=>text(r).startsWith('추가 2일'));assert.ok(included);assert.match(text(included),/2027-01-21 ~ 2027-01-22/);assert.equal(text(included.findAllByType('td')[4]),'0원');assert.match(text(included),/추가 청구 없음/);assert.ok(!rows.some(r=>text(r).startsWith('4회')));
-  const rendered=text(h.tree().toJSON());assert.match(rendered,/75,000,000원/);assert.match(rendered,/1,500건/);assert.match(rendered,/수납 미등록/);assert.match(rendered,/17,741,935원이며 실입금이나 계약월 결제액이 아닙니다/);
+  const rendered=text(h.tree().toJSON());assert.match(rendered,/75,000,000원/);assert.match(rendered,/1,500건/);assert.match(rendered,/수납 미등록/);assert.match(rendered,/확정 회차 총액에서 연결 공급분을 차감/);
   assert.equal(posts(h).length,0);assert.equal(JSON.stringify(h.response.contracts),before);h.close();
 });
 test('incomplete agreement choices cannot be submitted or guessed',async()=>{

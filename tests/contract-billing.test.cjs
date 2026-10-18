@@ -34,11 +34,12 @@ test('total quantity means one agreement over the whole term, not quantity per m
   const c=contract({monthly_quantity:null,billing_terms:terms({quantityBasis:'total',totalQuantity:500})});const p=ops.contractBillingPlan(c);assert.equal(p.monthlyAmount,null);assert.equal(p.periods.length,1);assert.equal(p.totalAmount,25000000);assert.equal(p.totalQuantity,500);assert.equal(ops.plannedSupply(c,'2027-01-22'),null);
 });
 
-test('whole-term contracts flag only overlapping forecasts without inventing monthly allocation',()=>{
+test('whole-term agreement forecast records the amount once in its start month, never as recurring monthly receipts',()=>{
   const input={firms:[{id:firm,name:'F',status:'active',firm_code:'1234567890',billing_type:'per_lead'}],contracts:[contract({status:'active',confirmed_at:'2026-10-18T00:00:00Z',monthly_quantity:null,end_date:'2026-12-20',billing_terms:terms({quantityBasis:'total',totalQuantity:1500})})],adjustments:[],ledger:[],leads:[],cases:[],monthRows:[],adSpend:[],commercialProfiles:[{law_firm_id:firm,service_mode:'db_supply'}]};
   const report=ops.buildOperationsReport(input,'2026-10',false,new Date('2026-10-18T00:00:00Z'));
-  assert.equal(report.forecastMonths[0].unallocatedContracts,1);assert.equal(report.forecastMonths[1].unallocatedContracts,1);assert.equal(report.forecastMonths[2].unallocatedContracts,undefined);
-  assert.equal(report.forecastMonths[0].committed,0);assert.equal(report.forecastMonths[0].pipeline,0);
+  assert.deepEqual(report.forecastMonths.map(row=>row.committed),[0,0,0]);assert.equal(report.forecastMonths[0].agreementBasis,'period_start');assert.equal(report.forecastMonths[0].pipeline,0);
+  const beforeStart=ops.buildOperationsReport(input,'2026-09',false,new Date('2026-09-18T00:00:00Z'));
+  assert.deepEqual(beforeStart.forecastMonths.map(row=>row.committed),[75000000,0,0]);
   const monthly=ops.buildOperationsReport({...input,contracts:[contract({status:'active',confirmed_at:'2026-10-18T00:00:00Z'})]},'2026-10',false,new Date('2026-10-18T00:00:00Z'));
   assert.equal(monthly.forecastMonths[0].unallocatedContracts,undefined);assert.equal(monthly.forecastMonths[0].committed,25000000);
 });
