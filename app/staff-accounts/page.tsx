@@ -12,6 +12,7 @@ import {
   PERMISSION_GROUPS,
   PERMISSION_PRESETS,
   normalizePermissions,
+  setPermissionSelection,
   type PermissionKey,
   type PermissionMap,
 } from "@/lib/permissions";
@@ -82,14 +83,12 @@ function PermissionEditor({
 }) {
   function toggle(key: PermissionKey) {
     if (disabled) return;
-    onChange(normalizePermissions({ ...value, [key]: !value[key] }));
+    onChange(setPermissionSelection(value, [key], value[key] !== true));
   }
 
   function setGroup(keys: readonly PermissionKey[], checked: boolean) {
     if (disabled) return;
-    const next = { ...value };
-    for (const key of keys) next[key] = checked;
-    onChange(normalizePermissions(next));
+    onChange(setPermissionSelection(value, keys, checked));
   }
 
   return (
@@ -106,6 +105,8 @@ function PermissionEditor({
           </div>
         )}
       </div>
+
+      {!disabled && <p className="text-xs leading-5 text-slate-500">기능을 선택하면 필요한 조회 권한도 함께 켜집니다. 조회 권한을 해제하면 해당 권한이 필요한 기능도 함께 꺼집니다. 예: 전체 담당자 DB 조회 해제 시 DB 담당자 변경도 해제됩니다. 변경 후 저장을 눌러주세요.</p>}
 
       {PERMISSION_GROUPS.map((group) => {
         const keys = group.items.map((item) => item[0]) as PermissionKey[];

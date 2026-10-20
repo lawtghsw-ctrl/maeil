@@ -28,6 +28,26 @@ const PERMISSION_DEPENDENCIES:Partial<Record<PermissionKey,PermissionKey[]>>={
   "settlements.view_all":["settlements.view"],"settlements.export":["settlements.view"],"settlement_settings.edit":["settlement_settings.view"],"living.edit":["living.view"],"changes.view_all":["changes.view"],"analytics.view_all":["analytics.view"],"analytics.finance":["analytics.view"],
 };
 export function normalizePermissions(input:PermissionMap):PermissionMap{const next={...input};let changed=true;while(changed){changed=false;for(const [rawKey,deps] of Object.entries(PERMISSION_DEPENDENCIES) as Array<[PermissionKey,PermissionKey[]]>){if(next[rawKey]!==true)continue;for(const dep of deps){if(next[dep]!==true){next[dep]=true;changed=true}}}}return next}
+export function setPermissionSelection(input: PermissionMap, keys: readonly PermissionKey[], checked: boolean): PermissionMap {
+  const next = { ...input };
+  for (const key of keys) next[key] = checked;
+  if (!checked) {
+    // Explicit revocation also removes dependent actions, so normalization cannot restore it.
+    const revoked = new Set(keys);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [key, dependencies] of Object.entries(PERMISSION_DEPENDENCIES) as Array<[PermissionKey, PermissionKey[]]>) {
+        if (!revoked.has(key) && dependencies.some((dependency) => revoked.has(dependency))) {
+          revoked.add(key);
+          next[key] = false;
+          changed = true;
+        }
+      }
+    }
+  }
+  return normalizePermissions(next);
+}
 export const ALL_PERMISSION_KEYS:PermissionKey[]=PERMISSION_GROUPS.flatMap(g=>g.items.map(i=>i[0])) as PermissionKey[];
 export const DEFAULT_STAFF_PERMISSIONS:PermissionMap={"dashboard.view":true,"dashboard.finance":true,"dashboard.installment_calendar":true,"dashboard.schedule_calendar":true,"dashboard.statistics":true,"db.view":true,"db.view_finance":true,"db.create":true,"db.edit_basic":true,"db.view_consultation":true,"db.edit_consultation":true,"db.change_stage":true,"db.manage_reservation":true,"db.convert":true,"cases.view":true,"cases.view_finance":true,"cases.create":true,"cases.manage_installments":true,"cases.econtract":true,"cases.send_docs":true,"sms.view":true,"sms.send":true,"sms.view_history":true,"living.view":true};
 function keysMap(keys:PermissionKey[]):PermissionMap{return Object.fromEntries(keys.map(k=>[k,true])) as PermissionMap}
