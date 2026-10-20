@@ -7,7 +7,6 @@ import LeadSmsDialog from "@/components/sms/LeadSmsDialog";
 import { useStore } from "@/lib/store";
 import {
   CONSULT_DIRECTIONS,
-  DB_INTAKE_OWNER,
   CONSULT_TIME_OPTIONS,
   DB_DETAIL_STAGE_GROUPS,
   DB_DETAIL_STAGE_TRACK_COLOR,
@@ -39,6 +38,7 @@ import { fmtDate, fmtDateTime, fmtWon } from "@/lib/format";
 import { ClipboardList, MessageSquareText, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { buildLeadSearchIndex } from "@/lib/list-indexes";
 import { visibleMemoEntries } from "@/lib/consultation-memos";
+import { manualLeadAssignee } from "@/lib/manual-lead-assignment";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -536,26 +536,22 @@ function CallWarningBadge({ lead, todayIso }: { lead: DbLead; todayIso: string }
 
 
 function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { addLead, workStaffNames, currentStaff } = useStore();
+  const { addLead, workStaffNames, currentStaff, isAdmin } = useStore();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [adName, setAdName] = useState("");
   const [email, setEmail] = useState("");
-  const [assignedStaff, setAssignedStaff] = useState<StaffName>((workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
+  const assignedStaff = manualLeadAssignee(currentStaff, workStaffNames, isAdmin);
+  const assigneeOptions = assignedStaff && !workStaffNames.includes(assignedStaff) ? [assignedStaff, ...workStaffNames] : workStaffNames;
   const [source, setSource] = useState<LeadSource | "">("");
   const [debtRange, setDebtRange] = useState<DebtRange | "">("");
   const [incomeRange, setIncomeRange] = useState<IncomeRange | "">("");
   const [consultTime, setConsultTime] = useState<ConsultTimeSlot | "">("");
   const [memo, setMemo] = useState("");
 
-  useEffect(() => {
-    if (!open || assignedStaff || workStaffNames.length === 0) return;
-    setAssignedStaff((workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : currentStaff && workStaffNames.includes(currentStaff) ? currentStaff : workStaffNames[0]) || "");
-  }, [open, assignedStaff, currentStaff, workStaffNames]);
-
   function save() {
-    if (!name.trim() || !phone.trim()) return;
-    addLead({
+    if (!name.trim() || !phone.trim() || !assignedStaff) return;
+    const leadId = addLead({
       name: name.trim(),
       phone: phone.trim(),
       adName: adName.trim() || undefined,
@@ -569,6 +565,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
       consultTime: consultTime || undefined,
       memo: memo.trim() || undefined,
     });
+    if (!leadId) return;
     setName("");
     setPhone("");
     setAdName("");
@@ -602,10 +599,11 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
         </label>
         <label className="text-xs font-semibold text-slate-600">
           담당자
-          <Select className="mt-1 w-full" value={assignedStaff} disabled onChange={(e) => setAssignedStaff(e.target.value as StaffName)}>
-            {workStaffNames.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
+          <Select className="mt-1 w-full" value={assignedStaff} disabled>
+            {!assignedStaff && <option value="">담당자 확인 중</option>}
+            {assigneeOptions.map((staff) => <option key={staff} value={staff}>{staff}</option>)}
           </Select>
-          <span className="mt-1 block text-[10px] font-normal text-slate-400">신규 DB는 먼저 {DB_INTAKE_OWNER}에게 배정되고, 이후 DB관리에서 실제 담당자를 지정합니다.</span>
+          <span className="mt-1 block text-[10px] font-normal text-slate-400">{!assignedStaff ? "담당자 정보를 확인한 뒤 등록할 수 있습니다." : isAdmin ? "수기로 추가한 DB는 표시된 담당자에게 배정됩니다." : "직원이 직접 등록한 DB는 등록한 직원 본인에게 배정됩니다."}</span>
         </label>
         <label className="text-xs font-semibold text-slate-600">
           유입경로
@@ -647,7 +645,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>취소</Button>
-        <Button onClick={save} disabled={!name.trim() || !phone.trim()}>추가</Button>
+        <Button onClick={save} disabled={!name.trim() || !phone.trim() || !assignedStaff}>추가</Button>
       </div>
     </Modal>
   );

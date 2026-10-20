@@ -86,7 +86,7 @@ function createHarness(source, options = {}) {
     if (name === '@/components/ui/Primitives') return primitives;
     if (name === '@/components/ui/ConfirmDelete') return { ConfirmDelete:({open,name,onClose,onConfirm})=>open?h('section',{'data-delete':name},h('button',{onClick:onClose},'취소'),h('button',{onClick:onConfirm},'삭제 확인')):null };
     if (name === '@/components/ui/consultation/ConsultationModal') return { ConsultationModal:({open,displayName,onClose,applicationType,reservationAt,readOnly})=>open?h('section',{'data-consultation':displayName,'data-direction':applicationType,'data-reservation':reservationAt,'data-readonly':readOnly},h('button',{onClick:onClose},'상담 닫기')):null };
-    const names = { './types':'lib/types.ts', '@/lib/types':'lib/types.ts', '@/lib/format':'lib/format.ts', '@/lib/consultation':'lib/consultation.ts', '@/lib/list-indexes':'lib/list-indexes.ts', '@/components/ui/ReservationDateTimeEditor':'components/ui/ReservationDateTimeEditor.tsx' };
+    const names = { './types':'lib/types.ts', '@/lib/types':'lib/types.ts', '@/lib/format':'lib/format.ts', '@/lib/consultation':'lib/consultation.ts', '@/lib/list-indexes':'lib/list-indexes.ts', '@/lib/manual-lead-assignment':'lib/manual-lead-assignment.ts', '@/components/ui/ReservationDateTimeEditor':'components/ui/ReservationDateTimeEditor.tsx' };
     if (!names[name]) throw new Error(`Unmocked dependency ${name}`);
     return load(names[name]);
   };
@@ -133,11 +133,15 @@ function createHarness(source, options = {}) {
 function pair(options) { return [createHarness(baseline,options),createHarness(current,options)]; }
 // The feedback adds two explicitly requested row actions. Keep comparing every
 // pre-existing control and value, excluding only those two new button subtrees.
-function originalTree(value) {
-  if (Array.isArray(value)) return value.map(originalTree).filter(item=>item!==null);
+function originalTree(value, manualLeadModal = false) {
+  if (Array.isArray(value)) return value.map(item=>originalTree(item,manualLeadModal)).filter(item=>item!==null);
   if (!value || typeof value !== 'object') return value;
+  const insideManualLeadModal=manualLeadModal || value.props?.['data-modal']==='DB 수기 추가';
+  // Only this intentionally changed assignee row is covered by the dedicated
+  // actual-UI/store regression; every other field in the modal stays compared.
+  if (insideManualLeadModal && value.type==='label' && value.children?.some(child=>typeof child==='string'&&child.trim()==='담당자')) return null;
   if (value.type === 'button' && ['컨택 · 사유','문자발송'].some(label=>value.children?.includes(label))) return null;
-  return {...value, ...(value.children ? {children:originalTree(value.children)} : {})};
+  return {...value, ...(value.children ? {children:originalTree(value.children,insideManualLeadModal)} : {})};
 }
 function equalPair(a,b) { assert.deepEqual(b.snapshot(),a.snapshot()); assert.deepEqual(originalTree(b.tree()),originalTree(a.tree())); }
 function hostNodes(h,type) { return h.view.root.findAll(node=>node.type===type); }

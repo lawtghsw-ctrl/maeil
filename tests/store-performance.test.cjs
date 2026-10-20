@@ -93,8 +93,18 @@ let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++pass
     const addition=' || key === "contactLog" || key === "invalidReason" || key === "nonContractReason" || key === "replacementRequestedAt"';
     assert.ok(source.includes('if (key === "consultation"'+addition+') return can("db.edit_consultation");'));
     const current=source.replace(addition,'');
-    for(const [start,end]of [['  const canPatchLead =','  const fetchEntityTable ='],['  const saveEntity =','  const value = useMemo<AppStoreValue>']])
-      assert.equal(current.slice(current.indexOf(start),current.indexOf(end)),original.slice(original.indexOf(start),original.indexOf(end)));
+    // Manual creation now deliberately assigns the current staff member. Its
+    // full UI -> store -> persisted payload is tested in manual-lead-assignment.
+    // Retain exact baseline comparison of every other write callback.
+    const withoutManualCreator=source=>{
+      const start=source.indexOf('  const addLead ='),end=source.indexOf('  const updateClient =',start);
+      assert.ok(start>=0&&end>start);
+      return source.slice(0,start)+source.slice(end);
+    };
+    for(const [start,end]of [['  const canPatchLead =','  const fetchEntityTable ='],['  const saveEntity =','  const value = useMemo<AppStoreValue>']]){
+      const before=original.slice(original.indexOf(start),original.indexOf(end)),after=current.slice(current.indexOf(start),current.indexOf(end));
+      assert.equal(start==='  const saveEntity ='?withoutManualCreator(after):after,start==='  const saveEntity ='?withoutManualCreator(before):before);
+    }
   });
   await check('Queue coalesces synchronous table notifications',async()=>{const batches=[];const q=createStoreRefreshQueue(async b=>batches.push([...b.tables].sort()),e=>{throw e;});await Promise.all([q.enqueue({tables:['a']}),q.enqueue({tables:['a','b']})]);assert.deepEqual(batches,[['a','b']]);});
   await check('Queue serializes reads, retains follow-ups, invalidates stale results',async()=>{const gate=deferred(),events=[];let active=0,max=0;const q=createStoreRefreshQueue(async b=>{max=Math.max(max,++active);if(events.length===0){events.push('start');await gate.promise;}events.push(b.isCurrent()?[...b.tables].join():'stale');active--;},e=>{throw e;});const one=q.enqueue({tables:['old']});await delay();q.invalidate();const two=q.enqueue({tables:['new']});gate.resolve();await Promise.all([one,two]);await q.enqueue({tables:['last']});assert.deepEqual(events,['start','stale','new','last']);assert.equal(max,1);});

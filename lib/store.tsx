@@ -31,7 +31,8 @@ import type {
   ScheduleItem,
   StaffName,
 } from "./types";
-import { DB_INTAKE_OWNER, STAFF_LIST } from "./types";
+import { STAFF_LIST } from "./types";
+import { manualLeadAssignee } from "./manual-lead-assignment";
 import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
@@ -659,9 +660,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const addLead = useCallback(
     (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }): string => {
       if (isGlobalSuperAdmin || !can("db.create")) return "";
+      const assignedStaff = manualLeadAssignee(currentStaff, workStaffNames, isAdmin);
+      if (!assignedStaff) return "";
       const lead: DbLead = {
         ...draft,
-        assignedStaff: workStaffNames.includes(DB_INTAKE_OWNER) ? DB_INTAKE_OWNER : (currentStaff || draft.assignedStaff),
+        assignedStaff,
         id: makeId("DB"),
         receivedAt: draft.receivedAt ?? new Date().toISOString(),
       };
@@ -670,7 +673,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "등록", lead.name, "신규 DB 등록");
       return lead.id;
     },
-    [can, currentStaff, isGlobalSuperAdmin, logChange, queueWrite, saveEntity, workStaffNames]
+    [can, currentStaff, isAdmin, isGlobalSuperAdmin, logChange, queueWrite, saveEntity, workStaffNames]
   );
 
   const updateClient = useCallback(
