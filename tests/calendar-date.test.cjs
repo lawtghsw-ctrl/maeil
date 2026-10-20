@@ -177,3 +177,67 @@ test('dashboard month calendar positions Sunday in the last column and preserves
   const dayGrid = tree.root.findAllByType('div').find(node => node.props.className === 'grid grid-cols-7');
   assert.equal(dayGrid.children.length, 36); assert.ok(dayGrid.children.slice(0, 6).every(node => !text(node))); assert.match(text(dayGrid.children[6]), /1합성 일정검증/); act(() => tree.unmount());
 });
+
+test('compact numeric dates still reject impossible calendar dates and recover to a real leap day', async () => {
+  const h = harness(), changes = [], tree = await h.render(h.api.DateInput, { value: '', onValueChange: value => changes.push(value) });
+  try {
+    for (const [raw, visible] of [['20230229', '2023-02-29'], ['20231301', '2023-13-01'], ['20260431', '2026-04-31'], ['00000101', '0000-01-01']]) {
+      await act(async () => tree.root.findByType('input').props.onChange({ target: { value: raw } }));
+      assert.equal(tree.root.findByType('input').props.value, visible);
+      assert.equal(tree.root.findByType('input').props['aria-invalid'], true);
+      assert.equal(changes.at(-1), ''); assert.ok(h.validity.at(-1));
+    }
+    await act(async () => tree.root.findByType('input').props.onChange({ target: { value: '20240229' } }));
+    assert.equal(changes.at(-1), '2024-02-29'); assert.equal(h.validity.at(-1), '');
+    assert.equal(tree.root.findByType('input').props['aria-invalid'], undefined);
+  } finally { act(() => tree.unmount()); }
+});
+
+test('compact and ISO typing retain identical min/max validity and emission semantics', async () => {
+  const h = harness(), changes = [], tree = await h.render(h.api.DateInput, { value: '', min: '2026-10-10', max: '2026-10-20', onValueChange: value => changes.push(value) });
+  try {
+    for (const [iso, allowed] of [['2026-10-09', false], ['2026-10-10', true], ['2026-10-20', true], ['2026-10-21', false]]) {
+      const snapshots = [];
+      for (const raw of [iso, iso.replaceAll('-', '')]) {
+        await act(async () => tree.root.findByType('input').props.onChange({ target: { value: raw } }));
+        snapshots.push({ value: tree.root.findByType('input').props.value, invalid: !!tree.root.findByType('input').props['aria-invalid'], emitted: changes.at(-1), validity: !!h.validity.at(-1) });
+      }
+      assert.deepEqual(snapshots[0], snapshots[1]);
+      // A real but out-of-bounds date retains the existing emission contract;
+      // native customValidity marks it invalid instead of silently clamping it.
+      assert.deepEqual(snapshots[0], { value: iso, invalid: !allowed, emitted: iso, validity: !allowed });
+    }
+  } finally { act(() => tree.unmount()); }
+});
+
+test('controlled DateTimeInput accepts compact dates in either completion order without inventing or losing clock precision', async () => {
+  for (const dateFirst of [true, false]) {
+    const h = harness(), changes = [], incomplete = [];
+    function Controlled() {
+      const [value, setValue] = React.useState('');
+      return React.createElement(h.api.DateTimeInput, { value, onValueChange: next => { changes.push(next); setValue(next); }, onIncompleteChange: next => incomplete.push(next) });
+    }
+    const tree = await h.render(Controlled, {});
+    const date = () => tree.root.findAllByType('input').find(node => node.props.type === 'text');
+    const time = () => tree.root.findAllByType('input').find(node => node.props.type === 'time');
+    try {
+      if (!dateFirst) {
+        await act(async () => time().props.onChange({ target: { value: '09:15:20' } }));
+        assert.equal(changes.at(-1), ''); assert.equal(incomplete.at(-1), true);
+      }
+      for (const character of '20261020') await act(async () => date().props.onChange({ target: { value: date().props.value + character } }));
+      assert.equal(date().props.value, '2026-10-20');
+      if (dateFirst) {
+        assert.equal(changes.at(-1), ''); assert.equal(time().props.value, ''); assert.equal(incomplete.at(-1), true);
+        await act(async () => time().props.onChange({ target: { value: '09:15:20' } }));
+      }
+      assert.equal(changes.at(-1), '2026-10-20T09:15:20'); assert.equal(incomplete.at(-1), false);
+      await act(async () => date().props.onChange({ target: { value: '20261021' } }));
+      assert.equal(changes.at(-1), '2026-10-21T09:15:20'); assert.equal(time().props.value, '09:15:20');
+      await act(async () => date().props.onChange({ target: { value: '' } }));
+      assert.equal(changes.at(-1), ''); assert.equal(incomplete.at(-1), true);
+      await act(async () => time().props.onChange({ target: { value: '' } }));
+      assert.equal(incomplete.at(-1), false);
+    } finally { act(() => tree.unmount()); }
+  }
+});

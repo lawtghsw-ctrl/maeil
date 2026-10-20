@@ -42,6 +42,14 @@ export function DateInput({ value, onValueChange, onIncompleteChange, className,
 
   function unavailable() { return !!(disabled || readOnly || input.current?.matches(":disabled")); }
   function emit(next: string) { if (unavailable()) return; lastEmitted.current = next; onValueChange(next); }
+  function changeText(raw: string) {
+    if (unavailable()) return;
+    // Accept the eight digits staff type or paste, while keeping stored dates in ISO format.
+    const next = /^\d{8}$/.test(raw) ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : raw;
+    setText(next);
+    onIncompleteChange?.(!!next && !isCalendarDateAllowed(next, min, max));
+    emit(calendarDateParts(next) ? next : "");
+  }
   function choose(next: string) { if (unavailable() || !isCalendarDateAllowed(next, min, max)) return; setText(next); onIncompleteChange?.(false); emit(next); setOpen(false); trigger.current?.focus(); }
   function clear() { if (unavailable()) return; setText(""); onIncompleteChange?.(false); emit(""); close(); }
   function show() {
@@ -60,7 +68,7 @@ export function DateInput({ value, onValueChange, onIncompleteChange, className,
     const first = `${nextMonth}-01`; if (calendarDateParts(first)) setFocusDate(clampCalendarDate(first, min, max));
   }
   return <span className={`relative inline-flex min-w-0 items-center ${className ?? "h-10 rounded-lg border border-slate-200 bg-white px-2 text-sm"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}>
-    <input {...props} ref={input} type="text" value={text} disabled={disabled} readOnly={readOnly} placeholder={props.placeholder ?? "YYYY-MM-DD"} maxLength={10} inputMode={props.inputMode ?? "text"} autoComplete={props.autoComplete ?? "off"} aria-invalid={invalid || undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? dialogId : undefined} className="h-full w-full min-w-0 bg-transparent pr-6 text-inherit outline-none" onChange={event => { if (unavailable()) return; const raw = event.target.value; setText(raw); onIncompleteChange?.(!!raw && !isCalendarDateAllowed(raw, min, max)); emit(calendarDateParts(raw) ? raw : ""); }} onBlur={onBlur} onKeyDown={event => { onKeyDown?.(event); if (event.defaultPrevented) return; if (event.key === "ArrowDown" && event.altKey) { event.preventDefault(); show(); } if (event.key === "Escape" && open) { event.preventDefault(); close(); } }}/>
+    <input {...props} ref={input} type="text" value={text} disabled={disabled} readOnly={readOnly} placeholder={props.placeholder ?? "YYYY-MM-DD"} title={props.title ?? "YYYY-MM-DD 또는 숫자 8자리 (예: 19900115)"} maxLength={10} inputMode={props.inputMode ?? "numeric"} autoComplete={props.autoComplete ?? "off"} aria-invalid={invalid || undefined} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? dialogId : undefined} className="h-full w-full min-w-0 bg-transparent pr-6 text-inherit outline-none" onChange={event => changeText(event.target.value)} onBlur={onBlur} onKeyDown={event => { onKeyDown?.(event); if (event.defaultPrevented) return; if (event.key === "ArrowDown" && event.altKey) { event.preventDefault(); show(); } if (event.key === "Escape" && open) { event.preventDefault(); close(); } }}/>
     <button ref={trigger} type="button" disabled={disabled || readOnly} aria-label={`${label} 달력 열기`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? dialogId : undefined} className="absolute right-1 grid size-7 shrink-0 place-items-center rounded text-slate-500 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed" onClick={() => open ? close() : show()}><CalendarDays size={15}/></button>
     {open && typeof document !== "undefined" && createPortal(<div ref={popup} id={dialogId} role="dialog" aria-label={`${label} 선택`} className="fixed z-[250] w-[304px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-3 text-slate-800 shadow-2xl" style={position} onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
       <div className="mb-2 flex items-center justify-between gap-1">
