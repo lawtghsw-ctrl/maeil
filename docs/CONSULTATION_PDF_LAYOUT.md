@@ -7,7 +7,7 @@
 - Memo author/time/tag metadata appears in a compact strip above full-width memo text, rather than consuming a permanent side column. Original and draft memos remain separately identified.
 - Sections retain their ordering and complete existing data allowlist. Unregistered/unsaved content, Korean text, KST timestamps, explicit zero/false values, calculated results when present, finance when supplied, source filenames, attachment metadata and pinned memo markers are preserved. Attachment contents, URLs and private IDs remain excluded.
 - Ordinary rows stay together where practical. Oversized rows, memo text and even unusually long author metadata can span pages; section titles and table headings repeat on continuation pages. Long unbroken Korean and Latin strings are wrapped against actual font widths. No text is shrunk to force a one-page result.
-- Existing lazy import, offline `fontData` argument, same-origin cached font load, retry behavior, filename and download cleanup APIs are unchanged. The change does not save a draft, send data to a server or change any database state.
+- The PDF engine remains lazy-loaded, with the offline `fontData` argument and same-origin cached font load. Browser-compatible snapshot copying and persistent direct save/open links improve download reliability without changing layout; see [PDF reliability](CONSULTATION_PDF_RELIABILITY.md). Export does not save a draft, send data to a server or change any database state.
 
 ## Measured synthetic fixtures
 

@@ -1,4 +1,4 @@
-import type { ConsultationInfo, ConsultDirection, DbDetailStage, MemoLogTag } from "./types";
+import type { ConsultationInfo, ConsultDirection, DbDetailStage, LoanRecord, MemoLogTag } from "./types";
 import type { RepaymentPlanResult } from "./consultation";
 import { visibleMemoEntries } from "./consultation-memos";
 
@@ -23,11 +23,45 @@ export interface ConsultationPdfSection { title: string; head: string[]; rows: s
 type Value = string | number | boolean | undefined | null;
 type Field = [string, Value];
 
+// Keep a placeholder for each corrupt item instead of filtering it out. Unknown
+// collection objects are not traversed because they may contain private metadata.
+function pdfCollection<T>(value: T[] | null | undefined): { rows: Array<T | null>; malformed: boolean } {
+  if (value == null) return { rows: [], malformed: false };
+  if (!Array.isArray(value)) return { rows: [null], malformed: true };
+  return { rows: Array.from(value, row => row != null && typeof row === "object" && !Array.isArray(row) ? row : null), malformed: false };
+}
+function invalidRow(index: number, columns: number): string[] {
+  return [`${index + 1}번 항목`, "[입력 형식 확인 필요]", ...Array(Math.max(0, columns - 2)).fill("-")];
+}
+
+/** The snapshot contains plain consultation data, not browser objects. Older
+ * supported browsers may not have structuredClone; copy without that dependency
+ * while retaining undefined, zero/false and non-finite calculation values. */
+export function copyConsultationPdfSnapshot(snapshot: ConsultationPdfSnapshot): ConsultationPdfSnapshot {
+  function copy<T>(value: T): T {
+    if (Array.isArray(value)) return value.map(item => copy(item)) as T;
+    if (value && typeof value === "object") {
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) {
+        Object.defineProperty(result, key, { value: copy((value as Record<string, unknown>)[key]), enumerable: true, writable: true, configurable: true });
+      }
+      return result as T;
+    }
+    return value;
+  }
+  return copy(snapshot);
+}
+
 // Keep text as text, never HTML. Preserve otherwise unsupported astral characters reversibly.
-export function consultationPdfText(value: Value): string {
+export function consultationPdfText(value: unknown): string {
   if (value == null || value === "") return "-";
   if (typeof value === "boolean") return value ? "예" : "아니오";
   if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString("ko-KR") : "확인 필요";
+  // Persisted JSON is not runtime-validated. Preserve legacy scalar lists, but
+  // never dump an unexpected object's hidden IDs/URLs/bytes into an allowed text
+  // field. Mark it visibly instead of failing the entire customer's download.
+  if (Array.isArray(value)) return value.length ? value.map(consultationPdfText).join(", ") : "-";
+  if (typeof value !== "string") return "[입력 형식 확인 필요]";
   return value.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .replace(/[\u{10000}-\u{10ffff}]/gu, character => `[U+${character.codePointAt(0)!.toString(16).toUpperCase()}]`);
 }
@@ -39,19 +73,24 @@ function suffix(value: number | undefined, unit: string): string | undefined {
 }
 export function consultationPdfDateTime(value: string | undefined): string {
   if (!value) return "-";
+  if (typeof value !== "string") return consultationPdfText(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const date = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}+09:00`);
   if (!Number.isFinite(date.getTime())) return consultationPdfText(value);
-  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString();
+  const shifted = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  if (!Number.isFinite(shifted.getTime())) return consultationPdfText(value);
+  const kst = shifted.toISOString();
   return `${kst.slice(0, 10)} ${kst.slice(11, 16)}`;
 }
 
 /** Explicit allowlist prevents attachment bytes, URLs, hidden IDs or unrelated customer data entering the PDF. */
 export function consultationPdfSections(snapshot: ConsultationPdfSnapshot): ConsultationPdfSection[] {
-  const c = snapshot.consultation;
+  const c = snapshot.consultation ?? {};
   const p = c.personal ?? {}, i = c.income ?? {}, h = c.housing ?? {}, j = c.judgment ?? {};
   const cp = c.counselPlan ?? {}, de = c.debtSummaryExtra ?? {}, ri = c.recentLoanInsurance ?? {};
   const sections: ConsultationPdfSection[] = [];
+  const assets = pdfCollection(c.assets), debts = pdfCollection(c.debts), loanList = pdfCollection(c.loanRecords);
+  const memoList = pdfCollection(c.memoLog), files = pdfCollection(c.attachedFiles);
   function fields(title: string, entries: Field[]) {
     const present = entries.filter(([, value]) => value != null && value !== "");
     const rows: string[][] = [];
@@ -80,25 +119,28 @@ export function consultationPdfSections(snapshot: ConsultationPdfSnapshot): Cons
     ["거주형태", h.housingType], ["거주 메모", h.housingNote], ["차량 보유", h.hasVehicle], ["차량 정보", h.vehicleInfo], ["배우자 차량", h.spouseHasVehicle], ["배우자 차량 정보", h.spouseVehicleInfo],
     ["본인명의 다른 재산", p.otherAssetsNote], ["개인채무", p.personalDebtNote], ["채무사실 공유", p.debtDisclosureShared], ["공유 메모", p.debtDisclosureNote], ["코인 / 주식 / 사행성", p.riskyAssetActivity], ["관련 메모", p.riskyAssetNote],
   ]);
-  if (c.assets?.length) sections.push({ title: "재산 현황", head: ["구분", "평가액", "담보 여부 / 금액", "메모"], widths: [39, 32, 43, 68], rows: c.assets.map(row => [row.category, won(row.value)!, `${consultationPdfText(row.hasSecurity)} / ${won(row.securityAmount)}`, consultationPdfText(row.note)]) });
-  const loans = c.loanRecords ?? [];
-  const autoDebt = loans.reduce((total, row) => total + (row.balance || 0), 0);
-  const autoCredit = loans.filter(row => row.kind1 === "신용").reduce((total, row) => total + (row.balance || 0), 0);
-  const autoSecured = loans.filter(row => row.kind1 === "담보").reduce((total, row) => total + (row.balance || 0), 0);
-  const autoInterest = loans.reduce((total, row) => total + (row.balance || 0) * ((row.interestRate || 0) / 100), 0);
-  const autoMonthly = loans.reduce((total, row) => total + (row.monthlyPayment || 0), 0);
+  if (assets.rows.length) sections.push({ title: `재산 현황${assets.malformed ? " (목록 형식 확인 필요)" : ""}`, head: ["구분", "평가액", "담보 여부 / 금액", "메모"], widths: [39, 32, 43, 68], rows: assets.rows.map((row, index) => row ? [row.category, won(row.value)!, `${consultationPdfText(row.hasSecurity)} / ${won(row.securityAmount)}`, consultationPdfText(row.note)] : invalidRow(index, 4)) });
+  const loans = loanList.rows;
+  // Never present partial automatic totals as complete when a loan row is corrupt.
+  const sumLoans = (value: (row: LoanRecord) => number) => loans.reduce((total, row) => row ? total + value(row) : NaN, 0);
+  const autoDebt = sumLoans(row => Number(row.balance ?? 0));
+  const autoCredit = sumLoans(row => row.kind1 === "신용" ? Number(row.balance ?? 0) : 0);
+  const autoSecured = sumLoans(row => row.kind1 === "담보" ? Number(row.balance ?? 0) : 0);
+  const autoInterest = sumLoans(row => Number(row.balance ?? 0) * (Number(row.interestRate ?? 0) / 100));
+  const autoMonthly = sumLoans(row => Number(row.monthlyPayment ?? 0));
+  const inferred = (value: number) => value === 0 ? undefined : value;
   fields("채무 요약", [
-    ["총 채무금액", won(de.totalDebtAmount ?? (autoDebt || undefined))], ["총 신용금액", won(de.totalCreditAmount ?? (autoCredit || undefined))], ["총 담보금액", won(de.totalSecuredAmount ?? (autoSecured || undefined))],
-    ["총 이자금액", won(de.totalInterestAmount ?? (autoInterest || undefined))], ["월 불입금", won(de.monthlyPaymentAmount ?? (autoMonthly || undefined))],
+    ["총 채무금액", won(de.totalDebtAmount ?? inferred(autoDebt))], ["총 신용금액", won(de.totalCreditAmount ?? inferred(autoCredit))], ["총 담보금액", won(de.totalSecuredAmount ?? inferred(autoSecured))],
+    ["총 이자금액", won(de.totalInterestAmount ?? inferred(autoInterest))], ["월 불입금", won(de.monthlyPaymentAmount ?? inferred(autoMonthly))],
     ["급여일", suffix(de.salaryPayDay, "일")], ["카드결제 금액", won(de.cardPaymentAmount)], ["대출결제일", suffix(de.cardPaymentDay, "일")], ["보유 신용카드", de.heldCreditCards],
   ]);
-  if (c.debts?.length) sections.push({ title: "채무 현황", head: ["구분", "채권자 / 내용", "금액", "메모"], widths: [44, 56, 30, 52], rows: c.debts.map(row => [row.category, [row.creditor, row.detail].filter(Boolean).join("\n") || "-", won(row.amount)!, consultationPdfText(row.note)]) });
-  if (loans.length) sections.push({ title: `기대출 리스트 (${loans.length}건)`, head: ["번호 / 구분", "금융사 / 상품 / 실행일", "금액 / 납입 / 금리", "메모 / 출처"], widths: [25, 49, 52, 56], rows: loans.map((row, index) => [
+  if (debts.rows.length) sections.push({ title: `채무 현황${debts.malformed ? " (목록 형식 확인 필요)" : ""}`, head: ["구분", "채권자 / 내용", "금액", "메모"], widths: [44, 56, 30, 52], rows: debts.rows.map((row, index) => row ? [row.category, [row.creditor, row.detail].filter(Boolean).map(consultationPdfText).join("\n") || "-", won(row.amount)!, consultationPdfText(row.note)] : invalidRow(index, 4)) });
+  if (loans.length) sections.push({ title: `기대출 리스트 (${loanList.malformed ? "목록 형식 확인 필요" : `${loans.length}건`})`, head: ["번호 / 구분", "금융사 / 상품 / 실행일", "금액 / 납입 / 금리", "메모 / 출처"], widths: [25, 49, 52, 56], rows: loans.map((row, index) => row ? [
     `${index + 1} / ${row.kind1}`,
     [row.lender, row.kind2, row.executedAt].filter(Boolean).join("\n") || "-",
     [`잔액 ${won(row.balance)}`, row.originalAmount != null ? `원금 ${won(row.originalAmount)}` : "", row.monthlyPayment != null ? `월 납입 ${won(row.monthlyPayment)}` : "", row.interestRate != null ? `금리 ${suffix(row.interestRate, "%")}` : "", row.securedAmount != null ? `담보설정 ${won(row.securedAmount)}` : ""].filter(Boolean).join("\n"),
     [row.note, row.source === "file" ? "파일 추출" : row.source === "manual" ? "수기 입력" : "", row.sourceFileName].filter(Boolean).join("\n") || "-",
-  ]) });
+  ] : invalidRow(index, 4)) });
   fields("상담 판단 / 최근 대출 / 보험", [
     ["워크아웃 가능", j.workoutFeasible], ["워크아웃 안내", j.workoutGuided], ["비용 안내", j.costGuided], ["워크아웃 진행", j.workoutInProgress], ["워크아웃 금액", won(j.workoutAmount)], ["판단 메모", j.judgmentNote],
     ["최근 3개월 대출 사용처", ri.recentLoanUsage], ["보험료", won(ri.insurancePremium)], ["보험 환급금", won(ri.insuranceRefundAmount)], ["보험 메모", ri.insuranceNote],
@@ -114,9 +156,11 @@ export function consultationPdfSections(snapshot: ConsultationPdfSnapshot): Cons
   if (snapshot.finance) fields("계약 / 수납 요약", [["계약금액", won(snapshot.finance.contractAmount)], ["납부금액", won(snapshot.finance.paidAmount)], ["미수금액", won(snapshot.finance.outstandingAmount)]]);
   if (snapshot.memoDraft?.text.trim()) sections.push({ title: "작성 중 메모 (미등록)", layout: "memo", head: ["작성자 / 태그", "현재 입력 내용"], widths: [40, 142], rows: [[`${snapshot.memoDraft.staff}\n${snapshot.memoDraft.tag === "재통화" ? "통화완료" : snapshot.memoDraft.tag}`, snapshot.memoDraft.text]] });
   if (c.memo) sections.push({ title: "기존 상담 메모", layout: "memo", head: ["내용"], rows: [[c.memo]] });
-  const memoEntries = visibleMemoEntries(c.memoLog);
-  sections.push({ title: `상담 메모 (${memoEntries.length}건)`, layout: "memo", head: ["작성자 / 일시 / 태그", "내용"], widths: [43, 139], rows: memoEntries.length ? memoEntries.map(entry => [`${entry.pinned ? "[고정] " : ""}${entry.staff}\n${consultationPdfDateTime(entry.at)}\n${entry.tag === "재통화" ? "통화완료" : entry.tag}`, entry.text || "(내용 없음)"]) : [["-", "등록된 메모 없음"]] });
-  if (c.attachedFiles?.length) sections.push({ title: "첨부파일 목록 (파일 내용 미포함)", head: ["파일명", "크기", "첨부 일시"], widths: [112, 25, 45], rows: c.attachedFiles.map(file => [file.name, `${consultationPdfText(file.sizeKb)} KB`, consultationPdfDateTime(file.attachedAt)]) });
+  const memoEntries = visibleMemoEntries(memoList.rows.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+  const memoRows = memoEntries.map(entry => [`${entry.pinned ? "[고정] " : ""}${consultationPdfText(entry.staff)}\n${consultationPdfDateTime(entry.at)}\n${entry.tag === "재통화" ? "통화완료" : consultationPdfText(entry.tag)}`, entry.text || "(내용 없음)"]);
+  memoList.rows.forEach((entry, index) => { if (!entry) memoRows.push(invalidRow(index, 2)); });
+  sections.push({ title: `상담 메모 (${memoList.malformed ? "목록 형식 확인 필요" : `${memoRows.length}건`})`, layout: "memo", head: ["작성자 / 일시 / 태그", "내용"], widths: [43, 139], rows: memoRows.length ? memoRows : [["-", "등록된 메모 없음"]] });
+  if (files.rows.length) sections.push({ title: `첨부파일 목록 (파일 내용 미포함)${files.malformed ? " (목록 형식 확인 필요)" : ""}`, head: ["파일명", "크기", "첨부 일시"], widths: [112, 25, 45], rows: files.rows.map((file, index) => file ? [file.name, `${consultationPdfText(file.sizeKb)} KB`, consultationPdfDateTime(file.attachedAt)] : invalidRow(index, 3)) });
   return sections.map(section => ({ ...section, rows: section.rows.map(row => row.map(value => consultationPdfText(value))) }));
 }
 

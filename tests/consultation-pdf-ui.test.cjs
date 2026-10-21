@@ -14,7 +14,8 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 
 function harness(options = {}) {
   const modules = new Map(), snapshots = [], downloads = [], saved = [], storage = new Map(), timers = new Map(); let pdfLoads = 0, nextTimer = 0;
-  const captures = {};
+  const captures = {}, urls = [], revoked = [];
+  const URL = { createObjectURL: blob => { const url = `blob:synthetic-${urls.length + 1}`; urls.push({ url, blob }); return url; }, revokeObjectURL: url => revoked.push(url) };
   const window = { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }, setTimeout: callback => { timers.set(++nextTimer,callback); return nextTimer; }, clearTimeout: id => timers.delete(id), addEventListener() {}, removeEventListener() {}, confirm: () => true };
   function load(relative) {
     if (modules.has(relative)) return modules.get(relative).exports;
@@ -26,7 +27,7 @@ function harness(options = {}) {
       if (name === '@/lib/store') return { useStoreSession: () => ({ profile: { displayName: '가상 상담원' } }) };
       if (name === '@/components/ui/Primitives') return { Button: ({ children, variant, ...props }) => React.createElement('button', props, children), Select: props => React.createElement('select', props, props.children), Modal: props => props.open ? React.createElement('section', {}, props.children) : null };
       if (name === './shared') return { SectionCard: props => React.createElement('div', {}, props.children), compactTextareaClass: '' };
-      if (name === '@/lib/consultation-pdf') { pdfLoads++; return { createConsultationPdf: async snapshot => { snapshots.push(snapshot); if (options.create) return options.create(snapshot); return new Blob(['offline'], { type: 'application/pdf' }); }, downloadConsultationPdf: (blob, snapshot) => downloads.push({ blob, snapshot }) }; }
+      if (name === '@/lib/consultation-pdf') { pdfLoads++; return { createConsultationPdf: async snapshot => { snapshots.push(snapshot); if (options.create) return options.create(snapshot); return new Blob(['offline'], { type: 'application/pdf' }); }, downloadConsultationPdf: (blob, snapshot, url) => { downloads.push({ blob, snapshot, url }); if (options.download) return options.download(blob, snapshot, url); } }; }
       if (/^\.\/(BasicInfoSection|IncomeSection|AssetSection|DecisionSection|PlanSection|DebtListSection)$/.test(name)) { const key = name.slice(2); return { [key]: props => { captures[key] = props; return null; } }; }
       if (name.startsWith('@/') || name.startsWith('.')) {
         const file = name.startsWith('@/') ? name.slice(2) : path.posix.join(path.posix.dirname(relative), name);
@@ -34,14 +35,14 @@ function harness(options = {}) {
       }
       throw new Error('Unexpected dependency/network: ' + name);
     };
-    vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { React, window, Date, structuredClone, Blob, setTimeout, clearTimeout, console }, { filename: relative })(requireMock, module, module.exports);
+    vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { React, window, Date, structuredClone: options.structuredClone === false ? undefined : structuredClone, Blob, URL, setTimeout, clearTimeout, console }, { filename: relative })(requireMock, module, module.exports);
     return module.exports;
   }
   const Component = load('components/ui/consultation/ConsultationModal.tsx').ConsultationModal;
   let props = { open: true, resetKey: 'synthetic-one', onClose() {}, displayName: '합성 이름', displayPhone: '000-0000-0000', joinedAtLabel: '2026-10-18', caseNumberLabel: '-', applicationType: '개인회생', onApplicationTypeChange() {}, showDetailStage: true, detailStage: '상담', onDetailStageChange() {}, initialConsultation: { personal: { basicIncomeNote: '저장본' }, memoLog: [] }, onSave: (...args) => saved.push(args), reservationChoice: true, reservationAt: '2026-10-20T12:00', ...options.props };
   let tree;
   return {
-    snapshots, downloads, saved, captures, storage, get loads() { return pdfLoads; }, get tree() { return tree; },
+    snapshots, downloads, saved, captures, storage, urls, revoked, get loads() { return pdfLoads; }, get tree() { return tree; },
     flushDraft: () => { for (const [id,callback] of timers) { timers.delete(id); callback(); } },
     mount: async () => { await act(async () => { tree = Renderer.create(React.createElement(Component, props)); }); },
     update: async patch => { props = { ...props, ...patch }; await act(async () => tree.update(React.createElement(Component, props))); },
@@ -160,4 +161,57 @@ test('customer switch while editing never carries prior memo text or cancel snap
   await h.update({resetKey:'synthetic-two',initialConsultation:{memoLog:[{...original,staff:'second',text:'둘째 고객'}]}});
   assert.equal(h.tree.root.findAllByType('button').some(node=>text(node)==='편집 취소'),false);
   await act(async()=>h.button().props.onClick());assert.equal(h.snapshots[0].consultation.memoLog[0].text,'둘째 고객');assert.doesNotMatch(JSON.stringify(h.snapshots[0]),/첫 고객/);h.close();
+});
+
+
+test('PDF export works without structuredClone and retains a detached click-time snapshot', async () => {
+  const pending = deferred();
+  const initial = { personal: { basicIncomeNote: '복사 시점 내용' }, loanRecords: [{ id: 'test', kind1: '신용', lender: '가상 금융사', balance: 0 }], memoLog: [] };
+  const h = harness({ structuredClone: false, props: { initialConsultation: initial }, create: () => pending.promise }); await h.mount();
+  let request; await act(async () => { request = h.button().props.onClick(); await Promise.resolve(); });
+  assert.equal(h.snapshots.length, 1, 'Older browsers must reach PDF generation');
+  initial.personal.basicIncomeNote = '생성 도중 변경'; initial.loanRecords[0].lender = '변경된 금융사';
+  assert.equal(h.snapshots[0].consultation.personal.basicIncomeNote, '복사 시점 내용');
+  assert.equal(h.snapshots[0].consultation.loanRecords[0].lender, '가상 금융사');
+  await act(async () => { pending.resolve(new Blob(['offline'], { type: 'application/pdf' })); await request; });
+  assert.equal(h.downloads.length, 1); assert.equal(h.saved.length, 0); h.close();
+});
+
+
+test('finished PDF retains native user-clicked save/open links when automatic download is blocked', async () => {
+  const h = harness({ download: () => { throw new Error('Browser blocked automatic download'); } }); await h.mount();
+  await act(async () => h.button().props.onClick());
+  const links = h.tree.root.findAllByType('a');
+  assert.equal(links.length, 2); assert.equal(h.urls.length, 1);
+  assert.equal(links[0].props.href, h.urls[0].url); assert.match(links[0].props.download, /^상담일지_합성 이름_.*\.pdf$/);
+  assert.equal(links[1].props.href, h.urls[0].url); assert.equal(links[1].props.target, '_blank');
+  assert.equal(links[1].props.rel, 'noopener noreferrer'); assert.equal(links[0].props.onClick, undefined, 'Native click needs no async regeneration');
+  assert.equal(h.downloads[0].url, h.urls[0].url); assert.match(text(h.tree.toJSON()), /PDF는 준비되었습니다/);
+  assert.equal(h.button().props.disabled, false); assert.equal(h.saved.length, 0);
+  h.close(); assert.deepEqual(h.revoked, [h.urls[0].url]);
+});
+
+test('prepared PDF URLs are replaced on retry and removed on customer switch, close and unmount', async () => {
+  const h = harness(); await h.mount();
+  await act(async () => h.button().props.onClick());
+  await act(async () => h.button().props.onClick());
+  assert.deepEqual(h.revoked, ['blob:synthetic-1']);
+  assert.ok(h.tree.root.findAllByType('a').every(link => link.props.href === 'blob:synthetic-2'));
+  await h.update({ resetKey: 'synthetic-two', displayName: '다음 고객' });
+  assert.deepEqual(h.revoked, ['blob:synthetic-1', 'blob:synthetic-2']); assert.equal(h.tree.root.findAllByType('a').length, 0);
+  await act(async () => h.button().props.onClick());
+  assert.match(h.tree.root.findAllByType('a')[0].props.download, /다음 고객/);
+  await h.update({ open: false }); assert.deepEqual(h.revoked, ['blob:synthetic-1', 'blob:synthetic-2', 'blob:synthetic-3']);
+  await h.update({ open: true }); assert.equal(h.tree.root.findAllByType('a').length, 0);
+  await act(async () => h.button().props.onClick()); h.close();
+  assert.deepEqual(h.revoked, ['blob:synthetic-1', 'blob:synthetic-2', 'blob:synthetic-3', 'blob:synthetic-4']);
+});
+
+test('closing while PDF is generating discards the late blob and offers no prior-customer link', async () => {
+  const pending = deferred(), h = harness({ create: () => pending.promise }); await h.mount();
+  let request; await act(async () => { request = h.button().props.onClick(); await Promise.resolve(); });
+  await h.update({ open: false });
+  await act(async () => { pending.resolve(new Blob(['offline'])); await request; });
+  assert.equal(h.urls.length, 0); assert.equal(h.downloads.length, 0);
+  await h.update({ open: true }); assert.equal(h.tree.root.findAllByType('a').length, 0); h.close();
 });

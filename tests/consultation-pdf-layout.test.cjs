@@ -76,6 +76,48 @@ for (const [name, build, pages] of [['short', shortSnapshot, 1], ['populated', s
   });
 }
 
+test('incomplete consultation records still render readable PDFs without requiring saved/mandatory fields', async () => {
+  for (const consultation of [{}, { personal: {}, income: {}, assets: [], debts: [], memoLog: [], loanRecords: [], attachedFiles: [] }, { personal: { spouse: false, childrenCount: 0 }, memo: '예전 형식 메모', memoLog: null }]) {
+    const input = { ...shortSnapshot(), name: '미입력 합성고객', phone: '', joinedAtLabel: '', caseNumberLabel: '', consultation };
+    const render = instrumentedPdf(), blob = await render.pdf.createConsultationPdf(input, font);
+    assert.equal(blob.type, 'application/pdf'); assertGeometry(render);
+    const output = render.texts.map(item => item.value).join('');
+    assert.match(output, /미입력 합성고객/); assert.match(output, /등록된 메모 없음/);
+    if (consultation.memo) assert.ok(output.includes(consultation.memo));
+  }
+});
+
+test('legacy lists, unusual numbers/dates and emoji still yield a complete bounded PDF with explicit malformed-field markers', async () => {
+  const input = snapshot();
+  input.consultation.personal.childrenAges = [7, 10];
+  input.consultation.personal.dischargeHistoryNote = { id: 'HIDDEN_LEGACY_ID', bytes: 'DO_NOT_EXPORT' };
+  input.consultation.income.pensionIncome = Infinity;
+  input.consultation.assets[0].value = -100.5;
+  input.consultation.memoLog[0].at = '과거 날짜 미상';
+  input.consultation.memoLog[0].text = '긴 메모 시작🙂' + '한글 긴 메모 '.repeat(300) + '끝 확인🧾';
+  input.consultation.attachedFiles[0].attachedAt = '+275760-09-13T00:00:00.000Z';
+  const render = instrumentedPdf(); await render.pdf.createConsultationPdf(input, font); assertGeometry(render);
+  const output = clean(render.texts.map(item => item.value).join(''));
+  for (const marker of ['7, 10', '입력 형식 확인 필요', '확인 필요원', '-100.5원', '과거 날짜 미상', '[U+1F642]', '끝 확인[U+1F9FE]', '+275760-09-13T00:00:00.000Z']) assert.ok(output.includes(clean(marker)), marker);
+  assert.doesNotMatch(output, /HIDDEN_LEGACY_ID|DO_NOT_EXPORT/);
+});
+
+test('mixed corrupt rows across every collection produce a real PDF without losing valid neighboring rows', async () => {
+  const input = snapshot();
+  for (const [key, field] of [['assets', 'note'], ['debts', 'note'], ['loanRecords', 'note'], ['memoLog', 'text'], ['attachedFiles', 'name']]) {
+    const row = input.consultation[key][0];
+    input.consultation[key] = [{ ...row, [field]: key + '첫 항목' }, null, false, [], { ...row, [field]: key + '마지막 항목' }];
+  }
+  const render = instrumentedPdf(), blob = await render.pdf.createConsultationPdf(input, font); assertGeometry(render);
+  assert.equal(blob.type, 'application/pdf');
+  const output = clean(render.texts.map(item => item.value).join(''));
+  for (const key of ['assets', 'debts', 'loanRecords', 'memoLog', 'attachedFiles']) {
+    assert.ok(output.includes(key + '첫항목')); assert.ok(output.includes(key + '마지막항목'));
+  }
+  assert.equal((output.match(/입력형식확인필요/g) || []).length, 15);
+  assert.doesNotMatch(output, /forbidden.invalid|DO_NOT_EXPORT|private-/);
+});
+
 test('single oversized debt cell, unbroken Korean/Latin strings and memo author metadata paginate without clipping or omissions', async () => {
   const input = shortSnapshot();
   input.consultation.debts = [{ category: '기타', creditor: '가상 기관', amount: 10000,

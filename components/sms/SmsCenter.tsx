@@ -12,7 +12,7 @@ import { renderSmsTemplate } from "@/lib/sms/template-variables";
 import { DateTimeInput } from "@/components/ui/DateInput";
 import AutomationImagePicker from "@/components/sms/AutomationImagePicker";
 import { validateAutomationImageFiles } from "@/lib/sms/automation-images";
-import { automationError, confirmedStaffAutomation, isStaffAutomation, validAutomationImagePaths, STAFF_AUTOMATION_COLUMNS, type StaffAutomation } from "@/lib/sms/automation-settings";
+import { automationError, confirmedStaffAutomation, isStaffAutomation, ownStaffAutomationValues, validAutomationImagePaths, STAFF_AUTOMATION_COLUMNS, type StaffAutomation } from "@/lib/sms/automation-settings";
 
 type Tab = "send" | "history" | "automation" | "settings";
 export type Recipient = { name: string; phone: string; consultTime?: string };
@@ -68,13 +68,14 @@ function sourceLabel(source: string) {
 }
 
 export default function SmsCenter({ initialRecipients = [], contextKey = "center", draftCache }: { initialRecipients?: Recipient[]; contextKey?: string; draftCache?: Map<string, SmsDraft> }) {
-  const { profile, superAdminFirmScope } = useStore();
+  const { profile, superAdminFirmScope, can } = useStore();
   const firmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
   const localDrafts = useRef(new Map<string, SmsDraft>());
   const drafts = draftCache ?? localDrafts.current;
   const owner = useRef(profile?.id);
   if (owner.current !== profile?.id) { drafts.clear(); owner.current = profile?.id; }
-  const scope = `${profile?.id ?? "anonymous"}:${firmId ?? "no-firm"}:${contextKey}`;
+  const automationMode = can("sms.manage_settings") ? "manage" : can("sms.view") ? "own" : "none";
+  const scope = `${profile?.id ?? "anonymous"}:${firmId ?? "no-firm"}:${automationMode}:${profile?.staffName ?? ""}:${contextKey}`;
   const saveDraft = useCallback((draft: SmsDraft) => { if (owner.current === profile?.id) drafts.set(scope, draft); }, [scope, profile?.id, drafts]);
   return <SmsFirmWorkspace key={scope} initialDraft={drafts.get(scope)} onDraftChange={saveDraft} initialRecipients={initialRecipients}/>;
 }
@@ -83,6 +84,9 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const supabase = useMemo(() => createClient(), []);
   const { profile, superAdminFirmScope, workStaffNames, can } = useStore();
   const firmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
+  const canManage = can("sms.manage_settings");
+  const canOwnAutomation = !canManage && profile?.isActive === true && (profile.platformRole ?? "staff") === "staff" && can("sms.view");
+  const canAutomation = canManage || canOwnAutomation;
   const [tab, setTab] = useState<Tab>(initialDraft?.tab ?? "send");
   const [reservationIncomplete, setReservationIncomplete] = useState(false);
   const [senders, setSenders] = useState<Sender[]>([]);
@@ -100,7 +104,8 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const [automationStaff, setAutomationStaff] = useState(initialDraft?.automationStaff ?? profile?.staffName ?? "");
   const [staffAutomation, setStaffAutomation] = useState<StaffAutomation>(initialDraft?.staffAutomation ?? {
     staff_name: profile?.staffName ?? "", sender_number_id: null,
-    new_lead_enabled: true, absence_enabled: true, new_lead_template: DEFAULT_NEW, absence_template: DEFAULT_ABSENCE,
+    ...(canOwnAutomation ? { staff_profile_id: profile?.id } : {}),
+    new_lead_enabled: !canOwnAutomation, absence_enabled: !canOwnAutomation, new_lead_template: DEFAULT_NEW, absence_template: DEFAULT_ABSENCE,
     new_lead_image_paths: [], absence_image_paths: []
   });
   const [newLeadAutoImages, setNewLeadAutoImages] = useState<File[]>(initialDraft?.newLeadAutoImages ?? []);
@@ -160,8 +165,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const msgType = images.length ? "MMS" : bytes <= 90 ? "SMS" : "LMS";
   const canSend = can("sms.send");
   const canHistory = can("sms.view_history");
-  const canManage = can("sms.manage_settings");
-  automationAccess.current = { firmId, allowed: canManage };
+  automationAccess.current = { firmId, allowed: canAutomation };
   const liveReady = !!delivery && !deliveryLoading && !deliverySaving && !deliveryError && delivery.globalReady !== false && delivery.gate.liveEnabled && !!delivery.gate.epochId;
   const latestDraft = useRef<SmsDraft | null>(null);
   latestDraft.current = { tab, senderId, recipients, manualName, manualPhone, bulkText, title, message, images, reservedAt, automation, automationStaff, staffAutomation, newLeadAutoImages, absenceAutoImages, newSender, newTemplate, pendingRequest, automationDirty: automationDirty.current };
@@ -291,21 +295,33 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     const allowedTabs: Tab[] = [
       ...(canSend ? ["send" as Tab] : []),
       ...(canHistory ? ["history" as Tab] : []),
-      ...(canManage ? ["automation" as Tab, "settings" as Tab] : []),
+      ...(canAutomation ? ["automation" as Tab] : []),
+      ...(canManage ? ["settings" as Tab] : []),
     ];
     if (allowedTabs.length && !allowedTabs.includes(tab)) setTab(allowedTabs[0]);
-  }, [canSend, canHistory, canManage, tab]);
+  }, [canSend, canHistory, canManage, canAutomation, tab]);
 
   const load = useCallback(async () => {
     if (!firmId || automationSavingRef.current) return;
     const sequence = ++loadSequence.current;
     setAutomationLoading(true); setAutomationLoadError("");
     try {
+      if (canOwnAutomation) {
+        if (!profile?.id || !profile.staffName) throw new Error("SMS_AUTOMATION_IDENTITY");
+        const { data, error } = await supabase.rpc("sms_is_own_automation", {
+          p_firm_id: firmId, p_profile_id: profile.id, p_staff_name: profile.staffName,
+        });
+        if (error) throw error;
+        if (data !== true) throw new Error("SMS_AUTOMATION_IDENTITY");
+      }
+      const staffQuery = canAutomation
+        ? supabase.from("sms_staff_automation_settings").select(STAFF_AUTOMATION_COLUMNS).eq("law_firm_id", firmId)
+        : null;
       const [senderRes, templateRes, autoRes, staffAutoRes] = await Promise.all([
-        supabase.from("sms_sender_numbers").select("*").eq("law_firm_id", firmId).order("is_default", { ascending:false }).order("staff_name"),
-        supabase.from("sms_templates").select("id,name,category,body").eq("law_firm_id", firmId).order("created_at"),
-        supabase.from("sms_automation_settings").select("new_lead_enabled,absence_enabled,new_lead_template,absence_template,duplicate_guard_minutes").eq("law_firm_id", firmId).maybeSingle(),
-        supabase.from("sms_staff_automation_settings").select(STAFF_AUTOMATION_COLUMNS).eq("law_firm_id", firmId).order("staff_name"),
+        canManage || canSend ? supabase.from("sms_sender_numbers").select("*").eq("law_firm_id", firmId).order("is_default", { ascending:false }).order("staff_name") : Promise.resolve({ data: [], error: null }),
+        canManage || canSend ? supabase.from("sms_templates").select("id,name,category,body").eq("law_firm_id", firmId).order("created_at") : Promise.resolve({ data: [], error: null }),
+        canManage ? supabase.from("sms_automation_settings").select("new_lead_enabled,absence_enabled,new_lead_template,absence_template,duplicate_guard_minutes").eq("law_firm_id", firmId).maybeSingle() : Promise.resolve({ data: null, error: null }),
+        staffQuery ? (canOwnAutomation ? staffQuery.eq("staff_profile_id", profile!.id) : staffQuery.order("staff_name")) : Promise.resolve({ data: [], error: null }),
       ]);
       if (!mounted.current || sequence !== loadSequence.current) return;
       if (senderRes.error) setNotice(senderRes.error.message);
@@ -319,6 +335,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       if (autoRes.error) throw autoRes.error;
       if (staffAutoRes.error) throw staffAutoRes.error;
       if (!Array.isArray(staffAutoRes.data) || !staffAutoRes.data.every(row => isStaffAutomation(row, firmId))) throw new Error("담당자 자동발송 설정 응답을 확인하지 못했습니다.");
+      if (canOwnAutomation && (staffAutoRes.data.length > 1 || staffAutoRes.data.some(row => row.staff_profile_id !== profile?.id || row.staff_name !== profile?.staffName))) throw new Error("SMS_AUTOMATION_IDENTITY");
       const savedGuard = autoRes.data?.duplicate_guard_minutes ?? 5;
       duplicateGuardSaved.current = savedGuard;
       globalAutomationExists.current = !!autoRes.data;
@@ -329,13 +346,13 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     } finally {
       if (mounted.current && sequence === loadSequence.current) setAutomationLoading(false);
     }
-  }, [firmId, profile?.staffName, supabase]);
+  }, [firmId, profile?.id, profile?.staffName, supabase, canAutomation, canManage, canOwnAutomation, canSend]);
 
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
     if (!automationStaff) {
-      const first = profile?.staffName || workStaffNames[0] || "";
+      const first = profile?.staffName || (canManage ? workStaffNames[0] : "") || "";
       if (first) setAutomationStaff(first);
       return;
     }
@@ -352,20 +369,21 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     const mappedSender = senders.find((row) => row.staff_name === automationStaff && row.is_active);
     setStaffAutomation(saved ?? {
       staff_name: automationStaff,
-      sender_number_id: mappedSender?.id ?? null,
-      new_lead_enabled: automation.new_lead_enabled,
-      absence_enabled: automation.absence_enabled,
-      new_lead_template: automation.new_lead_template || DEFAULT_NEW,
-      absence_template: automation.absence_template || DEFAULT_ABSENCE,
+      ...(canOwnAutomation ? { staff_profile_id: profile?.id } : {}),
+      sender_number_id: canOwnAutomation ? null : mappedSender?.id ?? null,
+      new_lead_enabled: canOwnAutomation ? false : automation.new_lead_enabled,
+      absence_enabled: canOwnAutomation ? false : automation.absence_enabled,
+      new_lead_template: canOwnAutomation ? DEFAULT_NEW : automation.new_lead_template || DEFAULT_NEW,
+      absence_template: canOwnAutomation ? DEFAULT_ABSENCE : automation.absence_template || DEFAULT_ABSENCE,
       new_lead_image_paths: [],
       absence_image_paths: [],
     });
     setNewLeadAutoImages([]);
     setAbsenceAutoImages([]);
-  }, [automationStaff, staffAutomationRows, senders, automation, profile?.staffName, workStaffNames, automationLoading, automationLoadError]);
+  }, [automationStaff, staffAutomationRows, senders, automation, profile?.id, profile?.staffName, workStaffNames, automationLoading, automationLoadError, canManage, canOwnAutomation]);
 
   function changeAutomationStaff(name: string) {
-    if (automationSavingRef.current || automationLoading) return;
+    if (!canManage || automationSavingRef.current || automationLoading) return;
     staffDrafts.current.set(automationStaff, { value: staffAutomation, newImages: newLeadAutoImages, absenceImages: absenceAutoImages, dirty: automationDirty.current });
     setAutomationStaff(name);
   }
@@ -373,7 +391,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   function editStaffAutomation(patch: Partial<StaffAutomation>) {
     if (automationSavingRef.current || !automationAccess.current.allowed) return;
     automationDirty.current = true;
-    setStaffAutomation(previous => ({ ...previous, ...patch }));
+    setStaffAutomation(previous => canOwnAutomation ? { ...previous, ...ownStaffAutomationValues({ ...previous, ...patch }) } : { ...previous, ...patch });
   }
 
   const setImageValidation = useCallback((kind: string, active: boolean) => {
@@ -515,8 +533,10 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       const cached = uploaded.get(file);
       if (cached) { paths.push(cached); continue; }
       const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100);
-      const safeStaff = staffName.replace(/[\\/\x00-\x1f\x7f?#%]/g, "_").slice(0, 80);
-      const path = `${firmId}/auto/${safeStaff}/${kind}/${crypto.randomUUID()}-${safe}`;
+      // Storage rejects non-ASCII object keys, including Korean staff names.
+      // Staff ownership stays in the settings row/cache, not in the object key.
+      const directory = canOwnAutomation ? `auto-own/${profile!.id}` : "auto";
+      const path = `${firmId}/${directory}/${kind}/${crypto.randomUUID()}-${safe}`;
       const { error } = await supabase.storage.from("sms-media").upload(path, file, { upsert:false });
       if (error) throw error;
       uploaded.set(file, path);
@@ -526,14 +546,15 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   }
 
   async function saveAutomation() {
-    if (automationSavingRef.current) return;
+    if (!mounted.current || automationSavingRef.current) return;
     if (autoImageValidation.current.size) { setNotice("이미지 형식과 용량 확인이 끝난 뒤 저장해주세요."); return; }
-    if (!canManage || !automationAccess.current.allowed) { setNotice("자동발송 설정을 저장할 권한이 없습니다."); return; }
+    if (!canAutomation || !automationAccess.current.allowed) { setNotice("자동발송 설정을 저장할 권한이 없습니다."); return; }
     if (!firmId || !automationStaff || staffAutomation.staff_name !== automationStaff) { setNotice("자동발송을 설정할 영업자를 선택해주세요."); return; }
+    if (canOwnAutomation && (automationStaff !== profile?.staffName || staffAutomation.staff_profile_id !== profile?.id)) { setNotice(automationError({ message: "SMS_AUTOMATION_IDENTITY" }, "")); return; }
     if (automationLoading || automationLoadError || duplicateGuardSaved.current === null) { setNotice("기존 자동발송 설정을 먼저 불러와주세요. 작성한 내용은 유지됩니다."); return; }
-    if (!Number.isInteger(automation.duplicate_guard_minutes) || automation.duplicate_guard_minutes < 0 || automation.duplicate_guard_minutes > 60) { setNotice("중복발송 방지 시간은 0~60분의 정수로 입력해주세요."); return; }
+    if (canManage && (!Number.isInteger(automation.duplicate_guard_minutes) || automation.duplicate_guard_minutes < 0 || automation.duplicate_guard_minutes > 60)) { setNotice("중복발송 방지 시간은 0~60분의 정수로 입력해주세요."); return; }
     if ((staffAutomation.new_lead_enabled && !staffAutomation.new_lead_template.trim()) || (staffAutomation.absence_enabled && !staffAutomation.absence_template.trim())) { setNotice("자동발송을 사용할 문구를 입력해주세요."); return; }
-    if (staffAutomation.sender_number_id && !senders.some(sender => sender.id === staffAutomation.sender_number_id && sender.is_active)) { setNotice("현재 로펌의 활성 발신번호를 선택해주세요."); return; }
+    if (canManage && staffAutomation.sender_number_id && !senders.some(sender => sender.id === staffAutomation.sender_number_id && sender.is_active)) { setNotice("현재 로펌의 활성 발신번호를 선택해주세요."); return; }
     if ((!newLeadAutoImages.length && !validAutomationImagePaths(staffAutomation.new_lead_image_paths, firmId)) || (!absenceAutoImages.length && !validAutomationImagePaths(staffAutomation.absence_image_paths, firmId))) { setNotice("기존 첨부 이미지의 형식 또는 경로를 확인해주세요. 해당 이미지를 제거하거나 JPEG·PNG·GIF 파일로 다시 선택한 뒤 저장해주세요."); return; }
     automationSavingRef.current = true; automationDirty.current = true;
     loadSequence.current++; // An older read must not replace this acknowledged save.
@@ -551,10 +572,16 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
         new_lead_image_paths: newLeadAutoImages.length ? newLeadUploaded : staffAutomation.new_lead_image_paths,
         absence_image_paths: absenceAutoImages.length ? absenceUploaded : staffAutomation.absence_image_paths,
       };
-      const { id: _id, ...values } = expected;
-      const { data, error } = await supabase.from("sms_staff_automation_settings").upsert({
-        ...values, law_firm_id: firmId, updated_by: profile?.id ?? null, updated_at: new Date().toISOString(),
-      }, { onConflict:"law_firm_id,staff_name" }).select(STAFF_AUTOMATION_COLUMNS).single();
+      const { id: _id, staff_profile_id: _ownerId, ...values } = expected;
+      const ownValues = ownStaffAutomationValues(expected);
+      const query = canOwnAutomation
+        ? expected.id
+          ? supabase.from("sms_staff_automation_settings").update(ownValues).eq("id", expected.id).eq("law_firm_id", firmId).eq("staff_profile_id", profile!.id)
+          : supabase.from("sms_staff_automation_settings").insert({ ...ownValues, law_firm_id: firmId, staff_profile_id: profile!.id, staff_name: profile!.staffName, sender_number_id: null })
+        : supabase.from("sms_staff_automation_settings").upsert({
+          ...values, law_firm_id: firmId, updated_by: profile?.id ?? null, updated_at: new Date().toISOString(),
+        }, { onConflict:"law_firm_id,staff_name" });
+      const { data, error } = await query.select(STAFF_AUTOMATION_COLUMNS).single();
       if (error) throw error;
       if (!confirmedStaffAutomation(data, expected, firmId)) throw new Error("저장된 담당자 설정을 확인하지 못했습니다. 작성한 내용은 유지됩니다.");
       staffConfirmed = true;
@@ -562,7 +589,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       // Use the acknowledged row directly, never stale rows/defaults from a broad reload.
       setStaffAutomationRows(rows => [...rows.filter(row => row.staff_name !== automationStaff), data]);
       setStaffAutomation(data); setNewLeadAutoImages([]); setAbsenceAutoImages([]);
-      if (automation.duplicate_guard_minutes !== duplicateGuardSaved.current) {
+      if (canManage && automation.duplicate_guard_minutes !== duplicateGuardSaved.current) {
         // This control is firm-wide. Do not overwrite global templates or enable flags.
         const commonValues = { duplicate_guard_minutes: automation.duplicate_guard_minutes, updated_by: profile?.id ?? null, updated_at: new Date().toISOString() };
         const commonQuery = globalAutomationExists.current
@@ -631,7 +658,8 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const tabs: Array<[Tab,string,ReactNode]> = [
     ...(canSend ? [["send","문자 보내기",<Send key="s" size={16}/>] as [Tab,string,ReactNode]] : []),
     ...(canHistory ? [["history","발송내역",<Clock3 key="h" size={16}/>] as [Tab,string,ReactNode]] : []),
-    ...(canManage ? [["automation","자동발송",<RefreshCw key="a" size={16}/>] as [Tab,string,ReactNode], ["settings","발신번호 · 문구",<Settings2 key="g" size={16}/>] as [Tab,string,ReactNode]] : []),
+    ...(canAutomation ? [["automation",canOwnAutomation ? "내 자동발송" : "자동발송",<RefreshCw key="a" size={16}/>] as [Tab,string,ReactNode]] : []),
+    ...(canManage ? [["settings","발신번호 · 문구",<Settings2 key="g" size={16}/>] as [Tab,string,ReactNode]] : []),
   ];
 
   return <div className="space-y-5">
@@ -785,22 +813,22 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     </section>}
 
 
-    {tab === "automation" && canManage && <div className="space-y-5">
-      <DeliveryControls state={delivery} loading={deliveryLoading} saving={deliverySaving} error={deliveryError} onRefresh={()=>void loadDelivery()} onSave={saveDelivery}/>
+    {tab === "automation" && canAutomation && <div className="space-y-5">
+      {canManage && <DeliveryControls state={delivery} loading={deliveryLoading} saving={deliverySaving} error={deliveryError} onRefresh={()=>void loadDelivery()} onSave={saveDelivery}/>}
       <p className="text-sm leading-6 text-slate-600">아래 문구·이미지를 저장해도 자동발송은 켜지지 않습니다. 서버의 자동발송 활성 상태와 담당자별 선택이 모두 켜져 있어야 새 요청을 등록합니다.</p>
       {automationLoading && <p role="status" className="text-sm text-slate-500">기존 자동발송 설정을 불러오는 중입니다.</p>}
       {automationLoadError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{automationLoadError}<button type="button" onClick={()=>void load()} className="ml-3 font-bold underline">설정 다시 불러오기</button></div>}
       <fieldset disabled={automationSaving || automationLoading || !!automationLoadError} className="min-w-0 space-y-5">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div><h2 className="font-black text-slate-900">영업자별 자동발송 설정</h2><p className="mt-1 text-xs text-slate-400">영업자마다 신규 DB·부재중 문구와 이미지를 각각 다르게 지정합니다.</p></div>
+          <div><h2 className="font-black text-slate-900">{canOwnAutomation ? "내 자동발송 설정" : "영업자별 자동발송 설정"}</h2><p className="mt-1 text-xs text-slate-400">{canOwnAutomation ? "본인의 신규 DB·부재중 문구, 이미지, 사용 체크만 변경할 수 있습니다. 발신번호와 공통 설정은 관리자가 관리합니다." : "영업자마다 신규 DB·부재중 문구와 이미지를 각각 다르게 지정합니다."}</p></div>
           <label className="w-full text-xs font-bold text-slate-500 lg:w-72">설정할 영업자
-            <select aria-label="설정할 영업자" value={automationStaff} onChange={(e)=>changeAutomationStaff(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800">
-              <option value="">영업자 선택</option>{workStaffNames.map((name)=><option key={name} value={name}>{name}</option>)}
+            <select aria-label="설정할 영업자" disabled={canOwnAutomation} value={automationStaff} onChange={(e)=>changeAutomationStaff(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 disabled:bg-slate-50">
+              {canOwnAutomation ? <option value={profile?.staffName ?? ""}>{profile?.staffName || "직원 이름 확인 필요"}</option> : <><option value="">영업자 선택</option>{workStaffNames.map((name)=><option key={name} value={name}>{name}</option>)}</>}
             </select>
           </label>
         </div>
-        {automationStaff && <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {automationStaff && canManage && <div className="mt-4 grid gap-3 md:grid-cols-2">
           <label className="text-xs font-bold text-slate-500">자동발송 발신번호
             <select value={staffAutomation.sender_number_id ?? ""} onChange={(e)=>editStaffAutomation({sender_number_id:e.target.value||null})} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">
               <option value="">담당자 매핑 번호 자동사용</option>{senders.filter((s)=>s.is_active).map((s)=><option key={s.id} value={s.id}>{s.staff_name} · {s.label} · {prettyPhone(s.phone)}</option>)}
@@ -815,9 +843,9 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       {automationStaff && <div className="grid gap-5 xl:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black">신규 DB 즉시문자 · {automationStaff}</h2><p className="text-xs text-slate-400">DB 입고 후 담당 배정 시 자동 등록</p></div><input type="checkbox" aria-label="신규 DB 자동발송 사용" checked={staffAutomation.new_lead_enabled} onChange={(e)=>editStaffAutomation({new_lead_enabled:e.target.checked})} className="size-5"/></div>
-          <label className="block text-xs font-bold text-slate-500">저장 문구 불러오기
+          {canManage && <label className="block text-xs font-bold text-slate-500">저장 문구 불러오기
             <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)editStaffAutomation({new_lead_template:t.body});}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
-          </label>
+          </label>}
           <textarea aria-label="신규 DB 자동발송 문구" value={staffAutomation.new_lead_template} onChange={(e)=>editStaffAutomation({new_lead_template:e.target.value})} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
           <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"} · 시간 미입력은 ‘미지정’. 이 담당자의 오픈채팅 링크는 문구에 직접 넣어주세요.</div>
           <AutomationImagePicker key={`${firmId}:${automationStaff}:new_lead`} label="신규 DB 자동발송 이미지" onValidationChange={onNewLeadValidation} files={newLeadAutoImages} savedPaths={staffAutomation.new_lead_image_paths} disabled={automationSaving || automationLoading || !!automationLoadError} resolveSavedUrl={resolveAutoImage}
@@ -826,9 +854,9 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black">부재중 자동문자 · {automationStaff}</h2><p className="text-xs text-slate-400">상담일지에서 부재중 기록 추가 시 자동 등록</p></div><input type="checkbox" aria-label="부재중 자동발송 사용" checked={staffAutomation.absence_enabled} onChange={(e)=>editStaffAutomation({absence_enabled:e.target.checked})} className="size-5"/></div>
-          <label className="block text-xs font-bold text-slate-500">저장 문구 불러오기
+          {canManage && <label className="block text-xs font-bold text-slate-500">저장 문구 불러오기
             <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)editStaffAutomation({absence_template:t.body});}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
-          </label>
+          </label>}
           <textarea aria-label="부재중 자동발송 문구" value={staffAutomation.absence_template} onChange={(e)=>editStaffAutomation({absence_template:e.target.value})} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
           <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"} · 시간 미입력은 ‘미지정’. 이 담당자의 오픈채팅 링크는 문구에 직접 넣어주세요.</div>
           <AutomationImagePicker key={`${firmId}:${automationStaff}:absence`} label="부재중 자동발송 이미지" onValidationChange={onAbsenceValidation} files={absenceAutoImages} savedPaths={staffAutomation.absence_image_paths} disabled={automationSaving || automationLoading || !!automationLoadError} resolveSavedUrl={resolveAutoImage}
@@ -839,7 +867,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
           <div className="flex gap-3"><CheckCircle2 className="mt-0.5 shrink-0 text-blue-600"/><div className="text-sm text-blue-900"><b>영업자별 자동발송 우선 적용</b><div className="mt-1 leading-6 text-blue-700">DB 담당자 이름과 일치하는 설정이 있으면 해당 영업자의 문구·이미지·발신번호를 사용합니다. 별도 설정이 없는 영업자는 기존 로펌 기본 문구와 담당자 매핑 발신번호를 사용합니다. 이미지가 있으면 MMS 대기열로 등록됩니다.</div></div></div>
         </section>
         {automationImagesValidating && <p role="status" className="xl:col-span-2 text-sm text-blue-700">이미지를 확인하고 있습니다. 확인이 끝나면 설정을 저장할 수 있습니다.</p>}
-        {canManage && <button disabled={automationSaving || automationLoading || !!automationLoadError || automationImagesValidating} onClick={()=>void saveAutomation()} className="xl:col-span-2 h-12 rounded-xl bg-slate-900 text-sm font-black text-white">{automationSaving?"저장 중...":`${automationStaff} 자동발송 설정 저장`}</button>}
+        {canAutomation && <button disabled={automationSaving || automationLoading || !!automationLoadError || automationImagesValidating} onClick={()=>void saveAutomation()} className="xl:col-span-2 h-12 rounded-xl bg-slate-900 text-sm font-black text-white">{automationSaving?"저장 중...":`${automationStaff} 자동발송 설정 저장`}</button>}
       </div>}
       </fieldset>
     </div>}

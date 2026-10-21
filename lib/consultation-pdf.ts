@@ -177,10 +177,14 @@ export async function createConsultationPdf(snapshot: ConsultationPdfSnapshot, f
   return doc.output("blob");
 }
 
-export function downloadConsultationPdf(blob: Blob, snapshot: ConsultationPdfSnapshot): void {
-  const url = URL.createObjectURL(blob);
+/** A supplied URL belongs to the modal and stays usable for its direct links. */
+export function downloadConsultationPdf(blob: Blob, snapshot: ConsultationPdfSnapshot, preparedUrl?: string): void {
+  const url = preparedUrl ?? URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url; anchor.download = consultationPdfFilename(snapshot);
   document.body.appendChild(anchor);
-  try { anchor.click(); } finally { anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 60_000); }
+  try { anchor.click(); } finally {
+    anchor.remove();
+    if (!preparedUrl) setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
 }

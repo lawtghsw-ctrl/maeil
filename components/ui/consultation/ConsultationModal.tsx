@@ -59,7 +59,7 @@ import { ConsultationMemoSection } from "./ConsultationMemoSection";
 import { Download, ShieldCheck, ShieldAlert } from "lucide-react";
 import { fmtWon } from "@/lib/format";
 import { changedCustomerPhone } from "@/lib/customer-phone";
-import type { ConsultationPdfMemoDraft, ConsultationPdfSnapshot } from "@/lib/consultation-pdf-data";
+import { consultationPdfFilename, copyConsultationPdfSnapshot, type ConsultationPdfMemoDraft, type ConsultationPdfSnapshot } from "@/lib/consultation-pdf-data";
 
 type Updater<T> = (updater: T | ((prev: T) => T)) => void;
 
@@ -193,14 +193,21 @@ export function ConsultationModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pdfPending, setPdfPending] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfReady, setPdfReady] = useState<{ url: string; filename: string } | null>(null);
+  const pdfUrl = useRef<string>();
+  const releasePdfUrl = useCallback(() => {
+    if (pdfUrl.current) URL.revokeObjectURL(pdfUrl.current);
+    pdfUrl.current = undefined;
+  }, []);
   const pdfSequence = useRef(0);
   const pdfBusy = useRef(false);
   const memoDraftRef = useRef<ConsultationPdfMemoDraft>();
   const captureMemoDraft = useCallback((value: ConsultationPdfMemoDraft) => { memoDraftRef.current = value; }, []);
   useEffect(() => {
     pdfSequence.current++; pdfBusy.current = false; setPdfPending(false); setPdfError(null); memoDraftRef.current = undefined;
-    return () => { pdfSequence.current++; pdfBusy.current = false; };
-  }, [open, resetKey]);
+    releasePdfUrl(); setPdfReady(null);
+    return () => { pdfSequence.current++; pdfBusy.current = false; releasePdfUrl(); };
+  }, [open, resetKey, releasePdfUrl]);
 
   // 대상이 바뀌면(resetKey 변경) 서버 저장본을 기본값으로 채운 뒤, 같은 고객의 로컬 임시본이
   // 있으면 그 값을 우선 복구합니다. 팝업 닫힘/새로고침/세션 만료가 있어도 작성 중 내용이
@@ -391,9 +398,10 @@ export function ConsultationModal({
     pdfBusy.current = true;
     const sequence = ++pdfSequence.current;
     setPdfPending(true); setPdfError(null);
+    releasePdfUrl(); setPdfReady(null);
     try {
       // Capture before any lazy load so subsequent editing cannot change this export.
-      const snapshot: ConsultationPdfSnapshot = structuredClone({
+      const snapshot: ConsultationPdfSnapshot = copyConsultationPdfSnapshot({
         name: allowNameEdit ? (editedName.trim() || displayName) : displayName,
         phone: allowPhoneEdit && phoneEdited && !readOnly ? editedPhone.trim() : displayPhone, joinedAtLabel, caseNumberLabel, applicationType,
         detailStage: showDetailStage ? detailStage : undefined,
@@ -407,7 +415,14 @@ export function ConsultationModal({
       if (sequence !== pdfSequence.current) return;
       const blob = await pdf.createConsultationPdf(snapshot);
       if (sequence !== pdfSequence.current) return;
-      pdf.downloadConsultationPdf(blob, snapshot);
+      const url = URL.createObjectURL(blob);
+      pdfUrl.current = url;
+      setPdfReady({ url, filename: consultationPdfFilename(snapshot) });
+      // Some mobile/embedded browsers block an automatic download after async
+      // generation. Keep direct, user-clicked save/open links even if it throws.
+      try { pdf.downloadConsultationPdf(blob, snapshot, url); } catch {
+        setPdfError("PDF는 준비되었습니다. 아래 파일 저장 또는 PDF 열기를 눌러주세요.");
+      }
     } catch {
       if (sequence === pdfSequence.current) setPdfError("PDF를 만들지 못했습니다. 작성 내용은 그대로 유지됩니다. 잠시 후 다시 시도해주세요.");
     } finally {
@@ -625,6 +640,11 @@ export function ConsultationModal({
           {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save} disabled={savePending}>{savePending ? "저장 중..." : "저장"}</Button>}
         </div>
       </div>
+      {pdfReady && <div role="status" className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+        <span>PDF 준비 완료. 자동 저장되지 않으면 아래 링크를 눌러주세요.</span>
+        <a href={pdfReady.url} download={pdfReady.filename} className="font-semibold text-blue-700 underline">만든 PDF 파일 저장</a>
+        <a href={pdfReady.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 underline">만든 PDF 열기</a>
+      </div>}
       {pdfError && <p role="alert" className="mt-2 text-xs text-red-600">{pdfError}</p>}
     </Modal>
   );

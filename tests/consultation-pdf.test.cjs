@@ -27,6 +27,78 @@ test('PDF text and filenames handle control characters and special input without
   assert.equal(data.consultationPdfDateTime('2026-10-18T23:30:00Z'), '2026-10-19 08:30');
 });
 
+test('portable snapshot copy preserves optional, zero/false and invalid numeric values without sharing nested records', () => {
+  const input = snapshot(); input.consultation.income.pensionIncome = NaN;
+  input.consultation.assets[0].securityAmount = undefined;
+  const captured = data.copyConsultationPdfSnapshot(input);
+  assert.equal(captured.reservationChoice, false); assert.equal(captured.finance.paidAmount, 0);
+  assert.equal(captured.consultation.assets[0].securityAmount, undefined);
+  assert.ok(Number.isNaN(captured.consultation.income.pensionIncome));
+  input.consultation.personal.address = '나중에 바뀐 주소'; input.consultation.loanRecords[0].balance = 777;
+  assert.notEqual(captured.consultation.personal.address, input.consultation.personal.address);
+  assert.notEqual(captured.consultation.loanRecords[0].balance, input.consultation.loanRecords[0].balance);
+  assert.match(JSON.stringify(data.consultationPdfSections(captured)), /확인 필요원/);
+});
+
+test('legacy scalar lists and malformed text fields do not abort PDF or expose hidden object metadata', () => {
+  const input = snapshot();
+  input.consultation.personal.childrenAges = [7, 10, 0];
+  input.consultation.personal.dischargeHistoryNote = { text: 'unverified nested content', id: 'HIDDEN_OBJECT_ID', url: 'https://forbidden.invalid', bytes: 'DO_NOT_EXPORT' };
+  input.consultation.income.salaryAccount = ['가상 통장', null, false];
+  input.consultation.attachedFiles[0].attachedAt = { invalid: true, url: 'https://forbidden.invalid' };
+  const output = JSON.stringify(data.consultationPdfSections(input));
+  assert.match(output, /7, 10, 0/); assert.match(output, /가상 통장, -, 아니오/);
+  assert.match(output, /입력 형식 확인 필요/);
+  assert.doesNotMatch(output, /HIDDEN_OBJECT_ID|forbidden.invalid|DO_NOT_EXPORT|unverified nested content/);
+});
+
+test('invalid and extreme legacy dates are preserved as text rather than throwing during Korean-time conversion', () => {
+  for (const value of ['알 수 없는 날짜', '2026-99-99T12:00', '+275760-09-13T00:00:00.000Z']) {
+    assert.equal(data.consultationPdfDateTime(value), value);
+  }
+  assert.equal(data.consultationPdfDateTime(undefined), '-');
+});
+
+test('corrupt collection entries keep explicit placeholder rows, valid neighbors and full visible counts', () => {
+  const fixtures = [
+    ['assets', '재산 현황', 'note'], ['debts', '채무 현황', 'note'],
+    ['loanRecords', '기대출 리스트', 'note'], ['memoLog', '상담 메모', 'text'],
+    ['attachedFiles', '첨부파일 목록', 'name'],
+  ];
+  for (const [key, title, field] of fixtures) {
+    const input = snapshot(), row = input.consultation[key][0];
+    input.consultation[key] = [{ ...row, [field]: '정상 첫 항목' }, null, 42, [], { ...row, [field]: '정상 마지막 항목' }];
+    if (key === 'memoLog') input.consultation[key].push({ ...row, deletedAt: '2026-10-01', text: '삭제된 메모 제외' });
+    const before = JSON.stringify(input), sections = data.consultationPdfSections(input);
+    const section = sections.find(item => item.title.startsWith(title)), output = JSON.stringify(section);
+    assert.equal(section.rows.length, 5, key); assert.equal(section.rows.filter(row => row.includes('[입력 형식 확인 필요]')).length, 3, key);
+    assert.match(output, /정상 첫 항목/); assert.match(output, /정상 마지막 항목/);
+    assert.doesNotMatch(output, /삭제된 메모 제외|forbidden.invalid|DO_NOT_EXPORT|private-/);
+    if (key === 'loanRecords' || key === 'memoLog') assert.match(section.title, /5건/);
+    assert.equal(JSON.stringify(input), before, 'No stored data changes');
+  }
+});
+
+test('invalid collection shapes are visibly marked without reading unknown nested metadata', () => {
+  for (const key of ['assets', 'debts', 'loanRecords', 'memoLog', 'attachedFiles']) {
+    for (const value of [{ id: 'HIDDEN_COLLECTION_ID', url: 'https://forbidden.invalid', bytes: 'DO_NOT_EXPORT' }, 'broken-list', false, 7]) {
+      const input = snapshot(); input.consultation[key] = value; input.finance = undefined;
+      const output = JSON.stringify(data.consultationPdfSections(input));
+      assert.match(output, /목록 형식 확인 필요/); assert.match(output, /입력 형식 확인 필요/);
+      assert.doesNotMatch(output, /HIDDEN_COLLECTION_ID|forbidden.invalid|DO_NOT_EXPORT|broken-list|계약 \/ 수납 요약/);
+    }
+  }
+});
+
+test('a corrupt loan row cannot silently become a falsely complete inferred total', () => {
+  const input = snapshot(); input.consultation.debtSummaryExtra = {};
+  input.consultation.loanRecords = [{ ...input.consultation.loanRecords[0], balance: 1000 }, null];
+  const section = data.consultationPdfSections(input).find(section => section.title === '채무 요약');
+  assert.equal(section.rows[0][1], '확인 필요원');
+  input.consultation.debtSummaryExtra.totalDebtAmount = 0;
+  assert.equal(data.consultationPdfSections(input).find(section => section.title === '채무 요약').rows[0][1], '0원', 'Explicit user-entered totals still win');
+});
+
 test('real PDF is portrait A4 with embedded Korean text and complete long tables/memos across pages', async () => {
   const pdf = load('lib/consultation-pdf.ts');
   const input = freeze(snapshot(true)), before = JSON.stringify(input);
@@ -68,6 +140,17 @@ test('download creates a PDF file link, clicks it, removes it and revokes only i
   assert.equal(anchor.href, 'blob:local-only'); assert.equal(anchor.download, '상담일지_홍길동 합성자료_2026-10-18.pdf');
   assert.deepEqual(actions, ['append', 'click', 'remove']); release();
   assert.deepEqual(actions, ['append', 'click', 'remove', 'blob:local-only']);
+});
+
+test('automatic download reuses the prepared modal URL without revoking the direct save/open links', () => {
+  const actions = [], anchor = { click: () => actions.push('click'), remove: () => actions.push('remove') };
+  const pdf = load('lib/consultation-pdf.ts', {
+    document: { createElement: () => anchor, body: { appendChild: () => actions.push('append') } },
+    URL: { createObjectURL: () => { throw new Error('Do not allocate a second URL'); }, revokeObjectURL: () => { throw new Error('Modal owns URL lifetime'); } },
+    setTimeout: () => { throw new Error('Prepared links must not expire on a timer'); },
+  });
+  pdf.downloadConsultationPdf(new Blob(['offline PDF']), snapshot(), 'blob:prepared');
+  assert.equal(anchor.href, 'blob:prepared'); assert.deepEqual(actions, ['append', 'click', 'remove']);
 });
 
 module.exports = { snapshot };

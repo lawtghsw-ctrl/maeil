@@ -38,7 +38,9 @@ test('본인취소 is additive and immediately follows 불가 in both shared opt
     assert.equal(types.DB_LEAD_DEFAULT_STAGE_BY_STATUS.거절, '불가');
     assert.equal(types.DB_LEAD_DEFAULT_STAGE_BY_STATUS.부적합, '불가');
     assert.equal(types.DB_LEAD_DEFAULT_STAGE_BY_STATUS.종결_중단, '장기부재');
-    const original = require('node:child_process').execFileSync('git', ['show', 'HEAD:lib/types.ts'], { cwd: root, encoding: 'utf8' });
+    // HEAD already contains this additive change after deployment; compare with
+    // the immutable pre-feature baseline rather than the current branch tip.
+    const original = require('node:child_process').execFileSync('git', ['show', 'db8f0b74d3de411103715767ec337363d3927d56:lib/types.ts'], { cwd: root, encoding: 'utf8' });
     const old = { exports: {} };
     vm.runInNewContext(ts.transpileModule(original, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { module: old, exports: old.exports });
     assert.deepEqual(clone(types.DB_DETAIL_STAGE_OPTIONS.filter(value => value !== '본인취소')), clone(old.exports.DB_DETAIL_STAGE_OPTIONS));
