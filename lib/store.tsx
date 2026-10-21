@@ -33,6 +33,7 @@ import type {
 } from "./types";
 import { STAFF_LIST } from "./types";
 import { manualLeadAssignee } from "./manual-lead-assignment";
+import { changedCustomerPhone } from "./customer-phone";
 import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
@@ -147,6 +148,7 @@ interface AppStoreValue {
   signOut: () => Promise<void>;
   addLead: (draft: Omit<DbLead, "id" | "receivedAt"> & { receivedAt?: string }) => string;
   updateClient: (id: string, patch: Partial<Client>) => void;
+  updateClientPhone: (id: string, phone: string) => Promise<boolean>;
   deleteClient: (id: string) => void;
   updateLead: (id: string, patch: Partial<DbLead>) => Promise<boolean>;
   deleteLead: (id: string) => void;
@@ -728,6 +730,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSyncError("저장 실패 · 수정할 DB를 찾지 못했습니다. 목록을 새로 확인해주세요.");
         return false;
       }
+      // Validate before the optimistic update, including direct store callers.
+      // Unchanged legacy/imported numbers must not block unrelated edits.
+      if (Object.prototype.hasOwnProperty.call(patch, "phone")) {
+        try {
+          if (typeof patch.phone !== "string") throw new Error("고객 연락처를 입력해주세요.");
+          const phone = changedCustomerPhone(before.phone, patch.phone, true);
+          patch = { ...patch, phone: phone ?? before.phone };
+        } catch (err) {
+          setSyncError(`저장 실패 · ${err instanceof Error ? err.message : "연락처를 확인해주세요."}`);
+          return false;
+        }
+      }
       const next = { ...before, ...patch };
       setLeads((prev) => prev.map((l) => (l.id === id ? next : l)));
       try {
@@ -744,6 +758,40 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
     },
     [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity]
+  );
+
+  const updateClientPhone = useCallback(
+    async (id: string, draftPhone: string): Promise<boolean> => {
+      if (isGlobalSuperAdmin || !isAdmin || !profile?.isActive || !effectiveFirmId) {
+        setSyncError("저장 실패 · 대상 로펌을 선택한 활성 관리자만 고객 연락처를 수정할 수 있습니다.");
+        return false;
+      }
+      const before = clients.find((client) => client.id === id);
+      if (!before || before._lawFirmId !== effectiveFirmId || !supabase) {
+        setSyncError("저장 실패 · 현재 로펌의 고객정보 또는 서버 연결을 확인해주세요.");
+        return false;
+      }
+      try {
+        const phone = changedCustomerPhone(before.phone, draftPhone, true);
+        if (phone === undefined) return true;
+        const { data, error } = await supabase.rpc("update_client_phone", { target_client_id: id, new_phone: phone });
+        if (error) throw error;
+        if (data?.clientId !== id || data?.phone !== phone) throw new Error("서버의 연락처 저장 결과를 확인하지 못했습니다.");
+        // Never apply an old request to a new tenant after a scope switch.
+        if (readScopeRef.current?.firmId !== effectiveFirmId || readScopeRef.current?.userId !== currentUser?.id) return true;
+        setClients((prev) => prev.map((client) => client.id === id && client._lawFirmId === effectiveFirmId ? { ...client, phone } : client));
+        if (typeof data.leadId === "string") {
+          setLeads((prev) => prev.map((lead) => lead.id === data.leadId && lead._lawFirmId === effectiveFirmId ? { ...lead, phone } : lead));
+        }
+        setSyncError(null);
+        logChange("계약관리", "수정", before.name, "고객 연락처 수정 (연결된 원본 DB 동기화)");
+        return true;
+      } catch (err) {
+        setSyncError(`저장 실패 · 연락처 입력값은 유지됩니다. (${err instanceof Error ? err.message : "서버 저장에 실패했습니다."})`);
+        return false;
+      }
+    },
+    [clients, currentUser?.id, effectiveFirmId, isAdmin, isGlobalSuperAdmin, logChange, profile?.isActive, supabase]
   );
 
   const deleteLead = useCallback(
@@ -1123,6 +1171,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       signOut,
       addLead,
       updateClient,
+      updateClientPhone,
       deleteClient,
       updateLead,
       deleteLead,
@@ -1167,6 +1216,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       signOut,
       addLead,
       updateClient,
+      updateClientPhone,
       deleteClient,
       updateLead,
       deleteLead,

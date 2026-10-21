@@ -55,6 +55,8 @@ function harness(options = {}) {
       if (name === '@/components/ui/consultation/ConsultationModal') return { ConsultationModal: () => null };
       if (name === '@/components/ui/ReservationDateTimeEditor') return { ReservationDateTimeEditor: () => null };
       if (name === '@/components/ui/ConfirmDelete') return { ConfirmDelete: () => null };
+      // Scroll geometry has separate actual-component coverage; this harness only mounts NewLeadModal.
+      if (name === '@/components/ui/BottomHorizontalScrollbar') return { BottomHorizontalScrollbar: () => null };
       if (name.startsWith('@/') || name.startsWith('.')) {
         const file = name.startsWith('@/') ? name.slice(2) : path.posix.join(path.posix.dirname(relative), name);
         return load(file + (fs.existsSync(path.join(root, file + '.tsx')) ? '.tsx' : '.ts'));

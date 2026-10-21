@@ -27,6 +27,8 @@ export function BasicInfoSection({
   allowNameEdit = false,
   onNameChange,
   displayPhone,
+  allowPhoneEdit = false,
+  onPhoneChange,
   joinedAtLabel,
   caseNumberLabel,
 }: {
@@ -38,6 +40,8 @@ export function BasicInfoSection({
   allowNameEdit?: boolean;
   onNameChange?: (name: string) => void;
   displayPhone: string;
+  allowPhoneEdit?: boolean;
+  onPhoneChange?: (phone: string) => void;
   joinedAtLabel: string;
   caseNumberLabel: string;
 }) {
@@ -91,7 +95,16 @@ export function BasicInfoSection({
           />
         </FieldRow>
         <FieldRow label="연락처">
-          <Input className={`${compactInputClass} text-center font-semibold`} value={displayPhone} readOnly />
+          <Input
+            aria-label="고객 연락처"
+            type="tel"
+            autoComplete="tel"
+            className={`${compactInputClass} text-center font-semibold ${allowPhoneEdit ? "border-sky-300 bg-sky-50" : ""}`}
+            value={displayPhone}
+            maxLength={40}
+            readOnly={!allowPhoneEdit}
+            onChange={allowPhoneEdit ? (e: ChangeEvent<HTMLInputElement>) => onPhoneChange?.(e.target.value) : undefined}
+          />
         </FieldRow>
 
         <FieldRow label="면책이력" required={required("dischargeHistory")} missing={missing("dischargeHistory")}>

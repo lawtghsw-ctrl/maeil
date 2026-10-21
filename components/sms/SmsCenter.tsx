@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
-  BookOpen, CheckCircle2, Clock3, ImagePlus, MessageSquareText,
+  BookOpen, CheckCircle2, ChevronDown, Clock3, ImagePlus, MessageSquareText,
   Phone, Plus, RefreshCw, Send, Settings2, Trash2, UploadCloud, X
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -10,6 +10,9 @@ import { useStoreSession as useStore } from "@/lib/store";
 import DeliveryControls, { validDeliveryState, type DeliveryState } from "@/components/sms/DeliveryControls";
 import { renderSmsTemplate } from "@/lib/sms/template-variables";
 import { DateTimeInput } from "@/components/ui/DateInput";
+import AutomationImagePicker from "@/components/sms/AutomationImagePicker";
+import { validateAutomationImageFiles } from "@/lib/sms/automation-images";
+import { automationError, confirmedStaffAutomation, isStaffAutomation, validAutomationImagePaths, STAFF_AUTOMATION_COLUMNS, type StaffAutomation } from "@/lib/sms/automation-settings";
 
 type Tab = "send" | "history" | "automation" | "settings";
 export type Recipient = { name: string; phone: string; consultTime?: string };
@@ -23,12 +26,6 @@ type Outbox = {
 type Automation = {
   new_lead_enabled: boolean; absence_enabled: boolean; new_lead_template: string; absence_template: string;
   duplicate_guard_minutes: number;
-};
-type StaffAutomation = {
-  id?: string; staff_name: string; sender_number_id: string | null;
-  new_lead_enabled: boolean; absence_enabled: boolean;
-  new_lead_template: string; absence_template: string;
-  new_lead_image_paths: string[]; absence_image_paths: string[];
 };
 type SendRequest = {
   lawFirmId: string; epochId: string; requestId: string; senderNumberId: string;
@@ -94,6 +91,11 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const [automation, setAutomation] = useState<Automation>(initialDraft?.automation ?? {
     new_lead_enabled: true, absence_enabled: true, new_lead_template: DEFAULT_NEW, absence_template: DEFAULT_ABSENCE, duplicate_guard_minutes: 5
   });
+  const [automationLoading, setAutomationLoading] = useState(true);
+  const [automationLoadError, setAutomationLoadError] = useState("");
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationImagesValidating, setAutomationImagesValidating] = useState(false);
+  const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
   const [staffAutomationRows, setStaffAutomationRows] = useState<StaffAutomation[]>([]);
   const [automationStaff, setAutomationStaff] = useState(initialDraft?.automationStaff ?? profile?.staffName ?? "");
   const [staffAutomation, setStaffAutomation] = useState<StaffAutomation>(initialDraft?.staffAutomation ?? {
@@ -135,6 +137,13 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const sending = useRef(false);
   const gateSaving = useRef(false);
   const automationDirty = useRef(initialDraft?.automationDirty ?? false);
+  const automationSavingRef = useRef(false);
+  const duplicateGuardSaved = useRef<number | null>(null);
+  const globalAutomationExists = useRef(false);
+  const autoImageValidation = useRef(new Set<string>());
+  const autoUploadCache = useRef(new Map<string, WeakMap<File, string>>());
+  const staffDrafts = useRef(new Map<string, { value: StaffAutomation; newImages: File[]; absenceImages: File[]; dirty: boolean }>());
+  const automationAccess = useRef({ firmId, allowed: false });
   const pendingRef = useRef<SendRequest | null>(initialDraft?.pendingRequest ?? null);
   const loadSequence = useRef(0);
   const deliverySequence = useRef(0);
@@ -152,6 +161,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   const canSend = can("sms.send");
   const canHistory = can("sms.view_history");
   const canManage = can("sms.manage_settings");
+  automationAccess.current = { firmId, allowed: canManage };
   const liveReady = !!delivery && !deliveryLoading && !deliverySaving && !deliveryError && delivery.globalReady !== false && delivery.gate.liveEnabled && !!delivery.gate.epochId;
   const latestDraft = useRef<SmsDraft | null>(null);
   latestDraft.current = { tab, senderId, recipients, manualName, manualPhone, bulkText, title, message, images, reservedAt, automation, automationStaff, staffAutomation, newLeadAutoImages, absenceAutoImages, newSender, newTemplate, pendingRequest, automationDirty: automationDirty.current };
@@ -287,24 +297,38 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
   }, [canSend, canHistory, canManage, tab]);
 
   const load = useCallback(async () => {
-    if (!firmId) return;
+    if (!firmId || automationSavingRef.current) return;
     const sequence = ++loadSequence.current;
-    const [senderRes, templateRes, autoRes, staffAutoRes] = await Promise.all([
-      supabase.from("sms_sender_numbers").select("*").eq("law_firm_id", firmId).order("is_default", { ascending:false }).order("staff_name"),
-      supabase.from("sms_templates").select("id,name,category,body").eq("law_firm_id", firmId).order("created_at"),
-      supabase.from("sms_automation_settings").select("new_lead_enabled,absence_enabled,new_lead_template,absence_template,duplicate_guard_minutes").eq("law_firm_id", firmId).maybeSingle(),
-      supabase.from("sms_staff_automation_settings").select("id,staff_name,sender_number_id,new_lead_enabled,absence_enabled,new_lead_template,absence_template,new_lead_image_paths,absence_image_paths").eq("law_firm_id", firmId).order("staff_name"),
-    ]);
-    if (!mounted.current || sequence !== loadSequence.current) return;
-    if (senderRes.error) setNotice(senderRes.error.message);
-    else {
-      const rows = (senderRes.data ?? []) as Sender[];
-      setSenders(rows);
-      setSenderId((prev) => prev || rows.find((s) => s.staff_name === profile?.staffName)?.id || rows.find((s) => s.is_default)?.id || rows[0]?.id || "");
+    setAutomationLoading(true); setAutomationLoadError("");
+    try {
+      const [senderRes, templateRes, autoRes, staffAutoRes] = await Promise.all([
+        supabase.from("sms_sender_numbers").select("*").eq("law_firm_id", firmId).order("is_default", { ascending:false }).order("staff_name"),
+        supabase.from("sms_templates").select("id,name,category,body").eq("law_firm_id", firmId).order("created_at"),
+        supabase.from("sms_automation_settings").select("new_lead_enabled,absence_enabled,new_lead_template,absence_template,duplicate_guard_minutes").eq("law_firm_id", firmId).maybeSingle(),
+        supabase.from("sms_staff_automation_settings").select(STAFF_AUTOMATION_COLUMNS).eq("law_firm_id", firmId).order("staff_name"),
+      ]);
+      if (!mounted.current || sequence !== loadSequence.current) return;
+      if (senderRes.error) setNotice(senderRes.error.message);
+      else {
+        const rows = (senderRes.data ?? []) as Sender[];
+        setSenders(rows);
+        setSenderId((prev) => prev || rows.find((s) => s.staff_name === profile?.staffName)?.id || rows.find((s) => s.is_default)?.id || rows[0]?.id || "");
+      }
+      if (!templateRes.error) setTemplates((templateRes.data ?? []) as Template[]);
+      if (senderRes.error) throw senderRes.error;
+      if (autoRes.error) throw autoRes.error;
+      if (staffAutoRes.error) throw staffAutoRes.error;
+      if (!Array.isArray(staffAutoRes.data) || !staffAutoRes.data.every(row => isStaffAutomation(row, firmId))) throw new Error("담당자 자동발송 설정 응답을 확인하지 못했습니다.");
+      const savedGuard = autoRes.data?.duplicate_guard_minutes ?? 5;
+      duplicateGuardSaved.current = savedGuard;
+      globalAutomationExists.current = !!autoRes.data;
+      if (autoRes.data && !automationDirty.current) setAutomation(autoRes.data as Automation);
+      setStaffAutomationRows(staffAutoRes.data as StaffAutomation[]);
+    } catch (error) {
+      if (mounted.current && sequence === loadSequence.current) setAutomationLoadError(`${automationError(error, "자동발송 설정을 읽지 못했습니다.")} 작성한 내용은 유지됩니다. 다시 불러온 뒤 저장해주세요.`);
+    } finally {
+      if (mounted.current && sequence === loadSequence.current) setAutomationLoading(false);
     }
-    if (!templateRes.error) setTemplates((templateRes.data ?? []) as Template[]);
-    if (autoRes.data && !automationDirty.current) setAutomation(autoRes.data as Automation);
-    if (!staffAutoRes.error) setStaffAutomationRows((staffAutoRes.data ?? []) as StaffAutomation[]);
   }, [firmId, profile?.staffName, supabase]);
 
   useEffect(() => { void load(); }, [load]);
@@ -315,7 +339,15 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       if (first) setAutomationStaff(first);
       return;
     }
+    if (automationSavingRef.current || automationLoading || automationLoadError) return;
     if (automationDirty.current && staffAutomation.staff_name === automationStaff) return;
+    const cached = staffDrafts.current.get(automationStaff);
+    if (cached?.dirty) {
+      automationDirty.current = true;
+      setStaffAutomation(cached.value); setNewLeadAutoImages(cached.newImages); setAbsenceAutoImages(cached.absenceImages);
+      return;
+    }
+    automationDirty.current = false;
     const saved = staffAutomationRows.find((row) => row.staff_name === automationStaff);
     const mappedSender = senders.find((row) => row.staff_name === automationStaff && row.is_active);
     setStaffAutomation(saved ?? {
@@ -330,7 +362,32 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     });
     setNewLeadAutoImages([]);
     setAbsenceAutoImages([]);
-  }, [automationStaff, staffAutomationRows, senders, automation, profile?.staffName, workStaffNames]);
+  }, [automationStaff, staffAutomationRows, senders, automation, profile?.staffName, workStaffNames, automationLoading, automationLoadError]);
+
+  function changeAutomationStaff(name: string) {
+    if (automationSavingRef.current || automationLoading) return;
+    staffDrafts.current.set(automationStaff, { value: staffAutomation, newImages: newLeadAutoImages, absenceImages: absenceAutoImages, dirty: automationDirty.current });
+    setAutomationStaff(name);
+  }
+
+  function editStaffAutomation(patch: Partial<StaffAutomation>) {
+    if (automationSavingRef.current || !automationAccess.current.allowed) return;
+    automationDirty.current = true;
+    setStaffAutomation(previous => ({ ...previous, ...patch }));
+  }
+
+  const setImageValidation = useCallback((kind: string, active: boolean) => {
+    if (active) autoImageValidation.current.add(kind); else autoImageValidation.current.delete(kind);
+    if (mounted.current) setAutomationImagesValidating(autoImageValidation.current.size > 0);
+  }, []);
+  const onNewLeadValidation = useCallback((active: boolean) => setImageValidation("new_lead", active), [setImageValidation]);
+  const onAbsenceValidation = useCallback((active: boolean) => setImageValidation("absence", active), [setImageValidation]);
+
+  const resolveAutoImage = useCallback(async (path: string) => {
+    if (!firmId || !validAutomationImagePaths([path], firmId) || !automationAccess.current.allowed) return null;
+    const { data, error } = await supabase.storage.from("sms-media").createSignedUrl(path, 300);
+    return error ? null : data?.signedUrl ?? null;
+  }, [firmId, supabase]);
 
   function addManual() {
     if (sending.current || pendingRef.current) return;
@@ -446,56 +503,87 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     } finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
 
-  async function uploadAutoImages(files: File[], kind: "new-lead" | "absence") {
+  async function uploadAutoImages(files: File[], kind: "new-lead" | "absence", staffName: string) {
     if (!firmId || !files.length) return [] as string[];
+    await validateAutomationImageFiles(files);
     const paths: string[] = [];
-    for (const file of files.slice(0, 3)) {
-      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = `${firmId}/auto/${automationStaff}/${kind}/${Date.now()}-${Math.random().toString(36).slice(2)}-${safe}`;
+    const cacheKey = `${firmId}:${staffName}:${kind}`;
+    const uploaded = autoUploadCache.current.get(cacheKey) ?? new WeakMap<File, string>();
+    autoUploadCache.current.set(cacheKey, uploaded);
+    for (const file of files) {
+      if (!mounted.current || !automationAccess.current.allowed || automationAccess.current.firmId !== firmId) throw new Error("화면 또는 권한이 변경되어 저장을 중단했습니다.");
+      const cached = uploaded.get(file);
+      if (cached) { paths.push(cached); continue; }
+      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100);
+      const safeStaff = staffName.replace(/[\\/\x00-\x1f\x7f?#%]/g, "_").slice(0, 80);
+      const path = `${firmId}/auto/${safeStaff}/${kind}/${crypto.randomUUID()}-${safe}`;
       const { error } = await supabase.storage.from("sms-media").upload(path, file, { upsert:false });
       if (error) throw error;
+      uploaded.set(file, path);
       paths.push(path);
     }
     return paths;
   }
 
   async function saveAutomation() {
-    if (!firmId || !automationStaff) { setNotice("자동발송을 설정할 영업자를 선택해주세요."); return; }
-    setBusy(true); setNotice("");
+    if (automationSavingRef.current) return;
+    if (autoImageValidation.current.size) { setNotice("이미지 형식과 용량 확인이 끝난 뒤 저장해주세요."); return; }
+    if (!canManage || !automationAccess.current.allowed) { setNotice("자동발송 설정을 저장할 권한이 없습니다."); return; }
+    if (!firmId || !automationStaff || staffAutomation.staff_name !== automationStaff) { setNotice("자동발송을 설정할 영업자를 선택해주세요."); return; }
+    if (automationLoading || automationLoadError || duplicateGuardSaved.current === null) { setNotice("기존 자동발송 설정을 먼저 불러와주세요. 작성한 내용은 유지됩니다."); return; }
+    if (!Number.isInteger(automation.duplicate_guard_minutes) || automation.duplicate_guard_minutes < 0 || automation.duplicate_guard_minutes > 60) { setNotice("중복발송 방지 시간은 0~60분의 정수로 입력해주세요."); return; }
+    if ((staffAutomation.new_lead_enabled && !staffAutomation.new_lead_template.trim()) || (staffAutomation.absence_enabled && !staffAutomation.absence_template.trim())) { setNotice("자동발송을 사용할 문구를 입력해주세요."); return; }
+    if (staffAutomation.sender_number_id && !senders.some(sender => sender.id === staffAutomation.sender_number_id && sender.is_active)) { setNotice("현재 로펌의 활성 발신번호를 선택해주세요."); return; }
+    if ((!newLeadAutoImages.length && !validAutomationImagePaths(staffAutomation.new_lead_image_paths, firmId)) || (!absenceAutoImages.length && !validAutomationImagePaths(staffAutomation.absence_image_paths, firmId))) { setNotice("기존 첨부 이미지의 형식 또는 경로를 확인해주세요. 해당 이미지를 제거하거나 JPEG·PNG·GIF 파일로 다시 선택한 뒤 저장해주세요."); return; }
+    automationSavingRef.current = true; automationDirty.current = true;
+    loadSequence.current++; // An older read must not replace this acknowledged save.
+    setAutomationSaving(true); setNotice("");
+    let staffConfirmed = false;
     try {
+      await Promise.all([validateAutomationImageFiles(newLeadAutoImages), validateAutomationImageFiles(absenceAutoImages)]);
       const [newLeadUploaded, absenceUploaded] = await Promise.all([
-        uploadAutoImages(newLeadAutoImages, "new-lead"),
-        uploadAutoImages(absenceAutoImages, "absence"),
+        uploadAutoImages(newLeadAutoImages, "new-lead", automationStaff),
+        uploadAutoImages(absenceAutoImages, "absence", automationStaff),
       ]);
-      const newLeadPaths = newLeadAutoImages.length ? newLeadUploaded : staffAutomation.new_lead_image_paths;
-      const absencePaths = absenceAutoImages.length ? absenceUploaded : staffAutomation.absence_image_paths;
-
-      const { error: globalError } = await supabase.from("sms_automation_settings").upsert({
-        law_firm_id: firmId, ...automation, updated_by: profile?.id ?? null
-      }, { onConflict:"law_firm_id" });
-      if (globalError) throw globalError;
-
-      const { error } = await supabase.from("sms_staff_automation_settings").upsert({
-        law_firm_id: firmId,
-        staff_name: automationStaff,
-        sender_number_id: staffAutomation.sender_number_id || null,
-        new_lead_enabled: staffAutomation.new_lead_enabled,
-        absence_enabled: staffAutomation.absence_enabled,
-        new_lead_template: staffAutomation.new_lead_template,
-        absence_template: staffAutomation.absence_template,
-        new_lead_image_paths: newLeadPaths,
-        absence_image_paths: absencePaths,
-        updated_by: profile?.id ?? null,
-        updated_at: new Date().toISOString(),
-      }, { onConflict:"law_firm_id,staff_name" });
+      if (!mounted.current || !automationAccess.current.allowed || automationAccess.current.firmId !== firmId) return;
+      const expected: StaffAutomation = {
+        ...staffAutomation, staff_name: automationStaff,
+        new_lead_image_paths: newLeadAutoImages.length ? newLeadUploaded : staffAutomation.new_lead_image_paths,
+        absence_image_paths: absenceAutoImages.length ? absenceUploaded : staffAutomation.absence_image_paths,
+      };
+      const { id: _id, ...values } = expected;
+      const { data, error } = await supabase.from("sms_staff_automation_settings").upsert({
+        ...values, law_firm_id: firmId, updated_by: profile?.id ?? null, updated_at: new Date().toISOString(),
+      }, { onConflict:"law_firm_id,staff_name" }).select(STAFF_AUTOMATION_COLUMNS).single();
       if (error) throw error;
+      if (!confirmedStaffAutomation(data, expected, firmId)) throw new Error("저장된 담당자 설정을 확인하지 못했습니다. 작성한 내용은 유지됩니다.");
+      staffConfirmed = true;
+      if (!mounted.current || !automationAccess.current.allowed || automationAccess.current.firmId !== firmId) return;
+      // Use the acknowledged row directly, never stale rows/defaults from a broad reload.
+      setStaffAutomationRows(rows => [...rows.filter(row => row.staff_name !== automationStaff), data]);
+      setStaffAutomation(data); setNewLeadAutoImages([]); setAbsenceAutoImages([]);
+      if (automation.duplicate_guard_minutes !== duplicateGuardSaved.current) {
+        // This control is firm-wide. Do not overwrite global templates or enable flags.
+        const commonValues = { duplicate_guard_minutes: automation.duplicate_guard_minutes, updated_by: profile?.id ?? null, updated_at: new Date().toISOString() };
+        const commonQuery = globalAutomationExists.current
+          ? supabase.from("sms_automation_settings").update(commonValues).eq("law_firm_id", firmId)
+          : supabase.from("sms_automation_settings").insert({ ...commonValues, law_firm_id: firmId, new_lead_enabled: false, absence_enabled: false });
+        const { data: globalData, error: globalError } = await commonQuery.select("law_firm_id,duplicate_guard_minutes").single();
+        if (globalError) throw globalError;
+        if (globalData?.law_firm_id !== firmId || globalData.duplicate_guard_minutes !== automation.duplicate_guard_minutes) throw new Error("중복발송 방지 시간 저장을 확인하지 못했습니다.");
+        duplicateGuardSaved.current = globalData.duplicate_guard_minutes;
+        globalAutomationExists.current = true;
+      }
+      if (!mounted.current || !automationAccess.current.allowed || automationAccess.current.firmId !== firmId) return;
       automationDirty.current = false;
-      setNewLeadAutoImages([]); setAbsenceAutoImages([]);
-      setNotice(`${automationStaff} 자동발송 문구·이미지 설정을 저장했습니다.`);
-      await load();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : "자동발송 설정 저장에 실패했습니다.");
-    } finally { setBusy(false); }
+      staffDrafts.current.delete(automationStaff);
+      setNotice(`${automationStaff} 자동발송 문구·체크 상태·이미지 설정을 저장했습니다.`);
+    } catch (error) {
+      if (mounted.current) setNotice(`${staffConfirmed ? "담당자 문구·체크 상태·이미지는 저장되었지만, 공통 중복발송 방지 시간은 저장하지 못했습니다. " : "자동발송 설정 저장을 확인하지 못했습니다. "}${automationError(error, "잠시 후 다시 시도해주세요.")} 작성한 내용은 유지됩니다.`);
+    } finally {
+      automationSavingRef.current = false;
+      if (mounted.current) setAutomationSaving(false);
+    }
   }
 
   async function addSender() {
@@ -561,7 +649,7 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       {tabs.map(([id,label,icon]) => <button key={id} onClick={()=>setTab(id)} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold ${tab===id?"bg-slate-900 text-white":"text-slate-500 hover:bg-slate-50"}`}>{icon}{label}</button>)}
     </div>
 
-    {notice && <div className="flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700"><span>{notice}</span><button onClick={()=>setNotice("")}><X size={15}/></button></div>}
+    {notice && <div role="status" className="flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700"><span>{notice}</span><button onClick={()=>setNotice("")}><X size={15}/></button></div>}
     {(deliveryError || delivery?.disabledReason) && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{deliveryError || delivery?.disabledReason}</p>}
     {pendingRequest && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">이전 요청의 접수 여부를 확인해야 합니다. 작성한 내용을 유지하고 동일 요청 ID로 확인합니다. 새 요청을 추가하지 않습니다.</div>}
 
@@ -700,57 +788,60 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
     {tab === "automation" && canManage && <div className="space-y-5">
       <DeliveryControls state={delivery} loading={deliveryLoading} saving={deliverySaving} error={deliveryError} onRefresh={()=>void loadDelivery()} onSave={saveDelivery}/>
       <p className="text-sm leading-6 text-slate-600">아래 문구·이미지를 저장해도 자동발송은 켜지지 않습니다. 서버의 자동발송 활성 상태와 담당자별 선택이 모두 켜져 있어야 새 요청을 등록합니다.</p>
-      <div className="space-y-5" onChangeCapture={()=>{ automationDirty.current = true; }}>
+      {automationLoading && <p role="status" className="text-sm text-slate-500">기존 자동발송 설정을 불러오는 중입니다.</p>}
+      {automationLoadError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{automationLoadError}<button type="button" onClick={()=>void load()} className="ml-3 font-bold underline">설정 다시 불러오기</button></div>}
+      <fieldset disabled={automationSaving || automationLoading || !!automationLoadError} className="min-w-0 space-y-5">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div><h2 className="font-black text-slate-900">영업자별 자동발송 설정</h2><p className="mt-1 text-xs text-slate-400">영업자마다 신규 DB·부재중 문구와 이미지를 각각 다르게 지정합니다.</p></div>
           <label className="w-full text-xs font-bold text-slate-500 lg:w-72">설정할 영업자
-            <select value={automationStaff} onChange={(e)=>setAutomationStaff(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800">
+            <select aria-label="설정할 영업자" value={automationStaff} onChange={(e)=>changeAutomationStaff(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800">
               <option value="">영업자 선택</option>{workStaffNames.map((name)=><option key={name} value={name}>{name}</option>)}
             </select>
           </label>
         </div>
         {automationStaff && <div className="mt-4 grid gap-3 md:grid-cols-2">
           <label className="text-xs font-bold text-slate-500">자동발송 발신번호
-            <select value={staffAutomation.sender_number_id ?? ""} onChange={(e)=>setStaffAutomation((p)=>({...p,sender_number_id:e.target.value||null}))} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">
+            <select value={staffAutomation.sender_number_id ?? ""} onChange={(e)=>editStaffAutomation({sender_number_id:e.target.value||null})} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">
               <option value="">담당자 매핑 번호 자동사용</option>{senders.filter((s)=>s.is_active).map((s)=><option key={s.id} value={s.id}>{s.staff_name} · {s.label} · {prettyPhone(s.phone)}</option>)}
             </select>
           </label>
           <label className="text-xs font-bold text-slate-500">부재중 중복발송 방지
-            <div className="mt-1 flex h-11 items-center gap-2 rounded-xl border border-slate-200 px-3"><input type="number" min={0} max={60} value={automation.duplicate_guard_minutes} onChange={(e)=>setAutomation((p)=>({...p,duplicate_guard_minutes:Number(e.target.value)||0}))} className="w-20 bg-transparent text-sm outline-none"/><span className="text-sm font-normal text-slate-500">분</span></div>
+            <div className="mt-1 flex h-11 items-center gap-2 rounded-xl border border-slate-200 px-3"><input type="number" min={0} max={60} value={automation.duplicate_guard_minutes} aria-label="부재중 중복발송 방지 시간" onChange={(e)=>{automationDirty.current=true;setAutomation((p)=>({...p,duplicate_guard_minutes:Number(e.target.value)}));}} className="w-20 bg-transparent text-sm outline-none"/><span className="text-sm font-normal text-slate-500">분</span></div>
           </label>
         </div>}
       </section>
 
       {automationStaff && <div className="grid gap-5 xl:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black">신규 DB 즉시문자 · {automationStaff}</h2><p className="text-xs text-slate-400">DB 입고 후 담당 배정 시 자동 등록</p></div><input type="checkbox" checked={staffAutomation.new_lead_enabled} onChange={(e)=>setStaffAutomation((p)=>({...p,new_lead_enabled:e.target.checked}))} className="size-5"/></div>
+          <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black">신규 DB 즉시문자 · {automationStaff}</h2><p className="text-xs text-slate-400">DB 입고 후 담당 배정 시 자동 등록</p></div><input type="checkbox" aria-label="신규 DB 자동발송 사용" checked={staffAutomation.new_lead_enabled} onChange={(e)=>editStaffAutomation({new_lead_enabled:e.target.checked})} className="size-5"/></div>
           <label className="block text-xs font-bold text-slate-500">저장 문구 불러오기
-            <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)setStaffAutomation((p)=>({...p,new_lead_template:t.body}));}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
+            <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)editStaffAutomation({new_lead_template:t.body});}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
           </label>
-          <textarea value={staffAutomation.new_lead_template} onChange={(e)=>setStaffAutomation((p)=>({...p,new_lead_template:e.target.value}))} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
+          <textarea aria-label="신규 DB 자동발송 문구" value={staffAutomation.new_lead_template} onChange={(e)=>editStaffAutomation({new_lead_template:e.target.value})} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
           <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"} · 시간 미입력은 ‘미지정’. 이 담당자의 오픈채팅 링크는 문구에 직접 넣어주세요.</div>
-          <label className="mt-4 flex min-h-24 cursor-pointer items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm font-bold text-slate-600"><ImagePlus size={20}/> 자동발송 이미지 ({newLeadAutoImages.length || staffAutomation.new_lead_image_paths.length}/3)<input type="file" accept="image/jpeg,image/png,image/gif" multiple className="hidden" onChange={(e)=>setNewLeadAutoImages(Array.from(e.target.files??[]).slice(0,3))}/></label>
-          {(newLeadAutoImages.length>0 || staffAutomation.new_lead_image_paths.length>0) && <div className="mt-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{newLeadAutoImages.length>0 ? newLeadAutoImages.map((f)=><div key={f.name}>새 이미지 · {f.name}</div>) : staffAutomation.new_lead_image_paths.map((path)=><div key={path}>저장됨 · {path.split("/").pop()}</div>)}<button onClick={()=>{automationDirty.current=true;setNewLeadAutoImages([]);setStaffAutomation((p)=>({...p,new_lead_image_paths:[]}));}} className="mt-2 font-bold text-red-500">이미지 제거</button></div>}
+          <AutomationImagePicker key={`${firmId}:${automationStaff}:new_lead`} label="신규 DB 자동발송 이미지" onValidationChange={onNewLeadValidation} files={newLeadAutoImages} savedPaths={staffAutomation.new_lead_image_paths} disabled={automationSaving || automationLoading || !!automationLoadError} resolveSavedUrl={resolveAutoImage}
+            onFilesChange={files=>{automationDirty.current=true;setNewLeadAutoImages(files);}} onSavedPathsChange={paths=>editStaffAutomation({new_lead_image_paths:paths})}/>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black">부재중 자동문자 · {automationStaff}</h2><p className="text-xs text-slate-400">상담일지에서 부재중 기록 추가 시 자동 등록</p></div><input type="checkbox" checked={staffAutomation.absence_enabled} onChange={(e)=>setStaffAutomation((p)=>({...p,absence_enabled:e.target.checked}))} className="size-5"/></div>
+          <div className="mb-4 flex items-center justify-between"><div><h2 className="font-black">부재중 자동문자 · {automationStaff}</h2><p className="text-xs text-slate-400">상담일지에서 부재중 기록 추가 시 자동 등록</p></div><input type="checkbox" aria-label="부재중 자동발송 사용" checked={staffAutomation.absence_enabled} onChange={(e)=>editStaffAutomation({absence_enabled:e.target.checked})} className="size-5"/></div>
           <label className="block text-xs font-bold text-slate-500">저장 문구 불러오기
-            <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)setStaffAutomation((p)=>({...p,absence_template:t.body}));}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
+            <select defaultValue="" onChange={(e)=>{const t=templates.find((x)=>x.id===e.target.value);if(t)editStaffAutomation({absence_template:t.body});}} className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">문구 선택</option>{templates.map((t)=><option key={t.id} value={t.id}>{t.category} · {t.name}</option>)}</select>
           </label>
-          <textarea value={staffAutomation.absence_template} onChange={(e)=>setStaffAutomation((p)=>({...p,absence_template:e.target.value}))} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
+          <textarea aria-label="부재중 자동발송 문구" value={staffAutomation.absence_template} onChange={(e)=>editStaffAutomation({absence_template:e.target.value})} className="mt-3 min-h-36 w-full rounded-xl border border-slate-200 p-4 text-sm leading-6"/>
           <div className="mt-2 text-xs text-slate-400">치환값: {"{고객명}"} · {"{담당자}"} · {"{상담시간대}"} · 시간 미입력은 ‘미지정’. 이 담당자의 오픈채팅 링크는 문구에 직접 넣어주세요.</div>
-          <label className="mt-4 flex min-h-24 cursor-pointer items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm font-bold text-slate-600"><ImagePlus size={20}/> 자동발송 이미지 ({absenceAutoImages.length || staffAutomation.absence_image_paths.length}/3)<input type="file" accept="image/jpeg,image/png,image/gif" multiple className="hidden" onChange={(e)=>setAbsenceAutoImages(Array.from(e.target.files??[]).slice(0,3))}/></label>
-          {(absenceAutoImages.length>0 || staffAutomation.absence_image_paths.length>0) && <div className="mt-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{absenceAutoImages.length>0 ? absenceAutoImages.map((f)=><div key={f.name}>새 이미지 · {f.name}</div>) : staffAutomation.absence_image_paths.map((path)=><div key={path}>저장됨 · {path.split("/").pop()}</div>)}<button onClick={()=>{automationDirty.current=true;setAbsenceAutoImages([]);setStaffAutomation((p)=>({...p,absence_image_paths:[]}));}} className="mt-2 font-bold text-red-500">이미지 제거</button></div>}
+          <AutomationImagePicker key={`${firmId}:${automationStaff}:absence`} label="부재중 자동발송 이미지" onValidationChange={onAbsenceValidation} files={absenceAutoImages} savedPaths={staffAutomation.absence_image_paths} disabled={automationSaving || automationLoading || !!automationLoadError} resolveSavedUrl={resolveAutoImage}
+            onFilesChange={files=>{automationDirty.current=true;setAbsenceAutoImages(files);}} onSavedPathsChange={paths=>editStaffAutomation({absence_image_paths:paths})}/>
         </section>
 
         <section className="xl:col-span-2 rounded-2xl border border-blue-100 bg-blue-50 p-5">
           <div className="flex gap-3"><CheckCircle2 className="mt-0.5 shrink-0 text-blue-600"/><div className="text-sm text-blue-900"><b>영업자별 자동발송 우선 적용</b><div className="mt-1 leading-6 text-blue-700">DB 담당자 이름과 일치하는 설정이 있으면 해당 영업자의 문구·이미지·발신번호를 사용합니다. 별도 설정이 없는 영업자는 기존 로펌 기본 문구와 담당자 매핑 발신번호를 사용합니다. 이미지가 있으면 MMS 대기열로 등록됩니다.</div></div></div>
         </section>
-        {canManage && <button disabled={busy} onClick={()=>void saveAutomation()} className="xl:col-span-2 h-12 rounded-xl bg-slate-900 text-sm font-black text-white">{busy?"저장 중...":`${automationStaff} 자동발송 설정 저장`}</button>}
+        {automationImagesValidating && <p role="status" className="xl:col-span-2 text-sm text-blue-700">이미지를 확인하고 있습니다. 확인이 끝나면 설정을 저장할 수 있습니다.</p>}
+        {canManage && <button disabled={automationSaving || automationLoading || !!automationLoadError || automationImagesValidating} onClick={()=>void saveAutomation()} className="xl:col-span-2 h-12 rounded-xl bg-slate-900 text-sm font-black text-white">{automationSaving?"저장 중...":`${automationStaff} 자동발송 설정 저장`}</button>}
       </div>}
-      </div>
+      </fieldset>
     </div>}
 
     {tab === "settings" && canManage && <div className="grid gap-5 xl:grid-cols-2">
@@ -771,7 +862,20 @@ export function SmsFirmWorkspace({ initialDraft, onDraftChange, initialRecipient
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4"><h2 className="flex items-center gap-2 font-black"><BookOpen size={17}/> 문구 템플릿</h2><p className="text-xs text-slate-400">템플릿명·분류·내용 입력 → 문구 저장 → 문자 보내기의 저장 문구에서 선택합니다.</p></div>
         <div className="mb-4 rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-900">고객명은 {"{고객명}"}, 신청 시간대는 {"{상담시간대}"}로 입력하세요. 담당자마다 다른 오픈채팅 링크는 담당자 이름을 붙인 문구에 각각 넣어 저장하면 됩니다. 자동발송에는 ‘자동발송’ 탭에서 담당자를 선택하고 해당 문구를 불러와 별도로 저장하세요. 문구 저장만으로 자동발송이 켜지거나 이전 문자가 재발송되지 않습니다.</div>
-        <div className="space-y-2">{templates.map((t)=><div key={t.id} className="rounded-xl border border-slate-100 p-3"><div className="flex items-center justify-between"><div><span className="mr-2 rounded bg-slate-100 px-2 py-1 text-[10px] font-bold">{t.category}</span><b className="text-sm">{t.name}</b></div>{canManage&&<button onClick={()=>void deleteTemplate(t.id)} className="text-red-400"><Trash2 size={15}/></button>}</div><div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-500">{t.body}</div><button disabled={busy || !!pendingRequest || !canSend} onClick={()=>{if(sending.current || pendingRef.current)return;setMessage(t.body);setTab("send");}} className="mt-2 text-xs font-bold text-blue-600 disabled:opacity-40">이 문구로 보내기</button></div>)}</div>
+        <ul className="space-y-2" aria-label="문구 템플릿 목록">{templates.map((t)=>{
+          const expanded = expandedTemplate === t.id;
+          return <li key={t.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <h3><button type="button" id={`template-heading-${t.id}`} aria-expanded={expanded} aria-controls={`template-panel-${t.id}`} onClick={()=>setExpandedTemplate(expanded ? null : t.id)} className="flex w-full items-center gap-3 p-4 text-left hover:bg-slate-50 focus-visible:outline-blue-500">
+              <span className="shrink-0 rounded bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">{t.category}</span><span className="min-w-0 flex-1 break-words text-sm font-bold">{t.name}</span><ChevronDown aria-hidden="true" size={17} className={`shrink-0 text-slate-400 transition-transform ${expanded ? "rotate-180" : ""}`}/>
+            </button></h3>
+            <div id={`template-panel-${t.id}`} role="region" aria-labelledby={`template-heading-${t.id}`} hidden={!expanded} className="border-t border-slate-100 px-4 pb-4">
+              <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{t.body}</p>
+              <div className="mt-3 flex items-center justify-between gap-3"><button type="button" disabled={busy || !!pendingRequest || !canSend} onClick={()=>{if(sending.current || pendingRef.current)return;setMessage(t.body);setTab("send");}} className="text-xs font-bold text-blue-600 disabled:opacity-40">이 문구로 보내기</button>
+              {canManage && <button type="button" onClick={()=>void deleteTemplate(t.id)} aria-label={`${t.name} 템플릿 삭제`} className="flex items-center gap-1 text-xs font-bold text-red-500"><Trash2 size={14}/>삭제</button>}</div>
+            </div>
+          </li>;
+        })}</ul>
+        {!templates.length && <p className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-400">저장된 문구 템플릿이 없습니다.</p>}
         {canManage && <div className="mt-4 rounded-xl bg-slate-50 p-3">
           <div className="grid grid-cols-[1fr_110px] gap-2"><input value={newTemplate.name} onChange={(e)=>setNewTemplate((p)=>({...p,name:e.target.value}))} placeholder="템플릿명" className="h-10 rounded-lg border border-slate-200 px-3 text-sm"/><select value={newTemplate.category} onChange={(e)=>setNewTemplate((p)=>({...p,category:e.target.value}))} className="h-10 rounded-lg border border-slate-200 bg-white px-2 text-sm"><option>일반</option><option>상담</option><option>분납</option><option>서류</option><option>공지</option></select></div>
           <textarea value={newTemplate.body} onChange={(e)=>setNewTemplate((p)=>({...p,body:e.target.value}))} placeholder="저장할 문구" className="mt-2 min-h-24 w-full rounded-lg border border-slate-200 p-3 text-sm"/>

@@ -6,7 +6,7 @@ import { AlertTriangle, CalendarClock, CheckCircle2, CircleDollarSign, FileSigna
 import { useStore } from "@/lib/store";
 import { firstByKey } from "@/lib/list-indexes";
 import { DB_LEAD_DEFAULT_STAGE_BY_STATUS, type DbLead } from "@/lib/types";
-import { checkCallWarning, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
+import { checkCallWarning, dailyContactThreshold, checkPeriodicContactWarning, kstDateStr } from "@/lib/consultation";
 import { activeMemoEntries } from "@/lib/consultation-memos";
 import {
   DEFAULT_MANAGEMENT_SETTINGS,
@@ -35,7 +35,7 @@ function monthRange(){const d=new Date();const y=d.getFullYear(),m=d.getMonth()+
 function stageOf(lead:DbLead){return lead.detailStage??DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status]}
 function terminalLead(lead:DbLead){return !!lead.convertedClientId||["거절","부적합","종결_중단"].includes(lead.status)}
 function greetingCompletedToday(lead:DbLead,today:string){const received=new Date(lead.receivedAt);if(!Number.isFinite(received.getTime())||kstDateStr(received)!==today)return false;return activeMemoEntries(lead.consultation?.memoLog).some(e=>{const at=new Date(e.at);return Number.isFinite(at.getTime())&&kstDateStr(at)===today&&/(문자|인사)/.test(e.text)&&/(완료|발송|안내)/.test(e.text)})}
-function leadNeedsContact(lead:DbLead,today:string){if(lead.convertedClientId)return false;const s=stageOf(lead);if(s==="장기부재")return checkPeriodicContactWarning(lead.consultation?.memoLog,today,3).active;if(s==="착수금 안내")return checkCallWarning(lead.consultation?.memoLog,today,1).active;if(s==="미상담"||s==="부재")return checkCallWarning(lead.consultation?.memoLog,today,2).active;return false}
+function leadNeedsContact(lead:DbLead,today:string){if(lead.convertedClientId)return false;const s=stageOf(lead);if(s==="장기부재")return checkPeriodicContactWarning(lead.consultation?.memoLog,today,3).active;if(s==="착수금 안내"||s==="미상담"||s==="부재")return checkCallWarning(lead.consultation?.memoLog,today,dailyContactThreshold(s)).active;return false}
 function settingsForFirm(map:Record<string,ManagementSettings>,firmId?:string,fallback?:ManagementSettings){return firmId&&map[firmId]?map[firmId]:(fallback||DEFAULT_MANAGEMENT_SETTINGS)}
 
 export default function FirmDashboard(){

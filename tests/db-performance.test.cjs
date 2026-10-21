@@ -14,7 +14,11 @@ const renderer = require(path.join(runtime, 'react-test-renderer'));
 const jsx = require(path.join(runtime, 'react/jsx-runtime'));
 const ts = require(path.join(root, 'node_modules/typescript'));
 const BASELINE = '6acb7b9473fec6d36e5a20eda0ae1695bec7a131';
-const baseline = execFileSync('git', ['show', `${BASELINE}:app/db/page.tsx`], { cwd: root, encoding: 'utf8' });
+// Normalize only the explicitly requested contact threshold/tooltip change in the
+// historical baseline. All other controls, warning calculations and data remain compared.
+const baseline = execFileSync('git', ['show', `${BASELINE}:app/db/page.tsx`], { cwd: root, encoding: 'utf8' })
+  .replace('const threshold = stage === "착수금 안내" ? 1 : 2;', 'const threshold = stage === "미상담" || stage === "착수금 안내" ? 1 : 2;')
+  .replace('title: stage === "착수금 안내" ? "착수금 안내 고객은 하루 1회 컨택이 필요합니다." : "미상담/부재 고객은 하루 2회 컨택이 필요합니다.",', 'title: `${stage} 고객은 하루 ${threshold}회 컨택이 필요합니다.`,');
 const current = fs.readFileSync(path.join(root, 'app/db/page.tsx'), 'utf8');
 const clean = (value) => JSON.parse(JSON.stringify(value));
 
@@ -84,6 +88,9 @@ function createHarness(source, options = {}) {
     if (name === 'lucide-react') return new Proxy({}, { get:(_target,key)=>()=>h('i', {'data-icon':key}) });
     if (name === '@/lib/store') return { useStore:()=>store };
     if (name === '@/components/ui/Primitives') return primitives;
+    // Scroll geometry has its own actual-component tests; this suite compares
+    // every DB control/data calculation against the historical baseline.
+    if (name === '@/components/ui/BottomHorizontalScrollbar') return { BottomHorizontalScrollbar: () => null };
     if (name === '@/components/ui/ConfirmDelete') return { ConfirmDelete:({open,name,onClose,onConfirm})=>open?h('section',{'data-delete':name},h('button',{onClick:onClose},'취소'),h('button',{onClick:onConfirm},'삭제 확인')):null };
     if (name === '@/components/ui/consultation/ConsultationModal') return { ConsultationModal:({open,displayName,onClose,applicationType,reservationAt,readOnly})=>open?h('section',{'data-consultation':displayName,'data-direction':applicationType,'data-reservation':reservationAt,'data-readonly':readOnly},h('button',{onClick:onClose},'상담 닫기')):null };
     const names = { './types':'lib/types.ts', '@/lib/types':'lib/types.ts', '@/lib/format':'lib/format.ts', '@/lib/consultation':'lib/consultation.ts', '@/lib/list-indexes':'lib/list-indexes.ts', '@/lib/manual-lead-assignment':'lib/manual-lead-assignment.ts', '@/components/ui/ReservationDateTimeEditor':'components/ui/ReservationDateTimeEditor.tsx' };
@@ -131,8 +138,8 @@ function createHarness(source, options = {}) {
 }
 
 function pair(options) { return [createHarness(baseline,options),createHarness(current,options)]; }
-// The feedback adds two explicitly requested row actions. Keep comparing every
-// pre-existing control and value, excluding only those two new button subtrees.
+// The historical baseline predates the SMS row action. Contact/reason is now
+// removed by request; compare every other control and value unchanged.
 function originalTree(value, manualLeadModal = false) {
   if (Array.isArray(value)) return value.map(item=>originalTree(item,manualLeadModal)).filter(item=>item!==null);
   if (!value || typeof value !== 'object') return value;
@@ -141,6 +148,9 @@ function originalTree(value, manualLeadModal = false) {
   // actual-UI/store regression; every other field in the modal stays compared.
   if (insideManualLeadModal && value.type==='label' && value.children?.some(child=>typeof child==='string'&&child.trim()==='담당자')) return null;
   if (value.type === 'button' && ['컨택 · 사유','문자발송'].some(label=>value.children?.includes(label))) return null;
+  if (value.props?.id === 'db-customer-table-scroll') {
+    value = { ...value, props: { className: 'hidden overflow-x-auto md:block' } };
+  }
   return {...value, ...(value.children ? {children:originalTree(value.children,insideManualLeadModal)} : {})};
 }
 function equalPair(a,b) { assert.deepEqual(b.snapshot(),a.snapshot()); assert.deepEqual(originalTree(b.tree()),originalTree(a.tree())); }
@@ -212,11 +222,30 @@ test('memo popover remains open across parent rerenders and responsive branches 
       const opened=hostNodes(harness,'ul').length;assert.equal(opened,1);
       harness.set({add:true});harness.set({add:false});assert.equal(hostNodes(harness,'ul').length,opened);
       assert.ok(hostNodes(harness,'div').some(node=>node.props.className==='divide-y divide-slate-100 md:hidden'));
-      assert.ok(hostNodes(harness,'div').some(node=>node.props.className==='hidden overflow-x-auto md:block'));
+      assert.ok(hostNodes(harness,'div').some(node=>['hidden','overflow-x-auto','md:block'].every(token=>node.props.className?.split(' ').includes(token))));
       assert.equal(hostNodes(harness,'tr').length,11);
     }
     equalPair(old,next);
   }finally{old.close();next.close();}
+});
+
+test('DB bottom scroll control targets only the desktop customer table and hides behind dialogs',()=>{
+  const currentPage=createHarness(current);
+  try {
+    const target=currentPage.view.root.findByProps({id:'db-customer-table-scroll'});
+    assert.equal(target.props.role,'region');
+    assert.equal(target.props['aria-label'],'DB 고객리스트');
+    assert.equal(target.props.tabIndex,0);
+    const control=()=>currentPage.view.root.find(node=>typeof node.type==='function'&&node.type.name==='BottomHorizontalScrollbar');
+    assert.equal(control().props.targetId,target.props.id);
+    assert.equal(control().props.label,'고객리스트 좌우 이동');
+    assert.equal(control().props.hideWhen,false);
+    currentPage.set({add:true});assert.equal(control().props.hideWhen,true);
+    currentPage.set({add:false});assert.equal(control().props.hideWhen,false);
+    currentPage.set({consultation:currentPage.store.leads[0]});assert.equal(control().props.hideWhen,true);
+    currentPage.set({consultation:null});assert.equal(control().props.hideWhen,false);
+    currentPage.set({deletion:currentPage.store.leads[0]});assert.equal(control().props.hideWhen,true);
+  } finally { currentPage.close(); }
 });
 
 test('DB preview and search expose only active memo text, with pins first and original customer actions unchanged',()=>{
@@ -279,4 +308,36 @@ test('existing-client conversion and lead deletion preserve original callbacks',
     }
     assert.deepEqual(next.writes,old.writes);assert.deepEqual(next.writes,[['convert','lead-9'],['delete','lead-9']]);equalPair(old,next);
   }finally{old.close();next.close();}
+});
+
+
+test('contact/reason action is absent on desktop/mobile while consultation, SMS, memo and warnings remain',()=>{
+  const h=createHarness(current);try{
+    const before=clean(h.store.leads);
+    const buttons=hostNodes(h,'button').map(hostText);
+    assert.equal(buttons.some(text=>text.includes('컨택 · 사유')),false);
+    assert.equal(buttons.filter(text=>text==='문자발송').length,20);
+    assert.equal(buttons.filter(text=>text==='상담일지').length,10);
+    assert.equal(buttons.filter(text=>text==='상담일지 작성').length,10);
+    assert.ok(JSON.stringify(h.tree()).includes('컨택 알림'));
+    assert.ok(JSON.stringify(h.tree()).includes('상담 내용'));
+    assert.deepEqual(clean(h.store.leads),before);
+    assert.deepEqual(h.writes,[]);
+    assert.equal(current.includes('LeadWorkDialog'),false);
+  }finally{h.close();}
+});
+
+test('미상담 one missed call clears both responsive badges and stage count until the next KST day',()=>{
+  const h=createHarness(current);try{
+    const base={...h.store.leads[0],id:'warning-only',status:'신규접수',detailStage:'미상담',convertedClientId:undefined,convertedCaseId:undefined,consultation:{memoLog:[]}};
+    h.store.leads=[base];h.refresh();
+    const badges=()=>hostNodes(h,'span').filter(node=>node.props.title==='미상담 고객은 하루 1회 컨택이 필요합니다.');
+    assert.equal(badges().length,2);assert.ok(badges().every(node=>hostText(node).includes('부재중 0/1')));
+    assert.equal(h.snapshot().stageWarningCounts['미상담'],1);
+    h.store.leads=[{...base,consultation:{memoLog:[{id:'missed',at:'2026-10-16T15:00:00Z',tag:'부재중',text:'',staff:'담당A'}]}}];h.refresh();
+    assert.equal(badges().length,0);assert.equal(h.snapshot().stageWarningCounts['미상담']??0,0);
+    h.set({today:'2026-10-18'});
+    assert.equal(badges().length,2);assert.equal(h.snapshot().stageWarningCounts['미상담'],1);
+    assert.deepEqual(h.writes,[]);
+  }finally{h.close();}
 });

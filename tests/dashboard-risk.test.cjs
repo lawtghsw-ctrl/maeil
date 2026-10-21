@@ -40,3 +40,17 @@ test('deleted greeting and contact memos cannot satisfy dashboard completed-cont
  fixture([lead('today',{receivedAt:at,consultation:{memoLog:[{...memo,pinned:true,pinOrder:0}]}})]);
  result=component();assert.equal(result.top.newToday,1);assert.equal(result.top.contact,0);
 });
+
+test('dashboard contact KPI and todos agree: one missed call completes only 미상담, not 부재',()=>{
+ const missed={id:'missed',at:new Date(now).toISOString(),tag:'부재중',text:'',staff:'담당자'};
+ fixture([
+  lead('unconsulted-zero',{consultation:{memoLog:[]}}),
+  lead('unconsulted-one',{consultation:{memoLog:[missed]}}),
+  lead('absence-one',{detailStage:'부재',consultation:{memoLog:[missed]}}),
+  lead('absence-two',{detailStage:'부재',consultation:{memoLog:[missed,{...missed,id:'second'}]}}),
+  lead('retainer-one',{detailStage:'착수금 안내',consultation:{memoLog:[missed]}}),
+  lead('reached',{consultation:{memoLog:[{...missed,tag:'재통화'}]}}),
+ ]);
+ const result=component();assert.equal(result.top.contact,2);
+ assert.deepEqual(Array.from(result.todos.filter(row=>row.kind==='부재콜'),row=>row.lead.id).sort(),['absence-one','unconsulted-zero']);
+});

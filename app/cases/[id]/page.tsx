@@ -9,6 +9,7 @@ import { CaseActionPanel, PriorityRepaymentGuideTable } from "@/components/cases
 import { Button, Card } from "@/components/ui/Primitives";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import CaseProgressCard from "@/components/cases/CaseProgressCard";
+import { CustomerPhoneEditor } from "@/components/cases/CustomerPhoneEditor";
 import { fmtDate, fmtWon } from "@/lib/format";
 
 // v22: 고객관리와 계약관리를 계약관리로 통합했습니다. 계약 상세는 고객/계약의 핵심 재무정보와
@@ -72,8 +73,9 @@ export default function CaseDetailPage() {
               <CaseTypeBadge caseType={c.caseType} />
               <StatusBadge status={c.status} />
             </div>
-            <div className="mt-1 text-sm text-slate-500">
-              {c.caseNumber} · {c.court} · 담당 {c.assignedStaff} · {client?.phone ?? "-"}
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+              <span>{c.caseNumber} · {c.court} · 담당 {c.assignedStaff}</span>
+              {client && <CustomerPhoneEditor client={client} />}
             </div>
           </div>
           {client && <CaseActionPanel client={client} caseRecord={c} />}

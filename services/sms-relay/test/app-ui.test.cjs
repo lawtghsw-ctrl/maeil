@@ -7,7 +7,7 @@ const jsx = require(path.join(root, 'node_modules/react/jsx-runtime'));
 const firm = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', epoch = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const sender = { id: 'sender-1', staff_name: '담당자', label: '업무', phone: '0212345678', is_active: true, is_registered: true, is_default: true };
 const automation = { new_lead_enabled: false, absence_enabled: false, new_lead_template: '기존 신규 문구', absence_template: '기존 부재 문구', duplicate_guard_minutes: 5 };
-const staffAutomation = { staff_name: '담당자', sender_number_id: 'sender-1', ...automation, new_lead_image_paths: [], absence_image_paths: [] };
+const staffAutomation = { id: 'staff-setting-1', law_firm_id: firm, staff_name: '담당자', sender_number_id: 'sender-1', ...automation, new_lead_image_paths: [], absence_image_paths: [] };
 const gate = () => ({ gate: { epochId: epoch, liveEnabled: true, autoEnabled: false, activatedAt: '2026-10-17T00:00:00.000Z' }, capabilities: { sms: true, lms: true, mms: true, maxRecipients: 1000, maxImages: 3, minReservationMinutes: 10 }, serverTime: new Date().toISOString(), canManageGate: true, globalReady: true });
 const localDateTime = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 const draft = (extra = {}) => ({ tab: 'send', senderId: 'sender-1', recipients: [{ name: '가상고객', phone: '01000000000' }], manualName: '', manualPhone: '', bulkText: '', title: '제목', message: '{고객명}님 안내', images: [], reservedAt: '', automation, automationStaff: '담당자', staffAutomation, newLeadAutoImages: [], absenceAutoImages: [], newSender: { staff_name: '담당자', label: '', phone: '', is_registered: false }, newTemplate: { name: '', category: '일반', body: '' }, pendingRequest: null, automationDirty: true, ...extra });
@@ -50,8 +50,8 @@ function harness(options = {}) {
   const client = { auth: { async getSession() { return { data: { session: options.noSession ? null : { access_token: 'mock-user-token' } }, error: null }; } }, from(table) {
     assert.notEqual(table, 'sms_outbox', 'Browser must never read or write old outbox for live dispatch');
     let payload;
-    const result = () => ({ data: table === 'sms_sender_numbers' ? [options.sender ?? sender] : table === 'sms_templates' ? [] : table === 'sms_automation_settings' ? automation : [staffAutomation], error: null });
-    const builder = { select() { return builder; }, eq() { return builder; }, order() { return builder; }, maybeSingle() { return Promise.resolve(result()); },
+    const result = () => ({ data: payload ? { id: 'saved-setting', ...payload } : table === 'sms_sender_numbers' ? [options.sender ?? sender] : table === 'sms_templates' ? [] : table === 'sms_automation_settings' ? automation : [staffAutomation], error: null });
+    const builder = { select() { return builder; }, eq() { return builder; }, order() { return builder; }, maybeSingle() { return Promise.resolve(result()); }, single() { return Promise.resolve(result()); },
       then(resolve, reject) { return Promise.resolve(result()).then(resolve, reject); },
       insert(value) { payload = value; writes.push({ table, value }); return builder; }, upsert(value) { payload = value; writes.push({ table, value }); return builder; }, update(value) { payload = value; writes.push({ table, value }); return builder; }, delete() { writes.push({ table, delete: true }); return builder; },
     }; return builder;
@@ -86,7 +86,7 @@ function harness(options = {}) {
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: module.exports, console, Date, Math, Map, AbortController, Headers, crypto: require('node:crypto').webcrypto, fetch: fetchMock, confirm: () => options.confirm !== false,
     document: documentMock, window: documentMock, setInterval(fn, ms) { assert.equal(ms,12000); const id=++intervalId;intervals.set(id,fn);return id; }, clearInterval(id) {intervals.delete(id);},
-    require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store, useStoreSession: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; if (name === '@/lib/sms/template-variables') return moduleFrom('lib/sms/template-variables.ts', {}, {}); if (name === '@/components/ui/DateInput') return { DateTimeInput: 'input' }; throw Error(name); } });
+    require(name) { if (name === 'react') return finalRuntime.hooks; if (name === 'react/jsx-runtime') return jsx; if (name === 'lucide-react') return new Proxy({}, { get: () => () => null }); if (name === '@/lib/supabase/client') return { createClient: () => client }; if (name === '@/lib/store') return { useStore: () => store, useStoreSession: () => store }; if (name === '@/components/sms/DeliveryControls') return controls; if (name === '@/lib/sms/template-variables') return moduleFrom('lib/sms/template-variables.ts', {}, {}); if (name === '@/components/sms/AutomationImagePicker') return { default: () => null }; if (name === '@/lib/sms/automation-settings') return moduleFrom('lib/sms/automation-settings.ts', {}, {}); if (name === '@/lib/sms/automation-images') return moduleFrom('lib/sms/automation-images.ts', {}, {}); if (name === '@/components/ui/DateInput') return { DateTimeInput: 'input' }; throw Error(name); } });
   const props = { initialRecipients: options.initialRecipients ?? [], initialDraft: options.fresh ? undefined : options.draft ?? draft(), onDraftChange: (value) => snapshots.push(value) };
   const render = () => finalRuntime.render(module.exports.SmsFirmWorkspace, props);
   const flush = async () => { for (let i = 0; i < 4; i++) { await new Promise(setImmediate); render(); } };
@@ -224,7 +224,7 @@ test('gate changes are separate from saved automation data and do not enable aut
 test('automation settings remain saveable while live and automatic gates are off', async () => {
   const h = harness({ draft: draft({ tab: 'automation' }), gate: { ...gate(), gate: { epochId: null, activatedAt: null, liveEnabled: false, autoEnabled: false } } });
   h.render(); await h.flush(); h.button('자동발송 설정 저장').props.onClick(); await h.flush();
-  assert.deepEqual(h.writes.map((row) => row.table), ['sms_automation_settings', 'sms_staff_automation_settings']);
+  assert.deepEqual(h.writes.map((row) => row.table), ['sms_staff_automation_settings']);
   assert.equal(h.apiCalls.filter((call) => call.init.method === 'PATCH' || call.init.method === 'POST').length, 0);
 });
 

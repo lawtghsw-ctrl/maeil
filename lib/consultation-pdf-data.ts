@@ -19,7 +19,7 @@ export interface ConsultationPdfSnapshot {
   exportedAt: string;
   hasUnsavedChanges: boolean;
 }
-export interface ConsultationPdfSection { title: string; head: string[]; rows: string[][]; widths?: number[] }
+export interface ConsultationPdfSection { title: string; head: string[]; rows: string[][]; widths?: number[]; layout?: "fields" | "memo" }
 type Value = string | number | boolean | undefined | null;
 type Field = [string, Value];
 
@@ -59,7 +59,7 @@ export function consultationPdfSections(snapshot: ConsultationPdfSnapshot): Cons
       const left = present[index], right = present[index + 1];
       rows.push([left[0], consultationPdfText(left[1]), right?.[0] ?? "", right ? consultationPdfText(right[1]) : ""]);
     }
-    sections.push({ title, head: ["항목", "내용", "항목", "내용"], rows: rows.length ? rows : [["입력 내용", "미입력", "", ""]], widths: [27, 64, 27, 64] });
+    sections.push({ title, layout: "fields", head: ["항목", "내용", "항목", "내용"], rows: rows.length ? rows : [["입력 내용", "미입력", "", ""]], widths: [27, 64, 27, 64] });
   }
   fields("기본정보", [
     ["성명", snapshot.name], ["연락처", snapshot.phone], ["접수 / 등록", snapshot.joinedAtLabel], ["사건번호", snapshot.caseNumberLabel],
@@ -112,10 +112,10 @@ export function consultationPdfSections(snapshot: ConsultationPdfSnapshot): Cons
     fields("화면의 변제계획 계산값 (상담 참고)", [["연소득", won(r.totalIncome)], ["자산합계", won(r.assetTotal)], ["채무합계", won(r.debtTotal)], ["담보채무", won(r.securedDebtTotal)], ["신용채무", won(r.unsecuredDebtTotal)], ["월 가용소득", won(r.monthlyDisposableIncome)], ["총 변제예정액", won(r.totalPlannedRepayment)], ["청산가치", won(r.liquidationValue)], ["청산가치 보장", r.liquidationCovered], ["최종 월 변제금", won(r.finalMonthlyRepayment)], ["최종 총 변제액", won(r.finalTotalRepayment)], ["예상 탕감액", won(r.writeOffAmount)], ["예상 탕감률", suffix(r.writeOffRate, "%")], ["진행가능 추정", r.feasible], ["판정 참고", r.feasibilityNote]]);
   }
   if (snapshot.finance) fields("계약 / 수납 요약", [["계약금액", won(snapshot.finance.contractAmount)], ["납부금액", won(snapshot.finance.paidAmount)], ["미수금액", won(snapshot.finance.outstandingAmount)]]);
-  if (snapshot.memoDraft?.text.trim()) sections.push({ title: "작성 중 메모 (미등록)", head: ["작성자 / 태그", "현재 입력 내용"], widths: [40, 142], rows: [[`${snapshot.memoDraft.staff}\n${snapshot.memoDraft.tag === "재통화" ? "통화완료" : snapshot.memoDraft.tag}`, snapshot.memoDraft.text]] });
-  if (c.memo) sections.push({ title: "기존 상담 메모", head: ["내용"], rows: [[c.memo]] });
+  if (snapshot.memoDraft?.text.trim()) sections.push({ title: "작성 중 메모 (미등록)", layout: "memo", head: ["작성자 / 태그", "현재 입력 내용"], widths: [40, 142], rows: [[`${snapshot.memoDraft.staff}\n${snapshot.memoDraft.tag === "재통화" ? "통화완료" : snapshot.memoDraft.tag}`, snapshot.memoDraft.text]] });
+  if (c.memo) sections.push({ title: "기존 상담 메모", layout: "memo", head: ["내용"], rows: [[c.memo]] });
   const memoEntries = visibleMemoEntries(c.memoLog);
-  sections.push({ title: `상담 메모 (${memoEntries.length}건)`, head: ["작성자 / 일시 / 태그", "내용"], widths: [43, 139], rows: memoEntries.length ? memoEntries.map(entry => [`${entry.pinned ? "[고정] " : ""}${entry.staff}\n${consultationPdfDateTime(entry.at)}\n${entry.tag === "재통화" ? "통화완료" : entry.tag}`, entry.text || "(내용 없음)"]) : [["-", "등록된 메모 없음"]] });
+  sections.push({ title: `상담 메모 (${memoEntries.length}건)`, layout: "memo", head: ["작성자 / 일시 / 태그", "내용"], widths: [43, 139], rows: memoEntries.length ? memoEntries.map(entry => [`${entry.pinned ? "[고정] " : ""}${entry.staff}\n${consultationPdfDateTime(entry.at)}\n${entry.tag === "재통화" ? "통화완료" : entry.tag}`, entry.text || "(내용 없음)"]) : [["-", "등록된 메모 없음"]] });
   if (c.attachedFiles?.length) sections.push({ title: "첨부파일 목록 (파일 내용 미포함)", head: ["파일명", "크기", "첨부 일시"], widths: [112, 25, 45], rows: c.attachedFiles.map(file => [file.name, `${consultationPdfText(file.sizeKb)} KB`, consultationPdfDateTime(file.attachedAt)]) });
   return sections.map(section => ({ ...section, rows: section.rows.map(row => row.map(value => consultationPdfText(value))) }));
 }

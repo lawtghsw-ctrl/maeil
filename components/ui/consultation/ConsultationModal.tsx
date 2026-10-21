@@ -58,6 +58,7 @@ import { DebtListSection } from "./DebtListSection";
 import { ConsultationMemoSection } from "./ConsultationMemoSection";
 import { Download, ShieldCheck, ShieldAlert } from "lucide-react";
 import { fmtWon } from "@/lib/format";
+import { changedCustomerPhone } from "@/lib/customer-phone";
 import type { ConsultationPdfMemoDraft, ConsultationPdfSnapshot } from "@/lib/consultation-pdf-data";
 
 type Updater<T> = (updater: T | ((prev: T) => T)) => void;
@@ -73,6 +74,7 @@ type StoredConsultationDraft = {
   expiresAt: string;
   consultation: ConsultationInfo;
   customerName?: string;
+  customerPhone?: string;
   applicationType?: ConsultDirection;
   detailStage?: DbDetailStage;
   reservationChoice?: boolean;
@@ -95,9 +97,10 @@ function draftSnapshot(
   detailStage: DbDetailStage | undefined,
   reservationChoice: boolean | undefined,
   reservationAt: string | undefined,
-  customerName?: string
+  customerName?: string,
+  customerPhone?: string
 ) {
-  return { consultation: consultation ?? {}, applicationType, detailStage, reservationChoice, reservationAt, customerName };
+  return { consultation: consultation ?? {}, applicationType, detailStage, reservationChoice, reservationAt, customerName, customerPhone };
 }
 
 export function ConsultationModal({
@@ -107,6 +110,7 @@ export function ConsultationModal({
   displayName,
   allowNameEdit = false,
   displayPhone,
+  allowPhoneEdit = false,
   joinedAtLabel,
   caseNumberLabel,
   applicationType,
@@ -136,6 +140,7 @@ export function ConsultationModal({
   displayName: string;
   allowNameEdit?: boolean;
   displayPhone: string;
+  allowPhoneEdit?: boolean;
   joinedAtLabel: string;
   caseNumberLabel: string;
   applicationType: ConsultDirection | undefined;
@@ -147,7 +152,7 @@ export function ConsultationModal({
   detailStage?: DbDetailStage;
   onDetailStageChange?: (v: DbDetailStage | undefined) => void;
   initialConsultation: ConsultationInfo | undefined;
-  onSave: (consultation: ConsultationInfo, customerName?: string) => void | boolean | Promise<void | boolean>;
+  onSave: (consultation: ConsultationInfo, customerName?: string, customerPhone?: string) => void | boolean | Promise<void | boolean>;
   // 고객관리 화면에만 있는 "고객 상담 엑셀 다운로드" 버튼 — 지금 화면에서 편집 중인
   // draft 스냅샷을 그대로 넘겨줘야 해서(저장하지 않고도 다운로드 가능), 콜백 형태로
   // 뺐습니다. 전달하지 않으면 버튼 자체가 보이지 않습니다(DB관리 화면은 사용 안 함).
@@ -165,6 +170,9 @@ export function ConsultationModal({
   onReservationAtChange?: (value: string | undefined) => void;
 }) {
   const [editedName, setEditedName] = useState(displayName);
+  const [editedPhone, setEditedPhone] = useState(displayPhone);
+  const [phoneEdited, setPhoneEdited] = useState(false);
+  const phoneEditBase = useRef(displayPhone);
   const [personal, setPersonal] = useState<ConsultationPersonal>(initialConsultation?.personal ?? {});
   const [income, setIncome] = useState<ConsultationIncome>(initialConsultation?.income ?? {});
   const [assets, setAssets] = useState<AssetRow[]>(initialConsultation?.assets ?? emptyAssetRows());
@@ -221,7 +229,7 @@ export function ConsultationModal({
               window.localStorage.removeItem(consultationDraftKey(resetKey));
             } else {
             const storedFingerprint = snapshotFingerprint(
-              draftSnapshot(parsed.consultation, parsed.applicationType, parsed.detailStage, parsed.reservationChoice, parsed.reservationAt, parsed.customerName ?? displayName)
+              draftSnapshot(parsed.consultation, parsed.applicationType, parsed.detailStage, parsed.reservationChoice, parsed.reservationAt, parsed.customerName ?? displayName, parsed.customerPhone)
             );
             const serverFingerprint = snapshotFingerprint(serverSnapshot);
             if (storedFingerprint !== serverFingerprint) {
@@ -239,6 +247,10 @@ export function ConsultationModal({
     }
 
     setEditedName(allowNameEdit && restored?.customerName !== undefined ? restored.customerName : displayName);
+    const restoredPhone = allowPhoneEdit ? restored?.customerPhone : undefined;
+    setEditedPhone(restoredPhone ?? displayPhone);
+    setPhoneEdited(restoredPhone !== undefined && restoredPhone.trim() !== displayPhone.trim());
+    phoneEditBase.current = displayPhone;
     setPersonal(source?.personal ?? {});
     setIncome(source?.income ?? {});
     setAssets(source?.assets ?? emptyAssetRows());
@@ -323,8 +335,8 @@ export function ConsultationModal({
   );
 
   const currentFingerprint = useMemo(
-    () => snapshotFingerprint(draftSnapshot(draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit ? editedName : displayName)),
-    [draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName]
+    () => snapshotFingerprint(draftSnapshot(draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit ? editedName : displayName, allowPhoneEdit && phoneEdited ? editedPhone : undefined)),
+    [draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName, allowPhoneEdit, phoneEdited, editedPhone, displayPhone]
   );
   const hasUnsavedChanges = !readOnly && draftReady && !!baselineFingerprint && currentFingerprint !== baselineFingerprint;
 
@@ -339,7 +351,7 @@ export function ConsultationModal({
         updatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         consultation: draft,
-        customerName: allowNameEdit ? editedName : displayName,
+        customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined,
         applicationType,
         detailStage,
         reservationChoice,
@@ -352,14 +364,14 @@ export function ConsultationModal({
       }
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [open, readOnly, draftReady, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName]);
+  }, [open, readOnly, draftReady, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName, allowPhoneEdit, phoneEdited, editedPhone, displayPhone]);
 
   // 탭 닫기/새로고침도 작성 중이면 브라우저 기본 경고를 띄웁니다.
   useEffect(() => {
     if (!open || !hasUnsavedChanges || typeof window === "undefined") return;
     const warn = (event: BeforeUnloadEvent) => {
       try {
-        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, applicationType, detailStage, reservationChoice, reservationAt };
+        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined, applicationType, detailStage, reservationChoice, reservationAt };
         window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
       } catch {}
       event.preventDefault();
@@ -367,7 +379,7 @@ export function ConsultationModal({
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [open, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName]);
+  }, [open, hasUnsavedChanges, resetKey, draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName, allowPhoneEdit, phoneEdited, editedPhone, displayPhone]);
 
   const completeness = useMemo(() => checkConsultationRequired(applicationType, draft), [applicationType, draft]);
   const stats = useMemo(() => getConsultationCompletionStats(applicationType, draft), [applicationType, draft]);
@@ -383,7 +395,7 @@ export function ConsultationModal({
       // Capture before any lazy load so subsequent editing cannot change this export.
       const snapshot: ConsultationPdfSnapshot = structuredClone({
         name: allowNameEdit ? (editedName.trim() || displayName) : displayName,
-        phone: displayPhone, joinedAtLabel, caseNumberLabel, applicationType,
+        phone: allowPhoneEdit && phoneEdited && !readOnly ? editedPhone.trim() : displayPhone, joinedAtLabel, caseNumberLabel, applicationType,
         detailStage: showDetailStage ? detailStage : undefined,
         reservationChoice, reservationAt, consultation: draft, result,
         finance: showFinanceSummary ? { contractAmount, paidAmount, outstandingAmount: Math.max(0, outstandingAmount) } : undefined,
@@ -412,7 +424,8 @@ export function ConsultationModal({
     setSavePending(true);
     setSaveError(null);
     try {
-      const result = await onSave(draft, allowNameEdit ? editedName.trim() : undefined);
+      const customerPhone = changedCustomerPhone(displayPhone, editedPhone, allowPhoneEdit && phoneEdited);
+      const result = await onSave(draft, allowNameEdit ? editedName.trim() : undefined, customerPhone);
       if (result === false) {
         setSaveError("서버 저장에 실패했습니다. 작성 내용은 임시저장되어 있으니 새로고침하지 말고 다시 저장해주세요.");
         return;
@@ -436,7 +449,7 @@ export function ConsultationModal({
     if (hasUnsavedChanges && typeof window !== "undefined") {
       // 마지막 키 입력 직후(250ms debounce 전)에 닫아도 최신값을 즉시 보관합니다.
       try {
-        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, applicationType, detailStage, reservationChoice, reservationAt };
+        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined, applicationType, detailStage, reservationChoice, reservationAt };
         window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
       } catch {}
       const ok = window.confirm("저장되지 않은 상담일지 작성 내용이 있습니다.\n지금 닫아도 임시저장본은 남아 다음에 다시 열면 자동 복구됩니다.\n그래도 닫으시겠습니까?");
@@ -533,7 +546,15 @@ export function ConsultationModal({
               displayName={allowNameEdit ? editedName : displayName}
               allowNameEdit={allowNameEdit}
               onNameChange={setEditedName}
-              displayPhone={displayPhone}
+              displayPhone={allowPhoneEdit && phoneEdited && !readOnly ? editedPhone : displayPhone}
+              allowPhoneEdit={allowPhoneEdit && !readOnly}
+              onPhoneChange={(phone) => {
+                // A realtime phone correction must not be overwritten by an
+                // unrelated consultation save or by reverting an input edit.
+                if (!phoneEdited) phoneEditBase.current = displayPhone;
+                setEditedPhone(phone);
+                setPhoneEdited(phone.trim() !== phoneEditBase.current.trim());
+              }}
               joinedAtLabel={joinedAtLabel}
               caseNumberLabel={caseNumberLabel}
             />

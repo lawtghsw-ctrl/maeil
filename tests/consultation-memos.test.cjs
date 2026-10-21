@@ -112,3 +112,37 @@ test('performance excludes tombstoned contact events while all DB/contract/recei
   assert.equal(actual.summary.contacts, 1); assert.equal(actual.previous.contacts, 0);
   assert.deepEqual(clone(actual), clone(filtered)); assert.equal(JSON.stringify(input), before);
 });
+
+test('daily stage targets change only 미상담; generic and other-stage thresholds remain intact', () => {
+  const missed = row('one-missed', { tag: '부재중', text: '' });
+  const check = (stage, log) => calls.checkCallWarning(log, '2026-10-18', calls.dailyContactThreshold(stage));
+  assert.equal(check('미상담', []).active, true);
+  assert.equal(check('미상담', [missed]).active, false);
+  assert.equal(check('부재', [missed]).active, true);
+  assert.equal(check('부재', [missed, {...missed, id:'second'}]).active, false);
+  assert.equal(check('착수금 안내', [missed]).active, false);
+  assert.equal(calls.checkCallWarning([missed], '2026-10-18').threshold, 2);
+  assert.equal(calls.checkCallWarning([missed], '2026-10-18').active, true);
+  for (const stage of ['미상담', '부재', '착수금 안내']) {
+    assert.equal(check(stage, [row('reached', {tag:'재통화'})]).active, false);
+    assert.equal(check(stage, [{...missed, deletedAt:at}]).active, true);
+  }
+  assert.equal(check('미상담', [{...missed, pinned:true, pinOrder:0}]).noAnswerCountToday, 1);
+  assert.equal(check('미상담', [row('general', {tag:'일반', text:'기존 일반 컨택 메모'})]).active, false);
+  assert.equal(check('미상담', [row('empty', {tag:'일반', text:'  '})]).active, true);
+});
+
+test('one missed call resets at KST midnight and the long-absence three-day interval is unchanged', () => {
+  const beforeMidnight = row('before', {tag:'부재중', text:'', at:'2026-10-17T14:59:59Z'});
+  const atMidnight = row('after', {tag:'부재중', text:'', at:'2026-10-17T15:00:00Z'});
+  const threshold = calls.dailyContactThreshold('미상담');
+  assert.equal(calls.kstDateStr(new Date(beforeMidnight.at)), '2026-10-17');
+  assert.equal(calls.kstDateStr(new Date(atMidnight.at)), '2026-10-18');
+  assert.equal(calls.checkCallWarning([beforeMidnight], '2026-10-17', threshold).active, false);
+  assert.equal(calls.checkCallWarning([beforeMidnight], '2026-10-18', threshold).active, true);
+  assert.equal(calls.checkCallWarning([atMidnight], '2026-10-17', threshold).active, true);
+  assert.equal(calls.checkCallWarning([atMidnight], '2026-10-18', threshold).active, false);
+  assert.equal(calls.checkCallWarning([atMidnight], '2026-10-19', threshold).active, true);
+  assert.equal(calls.checkPeriodicContactWarning([atMidnight], '2026-10-20', 3).active, false);
+  assert.equal(calls.checkPeriodicContactWarning([atMidnight], '2026-10-21', 3).active, true);
+});

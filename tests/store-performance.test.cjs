@@ -92,7 +92,14 @@ let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++pass
     const source=fs.readFileSync(path.join(root,'lib/store.tsx'),'utf8').replaceAll('\r\n','\n');
     const addition=' || key === "contactLog" || key === "invalidReason" || key === "nonContractReason" || key === "replacementRequestedAt"';
     assert.ok(source.includes('if (key === "consultation"'+addition+') return can("db.edit_consultation");'));
-    const current=source.replace(addition,'');
+    // These phone-only additions are exercised by customer-phone tests. Strip
+    // exactly the new validator and dedicated RPC callback; every pre-existing
+    // persistence/permission callback remains compared byte-for-byte below.
+    const phoneValidation = "      // Validate before the optimistic update, including direct store callers.\n      // Unchanged legacy/imported numbers must not block unrelated edits.\n      if (Object.prototype.hasOwnProperty.call(patch, \"phone\")) {\n        try {\n          if (typeof patch.phone !== \"string\") throw new Error(\"고객 연락처를 입력해주세요.\");\n          const phone = changedCustomerPhone(before.phone, patch.phone, true);\n          patch = { ...patch, phone: phone ?? before.phone };\n        } catch (err) {\n          setSyncError(`저장 실패 · ${err instanceof Error ? err.message : \"연락처를 확인해주세요.\"}`);\n          return false;\n        }\n      }\n";
+    assert.ok(source.includes(phoneValidation));
+    const phoneStart=source.indexOf('  const updateClientPhone ='),phoneEnd=source.indexOf('  const deleteLead =',phoneStart);
+    assert.ok(phoneStart>=0&&phoneEnd>phoneStart);
+    const current=(source.slice(0,phoneStart)+source.slice(phoneEnd)).replace(phoneValidation,'').replace(addition,'');
     // Manual creation now deliberately assigns the current staff member. Its
     // full UI -> store -> persisted payload is tested in manual-lead-assignment.
     // Retain exact baseline comparison of every other write callback.

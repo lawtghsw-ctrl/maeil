@@ -6,7 +6,7 @@
 // 상담일지에서 가구원수를 선택하면 해당 금액을 즉시 자동 반영합니다. 이 값은 상담 단계
 // 예상 변제금/탕감률 계산에 쓰이며, 실제 사건의 최종 산정은 담당자 확인을 전제로 합니다.
 
-import type { AssetRow, ConsultationInfo, ConsultDirection, DebtRow, MemoLogEntry, RepaymentPlanInput } from "./types";
+import type { AssetRow, ConsultationInfo, ConsultDirection, DbDetailStage, DebtRow, MemoLogEntry, RepaymentPlanInput } from "./types";
 import { ASSET_CATEGORIES, DEBT_CATEGORIES, SECURED_DEBT_CATEGORIES, UNSECURED_DEBT_CATEGORY } from "./types";
 import { activeMemoEntries } from "./consultation-memos";
 
@@ -436,6 +436,12 @@ export interface CallWarningResult {
 // 각각 1회의 컨택 기록으로 인정합니다. 메모 한 건당 최대 1회만 집계합니다.
 function countsAsUnansweredContact(entry: MemoLogEntry): boolean {
   return entry.tag === "부재중" || (entry.tag === "일반" && !!entry.text?.trim());
+}
+
+// Daily stage targets are shared by DB badges/board and the dashboard contact queue.
+// Keep the generic checkCallWarning default at 2 for non-stage callers.
+export function dailyContactThreshold(stage: DbDetailStage): number {
+  return stage === "미상담" || stage === "착수금 안내" ? 1 : 2;
 }
 
 export function checkCallWarning(

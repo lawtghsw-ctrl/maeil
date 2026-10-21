@@ -334,6 +334,7 @@ export const DB_DETAIL_STAGE_OPTIONS = [
   "상담",
   "장기부재",
   "불가",
+  "본인취소",
   // 착수
   "착수금착수",
   "착수 1차안내",
@@ -366,7 +367,7 @@ export const DB_DETAIL_STAGE_OPTIONS = [
 export type DbDetailStage = (typeof DB_DETAIL_STAGE_OPTIONS)[number];
 
 export const DB_DETAIL_STAGE_GROUPS: Record<DbDetailStageTrack, DbDetailStage[]> = {
-  상담: ["미상담", "신규디비", "문자발송완료", "부재", "착수금 안내", "설득필요", "예약", "상담", "장기부재", "불가"],
+  상담: ["미상담", "신규디비", "문자발송완료", "부재", "착수금 안내", "설득필요", "예약", "상담", "장기부재", "불가", "본인취소"],
   착수: ["착수금착수", "착수 1차안내", "착수 추후진행", "취소예정"],
   서류: ["1차 서류미비", "1차 서류완료", "2차서류안내", "2차서류미비", "2차서류완료", "접수보류"],
   법원: ["법원접수(대기)", "법원접수", "금지명령", "금지기각", "개시결정", "인가결정", "종결"],
@@ -410,7 +411,7 @@ export const DB_LEAD_DEFAULT_STAGE_BY_STATUS: Record<DbLeadStatus, DbDetailStage
 // ---- 상담일지 메모 게시판 ----
 // 자유 텍스트 메모와 [재통화]/[부재중] 콜 태그를 함께 기록하는 누적 로그입니다.
 // 태그가 붙은 항목(재통화/부재중)은 단계별 컨택 경고 판정에도 쓰입니다.
-// 미상담/부재는 하루 2회, 착수금 안내는 하루 1회, 장기부재는 3일 주기로 관리합니다.
+// 미상담/착수금 안내는 하루 1회, 부재는 하루 2회, 장기부재는 3일 주기로 관리합니다.
 // (lib/consultation.ts의 checkCallWarning/checkPeriodicContactWarning 참고).
 export type MemoLogTag = "일반" | "재통화" | "부재중";
 
