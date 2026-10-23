@@ -61,7 +61,7 @@ function createHarness(source, options = {}) {
   const timers = new Map();
   const now = new Date('2026-10-17T02:00:00Z').getTime();
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
-  const context = vm.createContext({ console, Date: FixedDate, Map, Set, Math, __stats: stats,
+  const context = vm.createContext({ console, Date: FixedDate, Map, Set, Math, crypto: { randomUUID: () => `fixture-contact-${writes.length}` }, __stats: stats,
     window: { sessionStorage: { getItem() { return null; }, removeItem() {} } },
     setTimeout(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
   });
@@ -80,6 +80,7 @@ function createHarness(source, options = {}) {
   let store;
   const requireMock = (name) => {
     if (name === '@/lib/consultation-memos' || name === './consultation-memos') return load('lib/consultation-memos.ts');
+    if (name === '@/components/db/LeadWorkDialog' && options.workDialog) return load('components/db/LeadWorkDialog.tsx');
     if (name === '@/components/sms/LeadSmsDialog' || name === '@/components/db/LeadWorkDialog') return { __esModule: true, default: () => null };
     if (name === 'react') return React;
     if (name === '@/components/ui/DateInput') return { DateInput: ({ onValueChange, onIncompleteChange, ...props }) => h('input', { ...props, type:'date', onChange:event=>onValueChange(event.target.value) }) };
@@ -138,8 +139,8 @@ function createHarness(source, options = {}) {
 }
 
 function pair(options) { return [createHarness(baseline,options),createHarness(current,options)]; }
-// The historical baseline predates the SMS row action. Contact/reason is now
-// removed by request; compare every other control and value unchanged.
+// The historical baseline predates the SMS row action. Contact/reason is
+// restored by request; compare every other control and value unchanged.
 function originalTree(value, manualLeadModal = false) {
   if (Array.isArray(value)) return value.map(item=>originalTree(item,manualLeadModal)).filter(item=>item!==null);
   if (!value || typeof value !== 'object') return value;
@@ -245,6 +246,9 @@ test('DB bottom scroll control targets only the desktop customer table and hides
     currentPage.set({consultation:currentPage.store.leads[0]});assert.equal(control().props.hideWhen,true);
     currentPage.set({consultation:null});assert.equal(control().props.hideWhen,false);
     currentPage.set({deletion:currentPage.store.leads[0]});assert.equal(control().props.hideWhen,true);
+    currentPage.set({deletion:null});assert.equal(control().props.hideWhen,false);
+    renderer.act(()=>hostNodes(currentPage,'button').find(node=>hostText(node)==='컨택 · 사유').props.onClick());
+    assert.equal(control().props.hideWhen,true);
   } finally { currentPage.close(); }
 });
 
@@ -311,11 +315,11 @@ test('existing-client conversion and lead deletion preserve original callbacks',
 });
 
 
-test('contact/reason action is absent on desktop/mobile while consultation, SMS, memo and warnings remain',()=>{
+test('contact/reason action is restored on desktop/mobile while consultation, SMS, memo and warnings remain',()=>{
   const h=createHarness(current);try{
     const before=clean(h.store.leads);
     const buttons=hostNodes(h,'button').map(hostText);
-    assert.equal(buttons.some(text=>text.includes('컨택 · 사유')),false);
+    assert.equal(buttons.filter(text=>text==='컨택 · 사유').length,20);
     assert.equal(buttons.filter(text=>text==='문자발송').length,20);
     assert.equal(buttons.filter(text=>text==='상담일지').length,10);
     assert.equal(buttons.filter(text=>text==='상담일지 작성').length,10);
@@ -323,7 +327,7 @@ test('contact/reason action is absent on desktop/mobile while consultation, SMS,
     assert.ok(JSON.stringify(h.tree()).includes('상담 내용'));
     assert.deepEqual(clean(h.store.leads),before);
     assert.deepEqual(h.writes,[]);
-    assert.equal(current.includes('LeadWorkDialog'),false);
+    assert.equal(current.includes('LeadWorkDialog'),true);
   }finally{h.close();}
 });
 
@@ -339,5 +343,71 @@ test('미상담 one missed call clears both responsive badges and stage count un
     h.set({today:'2026-10-18'});
     assert.equal(badges().length,2);assert.equal(h.snapshot().stageWarningCounts['미상담'],1);
     assert.deepEqual(h.writes,[]);
+  }finally{h.close();}
+});
+
+
+test('restored responsive actions open the correct real dialog, preserve history and close without writes',()=>{
+  const h=createHarness(current,{workDialog:true});try{
+    for(const index of [0,10]){
+      const button=hostNodes(h,'button').filter(node=>hostText(node)==='컨택 · 사유')[index];
+      renderer.act(()=>button.props.onClick());
+      const dialog=hostNodes(h,'section').find(node=>node.props['data-modal']?.includes('컨택 · 사유 기록'));
+      assert.ok(dialog);assert.ok(hostNodes(h,'h3').some(node=>hostText(node)==='컨택 기록 0건'));
+      renderer.act(()=>dialog.findAll(node=>node.type==='button'&&hostText(node)==='닫기')[0].props.onClick());
+      assert.equal(hostNodes(h,'section').some(node=>node.props['data-modal']?.includes('컨택 · 사유 기록')),false);
+    }
+    assert.deepEqual(h.writes,[]);
+  }finally{h.close();}
+});
+
+test('restored contact dialog appends a record and preserves the existing contact history',async()=>{
+  const h=createHarness(current,{workDialog:true});try{
+    const id=h.snapshot().visibleIds[0], original={id:'historical-contact',at:'2026-10-16T00:00:00Z',staff:'담당A',type:'phone',connected:false,note:'이전 기록'};
+    h.store.leads=h.store.leads.map(lead=>lead.id===id?{...lead,contactLog:[original],invalidReason:'기타'}:lead);h.refresh();
+    renderer.act(()=>hostNodes(h,'button').find(node=>hostText(node)==='컨택 · 사유').props.onClick());
+    assert.ok(JSON.stringify(h.tree()).includes('이전 기록'));
+    const area=hostNodes(h,'textarea').find(node=>node.props.maxLength===2000);
+    renderer.act(()=>area.props.onChange({target:{value:'복원 후 테스트'}}));
+    await renderer.act(async()=>{hostNodes(h,'button').find(node=>hostText(node)==='현재 시각으로 컨택 기록').props.onClick();});
+    assert.equal(h.writes.length,1);const [kind,savedId,patch]=h.writes[0];
+    assert.equal(kind,'update');assert.equal(savedId,id);assert.equal(patch.contactLog.length,2);
+    assert.deepEqual(patch.contactLog[0],original);assert.equal(patch.contactLog[1].note,'복원 후 테스트');assert.equal(patch.invalidReason,'기타');
+    assert.ok(JSON.stringify(h.tree()).includes('컨택 기록을 저장했습니다.'));
+    assert.equal(area.props.value,'');
+    assert.deepEqual(Object.keys(patch).sort(),['contactLog','invalidReason']);
+  }finally{h.close();}
+});
+
+test('restored dialog respects consultation permission and closes on account or firm changes',()=>{
+  const h=createHarness(current,{workDialog:true,rights:['db.view_all','db.view_consultation']});try{
+    renderer.act(()=>hostNodes(h,'button').find(node=>hostText(node)==='컨택 · 사유').props.onClick());
+    assert.ok(hostNodes(h,'fieldset').every(node=>node.props.disabled));
+    h.store.profile={...h.store.profile,id:'other-viewer'};h.refresh();
+    assert.equal(hostNodes(h,'section').some(node=>node.props['data-modal']?.includes('컨택 · 사유 기록')),false);
+    h.permissions(['db.view_all']);
+    assert.equal(hostNodes(h,'button').some(node=>hostText(node)==='컨택 · 사유'),false);
+    assert.deepEqual(h.writes,[]);
+  }finally{h.close();}
+  const global=createHarness(current,{workDialog:true,global:true});try{
+    renderer.act(()=>hostNodes(global,'button').find(node=>hostText(node)==='컨택 · 사유').props.onClick());
+    assert.ok(hostNodes(global,'fieldset').every(node=>node.props.disabled));
+    assert.deepEqual(global.writes,[]);
+  }finally{global.close();}
+});
+
+
+test('reason save does not append contacts and failed saves preserve the entered note',async()=>{
+  const h=createHarness(current,{workDialog:true});try{
+    renderer.act(()=>hostNodes(h,'button').find(node=>hostText(node)==='컨택 · 사유').props.onClick());
+    const invalid=hostNodes(h,'select').find(node=>node.children.some(child=>typeof child!=='string'&&hostText(child)==='연락처 오류'));
+    renderer.act(()=>invalid.props.onChange({target:{value:'연락처 오류'}}));
+    await renderer.act(async()=>{hostNodes(h,'button').find(node=>hostText(node)==='사유 저장').props.onClick();});
+    assert.deepEqual(h.writes[0][2],{invalidReason:'연락처 오류'});
+    h.store.updateLead=async()=>false;h.refresh();
+    renderer.act(()=>hostNodes(h,'textarea').find(node=>node.props.maxLength===2000).props.onChange({target:{value:'재시도할 내용'}}));
+    await renderer.act(async()=>{hostNodes(h,'button').find(node=>hostText(node)==='현재 시각으로 컨택 기록').props.onClick();});
+    assert.ok(JSON.stringify(h.tree()).includes('저장하지 못했습니다. 입력은 유지됩니다.'));
+    assert.equal(hostNodes(h,'textarea').find(node=>node.props.maxLength===2000).props.value,'재시도할 내용');
   }finally{h.close();}
 });

@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
+import LeadWorkDialog from "@/components/db/LeadWorkDialog";
 import LeadSmsDialog from "@/components/sms/LeadSmsDialog";
 import { useStore } from "@/lib/store";
 import {
@@ -665,12 +666,12 @@ type LeadRowProps = {
   can: ReturnType<typeof useStore>["can"]; workStaffNames: StaffName[]; canOpenConsultation: boolean;
   updateLead: ReturnType<typeof useStore>["updateLead"];
   onOpenConsultation: (lead: DbLead) => void; onOpenMemo: (lead: DbLead) => void;
-  onConvert: (lead: DbLead) => void; onDelete: (lead: DbLead) => void; onSms: (lead: DbLead) => void;
+  onConvert: (lead: DbLead) => void; onDelete: (lead: DbLead) => void; onSms: (lead: DbLead) => void; onWork: (lead: DbLead) => void;
 };
 
 // CSS 반응형 트리를 유지해 화면 너비가 바뀌어도 메모 팝오버와 입력 DOM을 보존합니다.
 // 행과 무관한 모달·안내 상태 변경에서는 같은 행의 렌더링을 건너뜁니다.
-const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms }: LeadRowProps) {
+const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork }: LeadRowProps) {
   return (
     <div className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
       <div className="flex items-start justify-between gap-3">
@@ -752,6 +753,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
       )}
       <div className="flex flex-wrap items-center justify-end gap-2">
         {!globalSuperView && can("sms.send") && <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => onSms(lead)}><MessageSquareText size={14}/>문자발송</Button>}
+        {canOpenConsultation && <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => onWork(lead)}>컨택 · 사유</Button>}
         <Button
           variant="secondary"
           className="px-2.5 py-1.5"
@@ -785,7 +787,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
   );
 });
 
-const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms }: LeadRowProps) {
+const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork }: LeadRowProps) {
   return (
     <tr className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
       {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
@@ -870,6 +872,7 @@ const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, tod
           )}
           <div className="flex items-center justify-end gap-1.5">
             {!globalSuperView && can("sms.send") && <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => onSms(lead)}><MessageSquareText size={14}/>문자발송</Button>}
+            {canOpenConsultation && <Button variant="secondary" className="px-2.5 py-1.5" onClick={() => onWork(lead)}>컨택 · 사유</Button>}
             <Button
               variant="secondary"
               className="px-2.5 py-1.5"
@@ -923,10 +926,11 @@ export default function DbManagementPage() {
   const [consultTarget, setConsultTarget] = useState<DbLead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DbLead | null>(null);
   const [smsTarget, setSmsTarget] = useState<DbLead | null>(null);
+  const [workTarget, setWorkTarget] = useState<DbLead | null>(null);
   const smsFirmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
   const openSms = useCallback((lead: DbLead) => { if (smsFirmId) setSmsTarget({...lead, _lawFirmId: smsFirmId}); }, [smsFirmId]);
   const closeSms = useCallback(() => setSmsTarget(null), []);
-  useEffect(() => {setSmsTarget(null);}, [profile?.id, profile?.lawFirmId, superAdminFirmScope?.id]);
+  useEffect(() => {setSmsTarget(null);setWorkTarget(null);}, [profile?.id, profile?.lawFirmId, superAdminFirmScope?.id]);
 
   const canViewAllDb = can("db.view_all");
   const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
@@ -1270,7 +1274,7 @@ export default function DbManagementPage() {
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
-          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms}/>)}
+          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
         </div>
 
         {/* 데스크톱: 테이블 */}
@@ -1286,7 +1290,7 @@ export default function DbManagementPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms}/>)}
+              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={globalSuperView ? 11 : 10} className="px-4 py-10 text-center text-slate-400">
@@ -1331,6 +1335,7 @@ export default function DbManagementPage() {
         </Card>
       )}
 
+      {workTarget && <LeadWorkDialog key={workTarget.id} leadId={workTarget.id} onClose={() => setWorkTarget(null)}/>}
       <LeadSmsDialog lead={smsTarget} onClose={closeSms}/>
       <NewLeadModal open={newLeadOpen} onClose={() => setNewLeadOpen(false)} />
 
@@ -1365,7 +1370,7 @@ export default function DbManagementPage() {
         targetRef={customerTableScrollRef}
         targetId="db-customer-table-scroll"
         label="고객리스트 좌우 이동"
-        hideWhen={Boolean(newLeadOpen || consultTarget || deleteTarget || smsTarget)}
+        hideWhen={Boolean(newLeadOpen || consultTarget || deleteTarget || smsTarget || workTarget)}
       />
     </>
   );
