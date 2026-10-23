@@ -7,6 +7,7 @@ import { Activity, ChevronDown, BriefcaseBusiness, ChartNoAxesCombined, FileChec
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
 import { useStoreSession as useStore } from "@/lib/store";
+import { isWritingStaff } from "@/lib/writing-staff";
 import { authJson } from "@/lib/platform/client";
 import type { PermissionKey } from "@/lib/permissions";
 
@@ -42,16 +43,17 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
   const platformRole = profile?.platformRole ?? "staff";
   const isSuper = platformRole === "super_admin";
   const global = isSuper && !superAdminFirmScope;
+  const writer = isWritingStaff(profile);
   const [platformOpen, setPlatformOpen] = useState(true);
   const [firmOpen, setFirmOpen] = useState(true);
   const [scopeBusy, setScopeBusy] = useState(false);
   const [scopeError, setScopeError] = useState("");
   const visible = useMemo(() => {
-    const rows = baseMenu.filter(([, href, , permission]) => (!global || href === "/analytics") && (permission === "admin" ? isAdmin : can(permission))).map((row): MenuItem => row[1] === "/analytics" ? [global ? "전체 로펌 성과 · 통계" : "데이터집계", row[1], row[2], row[3]] : row);
+    const rows = baseMenu.filter(([, href, , permission]) => (!writer || href === "/db" || href === "/cases") && (!global || href === "/analytics") && (permission === "admin" ? isAdmin : can(permission))).map((row): MenuItem => row[1] === "/analytics" ? [global ? "전체 로펌 성과 · 통계" : "데이터집계", row[1], row[2], row[3]] : row);
     if (isSuper && superAdminFirmScope) rows.push(["로펌 설정/광고연동", `/firm/settings?lawFirmId=${encodeURIComponent(superAdminFirmScope.id)}`, Link2, "admin"]);
     else if (platformRole === "firm_admin") rows.push(["계약서 설정", "/firm/contract-settings", FileSignature, "admin"]);
     return rows;
-  }, [can, isAdmin, isSuper, global, platformRole, superAdminFirmScope]);
+  }, [can, isAdmin, isSuper, global, platformRole, superAdminFirmScope, writer]);
   const isActive = (href: string) => { const clean = href.split("?")[0]; return clean === "/platform" ? pathname === "/platform" || (pathname === "/" && global) : clean === "/" ? pathname === "/" : pathname === clean || pathname.startsWith(`${clean}/`); };
   async function changeScope(value: string) {
     if (scopeBusy) return;
@@ -80,7 +82,7 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
       <button type="button" aria-expanded={firmOpen} aria-controls={`${navId}-firm-navigation`} onClick={() => setFirmOpen(value => !value)} className="mb-1 flex w-full items-center gap-2 rounded-xl bg-slate-100 px-3 py-3 text-sm font-bold text-slate-800"><Scale size={18}/>로펌 운영<ChevronDown size={17} className={cn("ml-auto transition-transform", !firmOpen && "-rotate-90")}/></button>
       <div id={`${navId}-firm-navigation`} hidden={!firmOpen}>{global && <p className="px-3 py-2 text-[11px] leading-5 text-slate-500">관리 범위에서 로펌을 선택하면 DB·계약·문자 등 해당 로펌의 업무 메뉴가 열립니다.</p>}{visible.map(([label, href, Icon]) => link(label, href, Icon))}</div>
     </section>
-    {link("내 계정", "/account", KeyRound)}
+    {!writer && link("내 계정", "/account", KeyRound)}
   </nav>;
 }
 

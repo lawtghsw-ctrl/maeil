@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { authJson } from "@/lib/platform/client";
 import { requiresFirmWorkspace } from "@/lib/workspace-access";
+import { isWritingStaff, writingPathAllowed } from "@/lib/writing-staff";
 
 function ProtectedApp({ children }: { children: ReactNode }) {
   const pathname = usePathname(); const router = useRouter();
@@ -21,15 +22,18 @@ function ProtectedApp({ children }: { children: ReactNode }) {
   const needsFirmSelection = superAdminGlobal && requiresFirmWorkspace(pathname);
   const platformAllowed = role === "super_admin" ? true : !(pathname === "/platform" || pathname.startsWith("/platform/"));
   const firmSettingsAllowed = pathname !== "/firm/settings" || role === "firm_admin" || (role === "super_admin" && !!superAdminFirmScope);
-  const allowed = permissionAllowed && platformAllowed && firmSettingsAllowed && !needsFirmSelection;
+  const writer = isWritingStaff(profile);
+  const allowed = permissionAllowed && platformAllowed && firmSettingsAllowed && !needsFirmSelection && (!writer || writingPathAllowed(pathname));
+
+  useEffect(() => { if (writer && pathname === "/") router.replace("/db"); }, [writer, pathname, router]);
 
   useEffect(() => {
-    if (!profile || role === "super_admin") return;
+    if (!profile || role === "super_admin" || writer) return;
     let cancelled=false;
     const flush=async()=>{if(cancelled||document.visibilityState==="hidden")return;try{await authJson("/api/integrations/meta/flush",{method:"POST",body:JSON.stringify({limit:20})})}catch{}};
     const first=window.setTimeout(()=>void flush(),4000); const timer=window.setInterval(()=>void flush(),5*60*1000);
     return()=>{cancelled=true;window.clearTimeout(first);window.clearInterval(timer)};
-  },[profile,role]);
+  },[profile,role,writer]);
 
   async function leaveFirmView(){const firmId=superAdminFirmScope?.id;if(firmId){try{await authJson("/api/platform/firm-view",{method:"POST",body:JSON.stringify({lawFirmId:firmId,action:"exit"})})}catch{}}exitSuperAdminFirmScope();router.push("/");router.refresh();}
 

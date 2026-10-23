@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePlatformUser, platformError } from "@/lib/platform/server";
 import { performanceRange, resolvePerformanceFirmId } from "@/lib/performance/firm";
+import { isWritingStaff } from "@/lib/writing-staff";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
     else {
       if (body.kind !== "settlements" || !profile.law_firm_id || body.firmId !== profile.law_firm_id) throw new Error("FORBIDDEN");
       const { data: account, error } = await admin.from("profiles").select("permissions").eq("id", profile.id).single();
+      if (isWritingStaff({ ...profile, permissions: account?.permissions })) throw new Error("FORBIDDEN");
       if (error || account?.permissions?.["settlements.export"] !== true || account?.permissions?.["settlements.view"] !== true) throw new Error("FORBIDDEN");
       firmId = profile.law_firm_id;
       effectiveStaff = account.permissions["settlements.view_all"] === true ? effectiveStaff : String(profile.staff_name || profile.display_name || "");

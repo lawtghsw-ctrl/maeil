@@ -40,6 +40,7 @@ import { ClipboardList, MessageSquareText, Plus, ShieldAlert, Trash2 } from "luc
 import { buildLeadSearchIndex } from "@/lib/list-indexes";
 import { visibleMemoEntries } from "@/lib/consultation-memos";
 import { manualLeadAssignee } from "@/lib/manual-lead-assignment";
+import { isWritingStaff, canReadLeadForProfile } from "@/lib/writing-staff";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -298,12 +299,14 @@ function StageBoard({
   total,
   active,
   onSelect,
+  writingOnly = false,
 }: {
   counts: Partial<Record<DbDetailStage, number>>;
   warningCounts: Partial<Record<DbDetailStage, number>>;
   total: number;
   active: DbDetailStage | "전체";
   onSelect: (stage: DbDetailStage | "전체") => void;
+  writingOnly?: boolean;
 }) {
   return (
     <Card className="mb-3 overflow-x-auto p-2">
@@ -318,8 +321,8 @@ function StageBoard({
           전체 {total}건
         </button>
       </div>
-      <div className="grid min-w-[1080px] grid-cols-5 gap-1.5">
-        {DB_DETAIL_STAGE_TRACKS.map((track) => (
+      <div className={writingOnly ? "grid min-w-[860px] grid-cols-4 gap-1.5" : "grid min-w-[1080px] grid-cols-5 gap-1.5"}>
+        {DB_DETAIL_STAGE_TRACKS.filter(track => !writingOnly || track !== "상담").map((track) => (
           <div key={track} className="overflow-hidden rounded-md border border-slate-200 bg-white">
             <div
               className="px-2 py-1.5 text-center text-[11px] font-black text-white"
@@ -662,6 +665,7 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 type LeadRowProps = {
+  writingOnly?: boolean;
   lead: DbLead; globalSuperView: boolean; todayIso: string;
   can: ReturnType<typeof useStore>["can"]; workStaffNames: StaffName[]; canOpenConsultation: boolean;
   updateLead: ReturnType<typeof useStore>["updateLead"];
@@ -671,7 +675,7 @@ type LeadRowProps = {
 
 // CSS 반응형 트리를 유지해 화면 너비가 바뀌어도 메모 팝오버와 입력 DOM을 보존합니다.
 // 행과 무관한 모달·안내 상태 변경에서는 같은 행의 렌더링을 건너뜁니다.
-const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork }: LeadRowProps) {
+const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork, writingOnly = false }: LeadRowProps) {
   return (
     <div className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
       <div className="flex items-start justify-between gap-3">
@@ -725,7 +729,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
         }}
         className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
       >
-        {DB_DETAIL_STAGE_TRACKS.map((track) => (
+        {DB_DETAIL_STAGE_TRACKS.filter(track => !writingOnly || track !== "상담").map((track) => (
           <optgroup key={track} label={track}>
             {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
           </optgroup>
@@ -787,7 +791,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
   );
 });
 
-const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork }: LeadRowProps) {
+const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork, writingOnly = false }: LeadRowProps) {
   return (
     <tr className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
       {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
@@ -844,7 +848,7 @@ const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, tod
           }}
           className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
         >
-          {DB_DETAIL_STAGE_TRACKS.map((track) => (
+          {DB_DETAIL_STAGE_TRACKS.filter(track => !writingOnly || track !== "상담").map((track) => (
             <optgroup key={track} label={track}>
               {DB_DETAIL_STAGE_GROUPS[track].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
             </optgroup>
@@ -912,6 +916,7 @@ export default function DbManagementPage() {
   const customerTableScrollRef = useRef<HTMLDivElement>(null);
   const { leads, cases, updateLead, deleteLead, convertLeadToClient, workStaffNames, currentStaff, isAdmin, can, profile, superAdminFirmScope } = useStore();
   const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
+  const writer = isWritingStaff(profile);
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<LeadSource | "전체">("전체");
@@ -938,6 +943,7 @@ export default function DbManagementPage() {
   // 직원 계정은 본인 담당 DB만, 로펌 관리자/전체조회 권한은 해당 로펌 전체 DB를 검색합니다.
   // 예전에는 staffFilter 상태값에 다시 의존해서 직원/로펌 관리자 검색이 빈 결과가 되는 경우가 있었습니다.
   const accessibleLeads = useMemo(() => {
+    if (writer) return leads.filter(lead => canReadLeadForProfile(profile, lead, can, currentStaff));
     if (canViewAllDb) return leads;
     const myNames = new Set(
       [currentStaff, profile?.staffName, profile?.displayName]
@@ -946,7 +952,7 @@ export default function DbManagementPage() {
     );
     if (myNames.size === 0) return [];
     return leads.filter((lead) => myNames.has(String(lead.assignedStaff ?? "").trim()));
-  }, [canViewAllDb, leads, currentStaff, profile?.staffName, profile?.displayName]);
+  }, [canViewAllDb, leads, currentStaff, profile, can, writer]);
 
   // 최상단 통합검색에서 DB를 선택한 경우 DB관리 검색창으로 검색어를 넘겨받습니다.
   useEffect(() => {
@@ -1211,6 +1217,7 @@ export default function DbManagementPage() {
       />
 
       <StageBoard
+        writingOnly={writer}
         counts={stageCounts}
         warningCounts={stageWarningCounts}
         total={stageUniverse.length}
@@ -1274,7 +1281,7 @@ export default function DbManagementPage() {
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
-          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
+          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} writingOnly={writer} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
         </div>
 
         {/* 데스크톱: 테이블 */}
@@ -1290,7 +1297,7 @@ export default function DbManagementPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
+              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} writingOnly={writer} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={globalSuperView ? 11 : 10} className="px-4 py-10 text-center text-slate-400">
@@ -1336,10 +1343,10 @@ export default function DbManagementPage() {
       )}
 
       {workTarget && <LeadWorkDialog key={workTarget.id} leadId={workTarget.id} onClose={() => setWorkTarget(null)}/>}
-      <LeadSmsDialog lead={smsTarget} onClose={closeSms}/>
+      <LeadSmsDialog lead={can("sms.send") ? smsTarget : null} onClose={closeSms}/>
       <NewLeadModal open={newLeadOpen} onClose={() => setNewLeadOpen(false)} />
 
-      {consultTarget && (
+      {consultTarget && accessibleLeads.some(lead => lead.id === consultTarget.id) && (
         <LeadConsultationModal
           key={consultTarget.id}
           open={!!consultTarget}

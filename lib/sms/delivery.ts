@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { requirePlatformUser } from "@/lib/platform/server";
+import { isWritingStaff } from "@/lib/writing-staff";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const MOBILE = /^\d{9,11}$/;
@@ -49,6 +50,7 @@ export async function requireSmsActor(request: NextRequest, requestedFirm: unkno
   const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin", "staff"]);
   const { data: details, error } = await admin.from("profiles").select("permissions").eq("id", profile.id).maybeSingle();
   if (error || !details) fail(403, "문자 권한을 확인할 수 없습니다.");
+  if (isWritingStaff({ ...profile, permissions: details.permissions })) fail(403, "문자 기능을 사용할 권한이 없습니다.");
   const superAdmin = profile.platform_role === "super_admin";
   const manager = superAdmin || profile.platform_role === "firm_admin" || profile.role === "admin";
   const permissions = details.permissions as Record<string, unknown> | null;

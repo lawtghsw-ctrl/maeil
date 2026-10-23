@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { platformError, requirePlatformUser } from "@/lib/platform/server";
 import { sendMetaLeadEvent } from "@/lib/platform/meta";
+import { isWritingStaff } from "@/lib/writing-staff";
 
 function backoffMinutes(attempts: number) {
   if (attempts <= 1) return 5;
@@ -22,6 +23,10 @@ async function resolveAccess(request: NextRequest, body?: any) {
   }
 
   const { admin, profile } = await requirePlatformUser(request, ["super_admin", "firm_admin", "staff"]);
+  if (profile.platform_role !== "super_admin" && profile.platform_role !== "firm_admin" && profile.role !== "admin") {
+    const { data, error } = await admin.from("profiles").select("permissions").eq("id", profile.id).maybeSingle();
+    if (error || !data || isWritingStaff({ ...profile, permissions: data.permissions })) throw new Error("FORBIDDEN");
+  }
   const requestedFirm = body?.lawFirmId || request.nextUrl.searchParams.get("lawFirmId") || null;
   const lawFirmId = profile.platform_role === "super_admin" ? requestedFirm : profile.law_firm_id;
   if (profile.platform_role === "super_admin" && !lawFirmId) throw new Error("로펌을 선택해주세요.");

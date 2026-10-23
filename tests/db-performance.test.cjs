@@ -79,6 +79,9 @@ function createHarness(source, options = {}) {
   const modules = new Map();
   let store;
   const requireMock = (name) => {
+    if (name === '@/lib/writing-staff') return load('lib/writing-staff.ts');
+    if (name === '@/lib/permissions') return load('lib/permissions.ts');
+    if (name === '@/lib/case-consultation') return load('lib/case-consultation.ts');
     if (name === '@/lib/consultation-memos' || name === './consultation-memos') return load('lib/consultation-memos.ts');
     if (name === '@/components/db/LeadWorkDialog' && options.workDialog) return load('components/db/LeadWorkDialog.tsx');
     if (name === '@/components/sms/LeadSmsDialog' || name === '@/components/db/LeadWorkDialog') return { __esModule: true, default: () => null };

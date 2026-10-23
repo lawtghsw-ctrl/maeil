@@ -14,6 +14,7 @@ interface AssignmentStaff {
   email: string;
   isActive: boolean;
   isWorkStaff: boolean;
+  isWritingStaff?: boolean;
   platformRole: string;
 }
 
@@ -57,12 +58,15 @@ const WEEKDAYS = [
   [1, "월"], [2, "화"], [3, "수"], [4, "목"], [5, "금"], [6, "토"], [7, "일"],
 ] as const;
 
-function cloneConfig(config: AssignmentConfig): AssignmentConfig {
+function cloneConfig(config: AssignmentConfig, staff: AssignmentStaff[] = []): AssignmentConfig {
   const cloned = JSON.parse(JSON.stringify(config)) as AssignmentConfig;
+  const writerIds = new Set(staff.filter(row => row.isWritingStaff === true).map(row => row.id));
   return {
     ...cloned,
+    members: cloned.members.map(member => writerIds.has(member.profileId) ? { ...member, enabled: false } : member),
     rules: cloned.rules.map((rule) => ({
       ...rule,
+      members: rule.members.filter(member => !writerIds.has(member.profileId)),
       // 기존 설정의 "주말 오전/주말 오후"도 새 시간표기 슬롯으로 자동 승계합니다.
       consultTimeSlots: Array.from(new Set(rule.consultTimeSlots.map((slot) => normalizeConsultTimeValue(slot) ?? slot))),
     })),
@@ -101,7 +105,7 @@ function createRule(name: string, staff: AssignmentStaff[], dayType: DayType, st
     startTime,
     endTime,
     consultTimeSlots: [],
-    members: staff.map((row, idx) => ({ profileId: row.id, enabled: false, order: idx + 1, weight: 1 })),
+    members: staff.filter(row => !row.isWritingStaff).map((row, idx) => ({ profileId: row.id, enabled: false, order: idx + 1, weight: 1 })),
   };
 }
 
@@ -146,7 +150,7 @@ export function LeadAssignmentModal({
     try {
       const json = await api("GET") as AssignmentPayload;
       setPayload(json);
-      setConfig(cloneConfig(json.config));
+      setConfig(cloneConfig(json.config, json.staff));
     } catch (err) {
       setError(err instanceof Error ? err.message : "자동배정 설정을 불러오지 못했습니다.");
     } finally {
@@ -162,6 +166,7 @@ export function LeadAssignmentModal({
   const activeBase = useMemo(() => config ? normalizeOrder(config.members.filter((item) => item.enabled)) : [], [config]);
 
   function patchBase(profileId: string, patch: Partial<AssignmentMember>) {
+    if (staffById.get(profileId)?.isWritingStaff) return;
     setSaved(false);
     setConfig((current) => current ? {
       ...current,
@@ -207,6 +212,7 @@ export function LeadAssignmentModal({
   }
 
   function patchRuleMember(ruleId: string, profileId: string, patch: Partial<AssignmentMember>) {
+    if (staffById.get(profileId)?.isWritingStaff) return;
     setSaved(false);
     setConfig((current) => current ? {
       ...current,
@@ -265,7 +271,7 @@ export function LeadAssignmentModal({
           .map((rule, idx) => ({ ...rule, priority: idx + 1, members: normalizeOrder(rule.members) })),
       };
       const json = await api("PATCH", { lawFirmId, config: normalized });
-      setConfig(cloneConfig(json.config));
+      setConfig(cloneConfig(json.config, payload?.staff));
       setSaved(true);
       await onSaved?.();
     } catch (err) {
@@ -304,12 +310,12 @@ export function LeadAssignmentModal({
             <Card className="overflow-hidden">
               <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
                 <div className="flex items-center gap-2 text-sm font-black text-slate-900"><UsersRound size={16} /> 1. 자동배정 참여 직원</div>
-                <div className="mt-1 text-[11px] text-slate-500">해당 로펌의 직원계정이 모두 표시됩니다. 자동배정에 넣을 사람만 체크하세요.</div>
+                <div className="mt-1 text-[11px] text-slate-500">해당 로펌의 직원계정이 모두 표시됩니다. 자동배정에 넣을 사람만 체크하세요. 작성직원은 신규 상담 DB 자동배정에서 제외됩니다.</div>
               </div>
               <div className="divide-y divide-slate-100">
                 {payload.staff.map((row) => {
                   const member = memberMap(config.members).get(row.id);
-                  const eligible = row.isActive && row.isWorkStaff;
+                  const eligible = row.isActive && row.isWorkStaff && !row.isWritingStaff;
                   return (
                     <label key={row.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${eligible ? "cursor-pointer hover:bg-slate-50" : "bg-slate-50/70"}`}>
                       <span className="flex min-w-0 items-center gap-3">
@@ -326,7 +332,7 @@ export function LeadAssignmentModal({
                         </span>
                       </span>
                       <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-bold ${eligible ? "bg-emerald-50 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>
-                        {!row.isActive ? "비활성" : !row.isWorkStaff ? "실무담당 제외" : member?.enabled ? "자동배정 ON" : "자동배정 OFF"}
+                        {row.isWritingStaff ? "작성직원 · 자동배정 제외" : !row.isActive ? "비활성" : !row.isWorkStaff ? "실무담당 제외" : member?.enabled ? "자동배정 ON" : "자동배정 OFF"}
                       </span>
                     </label>
                   );
@@ -417,7 +423,7 @@ export function LeadAssignmentModal({
                     <div className="mt-3">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div className="text-xs font-black text-slate-700">이 규칙의 배정 대상 · 비율</div><div className="text-[10px] text-slate-400">1명만 체크하면 100% 몰아주기 · 여러 명이면 가중치 비율 배정</div></div>
                       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                        {payload.staff.filter((row) => row.isActive && row.isWorkStaff).map((row) => {
+                        {payload.staff.filter((row) => row.isActive && row.isWorkStaff && !row.isWritingStaff).map((row) => {
                           const member = memberMap(rule.members).get(row.id) ?? { profileId: row.id, enabled: false, order: 999, weight: 1 };
                           return (
                             <div key={row.id} className={`rounded-xl border p-3 ${member.enabled ? "border-blue-200 bg-blue-50/50" : "border-slate-200 bg-white"}`}>

@@ -11,6 +11,7 @@ Module._load=function(name,parent,...rest){
   if(name==='react/jsx-runtime')return require(path.join(runtime,'react/jsx-runtime'));
   if(name==='next/navigation')return {usePathname:()=>pathname};
   if(name==='./supabase/client'&&parent?.filename===path.join(root,'lib/store.tsx'))return {hasSupabaseEnv:()=>true,createClient:()=>fixture.client};
+  if(name.startsWith('@/'))return originalLoad.call(this,path.join(root,name.slice(2)),parent,...rest);
   return originalLoad.call(this,name,parent,...rest);
 };
 for(const ext of ['.ts','.tsx'])require.extensions[ext]=(module,file)=>module._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{
@@ -19,6 +20,7 @@ for(const ext of ['.ts','.tsx'])require.extensions[ext]=(module,file)=>module._c
 const {AppStoreProvider,useStore,useStoreSession}=require(path.join(root,'lib/store.tsx'));
 const {createStoreRefreshQueue,retainEqual}=require(path.join(root,'lib/store-refresh.ts'));
 const realTimeout=global.setTimeout;
+const realFetch=global.fetch;
 global.setTimeout=(fn,ms,...args)=>realTimeout(fn,ms===180?0:ms,...args);
 global.fetch=()=>{throw new Error('Network prohibited by test');};
 const clone=x=>x===undefined?undefined:JSON.parse(JSON.stringify(x));
@@ -86,7 +88,7 @@ async function navigate(route){pathname=route;await act(async()=>view.update(Rea
 async function emit(table,event,row){await act(async()=>fixture.emit(table,event,row));await tick();}
 const calls=table=>fixture.calls.filter(call=>call.table===table).length;
 let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++passed} ${name}`);}
-(async()=>{
+async function runSuite(){
   await check('Original write callbacks and permission rules remain equivalent; new consultation fields use existing permission',()=>{
     const original=require('node:child_process').execFileSync('git',['show','6acb7b9:lib/store.tsx'],{cwd:root,encoding:'utf8'}).replaceAll('\r\n','\n');
     const source=fs.readFileSync(path.join(root,'lib/store.tsx'),'utf8').replaceAll('\r\n','\n');
@@ -99,7 +101,29 @@ let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++pass
     assert.ok(source.includes(phoneValidation));
     const phoneStart=source.indexOf('  const updateClientPhone ='),phoneEnd=source.indexOf('  const deleteLead =',phoneStart);
     assert.ok(phoneStart>=0&&phoneEnd>phoneStart);
-    const current=(source.slice(0,phoneStart)+source.slice(phoneEnd)).replace(phoneValidation,'').replace(addition,'');
+    let current=(source.slice(0,phoneStart)+source.slice(phoneEnd)).replace(phoneValidation,'').replace(addition,'');
+    // Writer restrictions and the explicitly introduced case-basic permission
+    // are exercised by writing-staff-ui against the actual provider. Remove
+    // only these exact additions here; every original callback remains compared.
+    const writerAdditions=[
+      '        if (["caseNumber", "caseType", "court", "stage", "stageUpdatedAt", "status", "filingDate", "nextHearingDate", "monthlyRepayment", "contractDate", "memo"].includes(key)) return can("cases.edit_basic");\n',
+      '      if (isWritingStaff(profile) && (!isWritingLead(before) || !isWritingLead(next) || Object.keys(patch).some(key => ["id", "_lawFirmId", "_lawFirmName"].includes(key)))) {\n        setSyncError("저장 실패 · 작성직원은 착수 이후 DB만 수정할 수 있습니다.");\n        return false;\n      }\n',
+      '      if (isWritingStaff(profile) && !isWritingLead(lead)) return undefined;\n',
+      '      if (isWritingStaff(profile) && (!writingCaseAllowed(before, clients, leads, effectiveFirmId) || !writingCaseAllowed(next, clients, leads, effectiveFirmId))) return;\n',
+      '      const editableCase = cases.find(record => record.id === caseId);\n      if (isWritingStaff(profile) && (!editableCase || !writingCaseAllowed(editableCase, clients, leads, effectiveFirmId))) {\n        setSyncError("저장 실패 · 작성직원은 착수 이후 DB에 연결된 계약만 수정할 수 있습니다.");\n        return false;\n      }\n',
+      '  const writingData = useMemo(() => isWritingStaff(profile)\n    ? writingWorkspaceData({ leads, clients, cases, installments, scheduleItems }, effectiveFirmId)\n    : null, [profile, leads, clients, cases, installments, scheduleItems, effectiveFirmId]);\n\n',
+    ];
+    for(const addition of writerAdditions){assert.equal(current.split(addition).length,2,'Expected one precise writer addition');current=current.replace(addition,'');}
+    for(const [before,after]of [
+      ['[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile]','[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity]'],
+      ['[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile]','[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]'],
+      ['[canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity, profile, clients, leads, effectiveFirmId]','[canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]'],
+      ['[can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity, profile, clients, leads, effectiveFirmId]','[can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity]'],
+    ]){assert.equal(current.split(before).length,2,'Expected exact writer hook dependency list');current=current.replace(before,after);}
+    for(const [before,after]of [
+      ['queueWrite(isWritingStaff(profile)\n          ? saveEntity("app_cases", caseRecord).then(() => saveEntity("app_leads", nextLead))\n          : Promise.all([','queueWrite(Promise.all(['],
+      ['        isWritingStaff(profile)\n          ? saveEntity("app_clients", client).then(() => saveEntity("app_cases", caseRecord)).then(() => saveEntity("app_leads", nextLead))\n          : Promise.all([','        Promise.all(['],
+    ]){assert.equal(current.split(before).length,2,'Expected exact writer ordered-conversion branch');current=current.replace(before,after);}
     // Manual creation now deliberately assigns the current staff member. Its
     // full UI -> store -> persisted payload is tested in manual-lead-assignment.
     // Retain exact baseline comparison of every other write callback.
@@ -198,4 +222,10 @@ let passed=0;async function check(name,fn){await fn();console.log(`PASS ${++pass
   });
   await unmount();
   console.log(`PASS ${passed} store checks; actual React renderer, offline Supabase fixture, zero network calls.`);
-})().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{global.setTimeout=realTimeout;Module._load=originalLoad;});
+}
+function restoreRuntime(){global.setTimeout=realTimeout;global.fetch=realFetch;Module._load=originalLoad;}
+// Reuse this actual-provider fixture for feature tests without rerunning or
+// weakening the original performance/equivalence suite above.
+module.exports={React,renderer,act,mount,unmount,tick,navigate,emit,restoreRuntime,
+  get store(){return store;},get session(){return session;},get fixture(){return fixture;}};
+if(require.main===module)runSuite().catch(error=>{console.error(error);process.exitCode=1;}).finally(restoreRuntime);

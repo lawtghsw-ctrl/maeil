@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writePlatformAudit } from "@/lib/platform/server";
+import { isWritingStaff } from "@/lib/writing-staff";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
 type PlatformRole = "super_admin" | "firm_admin" | "staff";
 type DayType = "all" | "weekday" | "weekend" | "custom";
@@ -122,7 +127,7 @@ function sanitizeMembers(raw: unknown, allowedIds: Set<string>): AssignmentMembe
 
 function sanitizeConfig(raw: any, staff: any[]): AssignmentConfig {
   const allowedIds = new Set(staff.map((row) => String(row.id)));
-  const eligibleIds = new Set(staff.filter((row) => row.is_active === true && row.is_work_staff !== false).map((row) => String(row.id)));
+  const eligibleIds = new Set(staff.filter((row) => row.is_active === true && row.is_work_staff !== false && !isWritingStaff(row)).map((row) => String(row.id)));
   const baseRaw = sanitizeMembers(raw?.members, allowedIds);
   const byId = new Map(baseRaw.map((item) => [item.profileId, item]));
   const members = staff.map((row, idx) => {
@@ -182,7 +187,7 @@ export async function GET(request: NextRequest) {
     const [{ data: firm, error: firmError }, { data: staff, error: staffError }, { data: state, error: stateError }] = await Promise.all([
       admin.from("law_firms").select("id,name,status").eq("id", lawFirmId).maybeSingle(),
       admin.from("profiles")
-        .select("id,email,display_name,staff_name,is_active,is_work_staff,auto_assign_leads,lead_assignment_order,platform_role,created_at")
+        .select("id,email,display_name,staff_name,is_active,is_work_staff,auto_assign_leads,lead_assignment_order,role,platform_role,permissions,created_at")
         .eq("law_firm_id", lawFirmId)
         .in("platform_role", ["firm_admin", "staff"])
         .order("created_at"),
@@ -201,6 +206,7 @@ export async function GET(request: NextRequest) {
         email: row.email || "",
         isActive: row.is_active === true,
         isWorkStaff: row.is_work_staff !== false,
+        isWritingStaff: isWritingStaff(row),
         platformRole: row.platform_role || "staff",
       })),
       config,
@@ -216,7 +222,7 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const lawFirmId = await resolveFirmId(request, profile, body?.lawFirmId);
     const { data: staff, error: staffError } = await admin.from("profiles")
-      .select("id,email,display_name,staff_name,is_active,is_work_staff,auto_assign_leads,lead_assignment_order,platform_role,created_at")
+      .select("id,email,display_name,staff_name,is_active,is_work_staff,auto_assign_leads,lead_assignment_order,role,platform_role,permissions,created_at")
       .eq("law_firm_id", lawFirmId)
       .in("platform_role", ["firm_admin", "staff"])
       .order("created_at");

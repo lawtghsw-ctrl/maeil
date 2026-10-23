@@ -37,6 +37,7 @@ import { changedCustomerPhone } from "./customer-phone";
 import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
+import { isWritingStaff, isWritingLead, writingPermission, writingCaseAllowed, writingWorkspaceData } from "./writing-staff";
 
 type DocumentState = Record<string, Record<string, boolean>>;
 
@@ -278,7 +279,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     (permission: PermissionKey) => {
       if (!profile?.isActive) return false;
       if (profile.platformRole === "super_admin" && isGlobalSuperAdmin) return globalViewPermissions.has(permission);
-      return profile.role === "admin" || profile.permissions?.[permission] === true;
+      return profile.role === "admin" || (isWritingStaff(profile) ? writingPermission(permission) : profile.permissions?.[permission] === true);
     },
     [globalViewPermissions, isGlobalSuperAdmin, profile]
   );
@@ -315,6 +316,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (key === "assignedStaff") return can("cases.change_assignee");
         if (key === "totalDebt" || key === "paidAmount" || key === "contractAmount" || key === "installmentCount" || key === "paymentMethod") return can("cases.manage_installments");
         if (key === "docsSentAt") return can("cases.send_docs");
+        if (["caseNumber", "caseType", "court", "stage", "stageUpdatedAt", "status", "filingDate", "nextHearingDate", "monthlyRepayment", "contractDate", "memo"].includes(key)) return can("cases.edit_basic");
         return false;
       });
     },
@@ -743,6 +745,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }
       }
       const next = { ...before, ...patch };
+      if (isWritingStaff(profile) && (!isWritingLead(before) || !isWritingLead(next) || Object.keys(patch).some(key => ["id", "_lawFirmId", "_lawFirmName"].includes(key)))) {
+        setSyncError("저장 실패 · 작성직원은 착수 이후 DB만 수정할 수 있습니다.");
+        return false;
+      }
       setLeads((prev) => prev.map((l) => (l.id === id ? next : l)));
       try {
         await saveEntity("app_leads", next);
@@ -757,7 +763,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity]
+    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile]
   );
 
   const updateClientPhone = useCallback(
@@ -819,6 +825,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (isGlobalSuperAdmin || !can("db.convert")) return undefined;
       const lead = leads.find((l) => l.id === leadId);
       if (!lead) return undefined;
+      if (isWritingStaff(profile) && !isWritingLead(lead)) return undefined;
 
       // v27.11 보정: v27.10에서 이미 고객만 생성되고 계약이 생성되지 않은 리드는
       // 고객전환 버튼을 다시 누르면 기존 Client를 유지한 채 미접수 계약만 생성합니다.
@@ -850,7 +857,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
         setCases((prev) => [caseRecord, ...prev]);
         setLeads((prev) => prev.map((item) => (item.id === leadId ? nextLead : item)));
-        queueWrite(Promise.all([saveEntity("app_cases", caseRecord), saveEntity("app_leads", nextLead)]));
+        queueWrite(isWritingStaff(profile)
+          ? saveEntity("app_cases", caseRecord).then(() => saveEntity("app_leads", nextLead))
+          : Promise.all([saveEntity("app_cases", caseRecord), saveEntity("app_leads", nextLead)]));
         logChange("DB관리", "수정", lead.name, "기존 전환 고객의 누락 계약 생성");
         return existingClient.id;
       }
@@ -905,7 +914,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setCases((prev) => [caseRecord, ...prev]);
       setLeads((prev) => prev.map((l) => (l.id === leadId ? nextLead : l)));
       queueWrite(
-        Promise.all([
+        isWritingStaff(profile)
+          ? saveEntity("app_clients", client).then(() => saveEntity("app_cases", caseRecord)).then(() => saveEntity("app_leads", nextLead))
+          : Promise.all([
           saveEntity("app_clients", client),
           saveEntity("app_cases", caseRecord),
           saveEntity("app_leads", nextLead),
@@ -914,7 +925,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "수정", lead.name, "고객 및 계약관리 미접수 계약 생성");
       return client.id;
     },
-    [can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]
+    [can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile]
   );
 
   const toggleDocument = useCallback(
@@ -965,11 +976,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const before = cases.find((c) => c.id === id);
       if (!before) return;
       const next = { ...before, ...patch };
+      if (isWritingStaff(profile) && (!writingCaseAllowed(before, clients, leads, effectiveFirmId) || !writingCaseAllowed(next, clients, leads, effectiveFirmId))) return;
       setCases((prev) => prev.map((c) => (c.id === id ? next : c)));
       queueWrite(saveEntity("app_cases", next));
       logChange("계약관리", "수정", before.caseNumber, "계약 관련 정보 수정");
     },
-    [canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]
+    [canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity, profile, clients, leads, effectiveFirmId]
   );
 
   const deleteCase = useCallback(
@@ -1018,6 +1030,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSyncError("저장 실패 · 현재 계정에 분납관리 수정 권한이 없습니다.");
         return false;
       }
+      const editableCase = cases.find(record => record.id === caseId);
+      if (isWritingStaff(profile) && (!editableCase || !writingCaseAllowed(editableCase, clients, leads, effectiveFirmId))) {
+        setSyncError("저장 실패 · 작성직원은 착수 이후 DB에 연결된 계약만 수정할 수 있습니다.");
+        return false;
+      }
       const oldRows = installments.filter((i) => i.caseId === caseId);
       const updated: Installment[] = rows.map((r, idx) => ({
         id: r.id ?? makeId(`${caseId}-INS`),
@@ -1063,7 +1080,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity]
+    [can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity, profile, clients, leads, effectiveFirmId]
   );
 
   const addPost = useCallback(
@@ -1142,16 +1159,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     window.location.href = "/login";
   }, [supabase]);
 
+  const writingData = useMemo(() => isWritingStaff(profile)
+    ? writingWorkspaceData({ leads, clients, cases, installments, scheduleItems }, effectiveFirmId)
+    : null, [profile, leads, clients, cases, installments, scheduleItems, effectiveFirmId]);
+
   const value = useMemo<AppStoreValue>(
     () => ({
-      clients,
-      cases,
-      installments,
-      scheduleItems,
-      leads,
-      posts,
-      caseDocuments,
-      changeLog,
+      clients: writingData?.clients ?? clients,
+      cases: writingData?.cases ?? cases,
+      installments: writingData?.installments ?? installments,
+      scheduleItems: writingData?.scheduleItems ?? scheduleItems,
+      leads: writingData?.leads ?? leads,
+      posts: writingData ? [] : posts,
+      caseDocuments: writingData ? {} : caseDocuments,
+      changeLog: writingData ? [] : changeLog,
       settlementRates,
       minLivingCostTable,
       loading,
@@ -1189,6 +1210,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setMinLivingCostExtraPerPerson,
     }),
     [
+      writingData,
       clients,
       cases,
       installments,

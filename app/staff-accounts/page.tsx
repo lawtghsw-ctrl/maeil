@@ -76,18 +76,20 @@ function PermissionEditor({
   value,
   onChange,
   disabled = false,
+  readOnly = false,
 }: {
   value: PermissionMap;
   onChange: (next: PermissionMap) => void;
   disabled?: boolean;
+  readOnly?: boolean;
 }) {
   function toggle(key: PermissionKey) {
-    if (disabled) return;
+    if (disabled || readOnly) return;
     onChange(setPermissionSelection(value, [key], value[key] !== true));
   }
 
   function setGroup(keys: readonly PermissionKey[], checked: boolean) {
-    if (disabled) return;
+    if (disabled || readOnly) return;
     onChange(setPermissionSelection(value, keys, checked));
   }
 
@@ -98,7 +100,7 @@ function PermissionEditor({
           <div className="text-xs font-bold text-slate-700">세부 권한</div>
           <div className="mt-0.5 text-[11px] text-slate-400">{permissionCount(value)} / {ALL_PERMISSION_KEYS.length}개 허용</div>
         </div>
-        {!disabled && (
+        {!disabled && !readOnly && (
           <div className="flex flex-wrap gap-1.5">
             <button type="button" onClick={() => onChange(normalizePermissions(Object.fromEntries(ALL_PERMISSION_KEYS.map((key) => [key, true])) as PermissionMap))} className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100">전체 선택</button>
             <button type="button" onClick={() => onChange({})} className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100">전체 해제</button>
@@ -106,7 +108,7 @@ function PermissionEditor({
         )}
       </div>
 
-      {!disabled && <p className="text-xs leading-5 text-slate-500">기능을 선택하면 필요한 조회 권한도 함께 켜집니다. 조회 권한을 해제하면 해당 권한이 필요한 기능도 함께 꺼집니다. 예: 전체 담당자 DB 조회 해제 시 DB 담당자 변경도 해제됩니다. 변경 후 저장을 눌러주세요.</p>}
+      {readOnly ? <p className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs leading-5 text-indigo-800">작성직원 · DB관리·계약관리만 사용합니다. 상담 단계는 제외하고 착수·서류·법원·워크아웃 단계와 연결된 계약을 전체 담당자 기준으로 조회·수정합니다. 신규 DB 자동배정·삭제·문자발송·전자계약 전송·관리설정은 제외됩니다. 일반 직원으로 변경하려면 다른 권한 프리셋을 선택한 후 저장해주세요.</p> : !disabled && <p className="text-xs leading-5 text-slate-500">기능을 선택하면 필요한 조회 권한도 함께 켜집니다. 조회 권한을 해제하면 해당 권한이 필요한 기능도 함께 꺼집니다. 예: 전체 담당자 DB 조회 해제 시 DB 담당자 변경도 해제됩니다. 변경 후 저장을 눌러주세요.</p>}
 
       {PERMISSION_GROUPS.map((group) => {
         const keys = group.items.map((item) => item[0]) as PermissionKey[];
@@ -118,7 +120,7 @@ function PermissionEditor({
                 <div className="text-sm font-bold text-slate-900">{group.label}</div>
                 <div className="mt-0.5 text-[11px] text-slate-500">{group.description}</div>
               </div>
-              {!disabled && (
+              {!disabled && !readOnly && (
                 <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
                   <input type="checkbox" checked={allChecked} onChange={(e) => setGroup(keys, e.target.checked)} className="size-4 rounded border-slate-300" />
                   이 영역 전체
@@ -128,7 +130,7 @@ function PermissionEditor({
             <div className="grid gap-px bg-slate-100 sm:grid-cols-2">
               {group.items.map(([key, label, description]) => (
                 <label key={key} className={`flex gap-3 bg-white px-4 py-3 ${disabled ? "cursor-default" : "cursor-pointer hover:bg-blue-50/40"}`}>
-                  <input type="checkbox" checked={disabled || value[key] === true} disabled={disabled} onChange={() => toggle(key)} className="mt-0.5 size-4 shrink-0 rounded border-slate-300" />
+                  <input type="checkbox" checked={disabled || value[key] === true} disabled={disabled || readOnly} onChange={() => toggle(key)} className="mt-0.5 size-4 shrink-0 rounded border-slate-300" />
                   <span className="min-w-0">
                     <span className="block text-xs font-bold text-slate-800">{label}</span>
                     <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">{description}</span>
@@ -236,6 +238,7 @@ export default function StaffAccountsPage() {
       await api("POST", {
         ...draft,
         lawFirmId: superAdminFirmScope?.id,
+        autoAssignLeads: draft.permissions["staff.writer"] === true ? false : draft.autoAssignLeads,
         permissions: normalizePermissions(draft.permissions),
       });
       setCreateOpen(false);
@@ -260,7 +263,7 @@ export default function StaffAccountsPage() {
         role: editing.role,
         isActive: editing.isActive,
         isWorkStaff: editing.isWorkStaff,
-        autoAssignLeads: editing.autoAssignLeads,
+        autoAssignLeads: editing.permissions["staff.writer"] === true ? false : editing.autoAssignLeads,
         leadAssignmentOrder: editing.leadAssignmentOrder,
         permissions: normalizePermissions(editing.permissions),
         password: editPassword || undefined,
@@ -377,7 +380,7 @@ export default function StaffAccountsPage() {
                 <tr key={row.id} className="border-t border-slate-100">
                   {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{firmName(row.lawFirmId)}</span></td>}
                   <td className="px-4 py-3"><div className="font-bold text-slate-900">{row.displayName}</div><div className="mt-0.5 text-xs text-slate-400">{row.email}</div></td>
-                  <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.role === "admin" ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : "직원"}</span></td>
+                  <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.role === "admin" ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : row.permissions["staff.writer"] === true ? "작성직원" : "직원"}</span></td>
                   <td className="px-4 py-3"><span className={`rounded-md px-2 py-1 text-xs font-bold ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span></td>
                   <td className="px-4 py-3">{row.isWorkStaff ? <span className="font-semibold text-blue-700">사용</span> : <span className="text-slate-400">제외</span>}</td>
                   <td className="px-4 py-3">{row.isActive && row.isWorkStaff && row.autoAssignLeads ? <span className="font-semibold text-emerald-700">참여 · {row.leadAssignmentOrder}</span> : <span className="text-slate-400">제외</span>}</td>
@@ -394,7 +397,7 @@ export default function StaffAccountsPage() {
           {filtered.map((row) => (
             <div key={row.id} className="p-4">
               <div className="flex items-start justify-between gap-3"><div><div className="font-bold">{row.displayName}</div><div className="text-xs text-slate-400">{row.email}</div></div><Button variant="secondary" onClick={() => { setEditing({ ...row, permissions: { ...row.permissions } }); setEditPassword(""); }}>설정</Button></div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : "직원"}</span><span className={`rounded px-2 py-1 ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-700">실무담당 {row.isWorkStaff ? "사용" : "제외"}</span><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">DB자동유입 {row.isActive && row.isWorkStaff && row.autoAssignLeads ? `참여(${row.leadAssignmentOrder})` : "제외"}</span></div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.platformRole === "super_admin" ? "로파워 최상위" : row.platformRole === "firm_admin" ? "로펌 관리자" : row.permissions["staff.writer"] === true ? "작성직원" : "직원"}</span><span className={`rounded px-2 py-1 ${row.isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>{row.isActive ? "활성" : "비활성"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-700">실무담당 {row.isWorkStaff ? "사용" : "제외"}</span><span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">DB자동유입 {row.isActive && row.isWorkStaff && row.autoAssignLeads ? `참여(${row.leadAssignmentOrder})` : "제외"}</span></div>
             </div>
           ))}
         </div>
@@ -414,7 +417,7 @@ export default function StaffAccountsPage() {
           </div>
           {draft.role === "staff" ? <>
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-xs font-bold text-blue-800">권한 프리셋</div><div className="mt-2 flex flex-wrap gap-2">{PERMISSION_PRESETS.map((preset) => <button key={preset.id} type="button" title={preset.description} onClick={() => applyPreset(preset.id, (permissions) => setDraft((v) => ({ ...v, permissions })))} className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">{preset.label}</button>)}</div></div>
-            <PermissionEditor value={draft.permissions} onChange={(permissions) => setDraft((v) => ({ ...v, permissions }))} />
+            <PermissionEditor value={draft.permissions} readOnly={draft.permissions["staff.writer"] === true} onChange={(permissions) => setDraft((v) => ({ ...v, permissions }))} />
           </> : <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-800"><b>로펌 관리자 계정</b>은 해당 로펌의 전체 업무 데이터와 관리 기능을 사용할 수 있습니다. 신규 일반 직원은 초대코드 가입을 기본으로 사용합니다.</div>}
           <div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setCreateOpen(false)} disabled={busy}>취소</Button><Button onClick={() => void createAccount()} disabled={busy}>{busy ? "생성 중..." : "계정 생성"}</Button></div>
         </div>
@@ -434,7 +437,7 @@ export default function StaffAccountsPage() {
           </div>
           {editing.role === "staff" ? <>
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><div className="text-xs font-bold text-blue-800">권한 프리셋</div><div className="mt-0.5 text-[11px] text-blue-600">프리셋 적용 후 아래 체크박스를 다시 수기로 세밀하게 조정할 수 있습니다.</div></div><div className="flex flex-wrap gap-2">{PERMISSION_PRESETS.map((preset) => <button key={preset.id} type="button" onClick={() => applyPreset(preset.id, (permissions) => setEditing((v) => v ? { ...v, permissions } : v))} className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">{preset.label}</button>)}</div></div></div>
-            <PermissionEditor value={editing.permissions} onChange={(permissions) => setEditing((v) => v ? { ...v, permissions } : v)} />
+            <PermissionEditor value={editing.permissions} readOnly={editing.permissions["staff.writer"] === true} onChange={(permissions) => setEditing((v) => v ? { ...v, permissions } : v)} />
           </> : <PermissionEditor value={Object.fromEntries(ALL_PERMISSION_KEYS.map((key) => [key, true])) as PermissionMap} onChange={() => {}} disabled />}
           <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-white/95 py-3 backdrop-blur">
             <Button variant="danger" onClick={() => void deleteAccount(editing)} disabled={busy || editing.id === currentUser?.id}>계정 영구삭제</Button>

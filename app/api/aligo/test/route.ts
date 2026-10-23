@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { AligoTestRelayError, requestAligoTest } from "@/lib/sms/aligo-test-relay";
+import { isWritingStaff } from "@/lib/writing-staff";
 
 export const dynamic = "force-dynamic";
 const permittedSenders: Record<string,string> = {
@@ -20,6 +21,7 @@ export async function POST(req: NextRequest) {
     .select("is_active,platform_role,role,permissions,law_firm_id").eq("id",user.id).maybeSingle();
   if(profileError || !profile || !profile.is_active) return NextResponse.json({error:"사용자 확인 실패"},{status:403});
   const p=profile as {platform_role?:string;role?:string;permissions?:Record<string,boolean>;law_firm_id?:string};
+  if (isWritingStaff(p)) return NextResponse.json({error:"문자 설정 권한이 없습니다."},{status:403});
   const allowed=p.platform_role==="super_admin" || p.role==="admin" || p.role==="firm_admin" || p.permissions?.["sms.manage_settings"] === true;
   if(!allowed) return NextResponse.json({error:"문자 설정 권한이 없습니다."},{status:403});
   let body:{sender?:unknown;receiver?:unknown;lawFirmId?:unknown}|null=null;

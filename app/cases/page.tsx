@@ -1,7 +1,7 @@
 "use client";
 import { DateInput } from "@/components/ui/DateInput";
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
@@ -11,7 +11,10 @@ import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, 
 import { fmtDate, fmtWon } from "@/lib/format";
 import { Plus, Trash2 } from "lucide-react";
 import { CaseDetailPopup } from "@/components/cases/CaseDetailPopup";
+import { CaseConsultationModal } from "@/components/cases/CaseConsultationModal";
+import { caseConsultationLead } from "@/lib/case-consultation";
 import { countByKey, firstByKey } from "@/lib/list-indexes";
+import { canReadLeadForProfile } from "@/lib/writing-staff";
 
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
@@ -120,10 +123,12 @@ function ContractCreateModal({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 export default function CasesPage() {
-  const { cases, clients, installments, can, currentStaff, profile, superAdminFirmScope, deleteCase } = useStore();
+  const { cases, clients, leads, installments, can, currentStaff, profile, superAdminFirmScope, deleteCase } = useStore();
   const globalSuperView = profile?.platformRole === "super_admin" && !superAdminFirmScope;
+  const firmId = profile?.platformRole === "super_admin" ? superAdminFirmScope?.id : profile?.lawFirmId;
   const [createOpen, setCreateOpen] = useState(false);
   const [detailCaseId, setDetailCaseId] = useState<string | null>(null);
+  const [consultationCaseId, setConsultationCaseId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<CaseType | "전체">("전체");
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "전체">("진행중");
@@ -131,6 +136,20 @@ export default function CasesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const clientsById = useMemo(() => firstByKey(clients, (client) => client.id), [clients]);
   const installmentCountsByCase = useMemo(() => countByKey(installments, (item) => item.caseId), [installments]);
+  const consultationLeads = useMemo(() => {
+    const linked = new Map<string, string>();
+    if (!can("db.view_consultation") || !can("cases.view")) return linked;
+    for (const record of cases) {
+      if (!can("cases.view_all") && record.assignedStaff !== currentStaff) continue;
+      const lead = caseConsultationLead(record, clientsById.get(record.clientId), leads, firmId);
+      if (lead && canReadLeadForProfile(profile, lead, can, currentStaff)) linked.set(record.id, lead.id);
+    }
+    return linked;
+  }, [cases, clientsById, leads, firmId, profile, can, currentStaff]);
+  useEffect(() => { setConsultationCaseId(null); }, [profile?.id, firmId]);
+  useEffect(() => {
+    if (consultationCaseId && !consultationLeads.has(consultationCaseId)) setConsultationCaseId(null);
+  }, [consultationCaseId, consultationLeads]);
 
   async function handleDelete(caseId: string, clientName: string, caseNumber: string) {
     if (!can("cases.delete") || deletingId) return;
@@ -242,6 +261,7 @@ export default function CasesPage() {
                     {receivable > 0 ? <span className="font-semibold text-red-600">미수 {fmtWon(receivable)}</span> : <span className="text-slate-300">미수금 없음</span>}
                   </div>}
                 </div>
+                {can("db.view_consultation") && <button type="button" aria-label={`${client?.name ?? "고객"} 상담일지`} disabled={!consultationLeads.has(c.id)} title={consultationLeads.has(c.id) ? "연결된 DB 상담일지 열기" : "연결된 DB가 없거나 조회할 수 없습니다."} onClick={() => { if (consultationLeads.has(c.id)) setConsultationCaseId(c.id); }} className="mr-2 mt-3 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">상담일지</button>}
                 {can("cases.delete") && !globalSuperView && (
                   <button type="button" disabled={deletingId === c.id} onClick={() => void handleDelete(c.id, client?.name ?? "고객", c.caseNumber)} className="mt-3 inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
                     <Trash2 size={13} /> {deletingId === c.id ? "삭제 중..." : "삭제"}
@@ -291,6 +311,7 @@ export default function CasesPage() {
                         <button type="button" onClick={() => setDetailCaseId(c.id)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
                           상세
                         </button>
+                        {can("db.view_consultation") && <button type="button" aria-label={`${client?.name ?? "고객"} 상담일지`} disabled={!consultationLeads.has(c.id)} title={consultationLeads.has(c.id) ? "연결된 DB 상담일지 열기" : "연결된 DB가 없거나 조회할 수 없습니다."} onClick={() => { if (consultationLeads.has(c.id)) setConsultationCaseId(c.id); }} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">상담일지</button>}
                         {can("cases.delete") && !globalSuperView && (
                           <button type="button" disabled={deletingId === c.id} onClick={() => void handleDelete(c.id, client?.name ?? "고객", c.caseNumber)} className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
                             <Trash2 size={13} /> {deletingId === c.id ? "삭제 중..." : "삭제"}
@@ -315,6 +336,7 @@ export default function CasesPage() {
       </Card>
       <ContractCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
       <CaseDetailPopup key={detailCaseId ?? "empty"} caseId={detailCaseId} onClose={() => setDetailCaseId(null)} />
+      {consultationCaseId && <CaseConsultationModal key={`${profile?.id}:${firmId}:${consultationCaseId}`} caseId={consultationCaseId} onClose={() => setConsultationCaseId(null)} />}
     </>
   );
 }

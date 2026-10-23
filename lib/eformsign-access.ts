@@ -1,9 +1,12 @@
+import { isWritingStaff } from "@/lib/writing-staff";
+
 /** Keep API document actions within the same staff assignment scope as cases UI. */
 export async function getFirmEsignCase(admin: any, profile: any, caseId: string) {
   const manager = profile.platform_role === "super_admin" || profile.platform_role === "firm_admin" || profile.role === "admin";
   let permissions: Record<string, unknown> = {};
   if (!manager) {
     const { data, error } = await admin.from("profiles").select("permissions").eq("id", profile.id).maybeSingle();
+    if (isWritingStaff({ ...profile, permissions: data?.permissions })) throw new Error("FORBIDDEN");
     if (error || data?.permissions?.["cases.econtract"] !== true) throw new Error("FORBIDDEN");
     permissions = data.permissions;
   }
