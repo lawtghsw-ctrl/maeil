@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useState, type FormEvent } from "react";
+import { Suspense, useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BrandLogo } from "@/components/brand/BrandLogo";
-import { normalizeLoginIdentifier } from "@/lib/auth/login-identifier";
+import { parseLoginIdentifier, safeLoginNext } from "@/lib/auth/login-identifier";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 
 function LoginForm() {
@@ -14,18 +14,33 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submitting = useRef(false);
   const configured = hasSupabaseEnv();
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!configured) return;
+    if (!configured || submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError(null);
+    let sessionClient: ReturnType<typeof createClient> | null = null;
     try {
-      const email = normalizeLoginIdentifier(identifier);
+      const login = parseLoginIdentifier(identifier);
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ identifier: login.value, password }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "아이디 또는 비밀번호를 확인해주세요.");
+      if (typeof result.session?.access_token !== "string" || !result.session.access_token.trim() || typeof result.session?.refresh_token !== "string" || !result.session.refresh_token.trim()) throw new Error("로그인 세션을 확인하지 못했습니다.");
       const supabase = createClient();
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInError) throw signInError;
+      sessionClient = supabase;
+      const { data: signInData, error: signInError } = await supabase.auth.setSession(result.session);
+      if (signInError || !signInData.user) {
+        throw new Error("로그인 세션을 확인하지 못했습니다. 다시 시도해주세요.");
+      }
       const user = signInData.user;
       if (!user) throw new Error("로그인 사용자 정보를 확인하지 못했습니다.");
 
@@ -35,32 +50,33 @@ function LoginForm() {
         .eq("id", user.id)
         .maybeSingle();
       if (profileError) {
-        await supabase.auth.signOut();
         throw new Error("Supabase 멀티로펌 SQL이 적용되지 않았습니다.");
       }
       if (!profile) {
-        await supabase.auth.signOut();
         throw new Error("사용자 프로필이 없습니다.");
       }
       if (profile.is_active === false) {
-        await supabase.auth.signOut();
         throw new Error("비활성 계정입니다. 관리자에게 문의해주세요.");
       }
 
       const { data: active, error: activeError } = await supabase.rpc("is_active_user");
       if (activeError || active !== true) {
-        await supabase.auth.signOut();
         throw new Error("소속 로펌이 이용정지 상태이거나 사용할 수 없는 계정입니다.");
       }
 
       const next = searchParams.get("next");
       const defaultPath = profile.platform_role === "super_admin" ? "/platform" : "/";
-      const safeNext = next && next.startsWith("/") ? next : null;
+      const safeNext = safeLoginNext(next);
       router.replace(profile.platform_role === "super_admin" && safeNext === "/" ? "/platform" : safeNext || defaultPath);
       router.refresh();
+      sessionClient = null;
     } catch (err) {
+      if (sessionClient) {
+        try { await sessionClient.auth.signOut({ scope: "local" }); } catch { /* Keep the original failure message. */ }
+      }
       setError(err instanceof Error ? err.message : "로그인에 실패했습니다.");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -76,7 +92,7 @@ function LoginForm() {
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><b>Supabase 연결정보가 없습니다.</b></div>
         ) : (
           <form onSubmit={submit} className="space-y-4">
-            <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600">이메일 또는 아이디</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="h-11 w-full rounded-lg border px-3 text-sm" /></label>
+            <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600">아이디 또는 이메일</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="h-11 w-full rounded-lg border px-3 text-sm" /><span className="mt-1.5 block text-xs leading-5 text-slate-500">기존 계정은 이메일의 @ 앞부분을 아이디로 사용할 수 있습니다.</span></label>
             <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600">비밀번호</span><input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="h-11 w-full rounded-lg border px-3 text-sm" /></label>
             {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{error}</div>}
             <button disabled={busy} className="h-11 w-full rounded-lg bg-blue-600 text-sm font-bold text-white disabled:opacity-50">{busy ? "로그인 중..." : "로그인"}</button>
