@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
-import { CASE_TYPE_OPTIONS, type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
+import { CASE_TYPE_OPTIONS, type CaseRecord, type CaseStatus, type CaseType, type PaymentMethod, type StaffName } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Button, Card, Input, Modal, PageHeader, Pagination, SearchBox, Select, pageRows } from "@/components/ui/Primitives";
 import { fmtDate, fmtWon } from "@/lib/format";
@@ -19,6 +19,12 @@ import { canReadLeadForProfile } from "@/lib/writing-staff";
 const TYPE_FILTERS: Array<CaseType | "전체"> = ["전체", ...CASE_TYPE_OPTIONS];
 const STATUS_FILTERS: Array<CaseStatus | "전체"> = ["전체", "진행중", "보류", "종결", "취하"];
 
+function caseListStatus(record: CaseRecord, canViewFinance: boolean): CaseStatus | "납부완료" {
+  return canViewFinance && record.status === "진행중"
+    && Number.isFinite(record.contractAmount) && record.contractAmount > 0
+    && Number.isFinite(record.paidAmount) && record.paidAmount >= record.contractAmount
+    ? "납부완료" : record.status;
+}
 
 const PAYMENT_METHODS: PaymentMethod[] = ["일시완납", "단순분납", "로피분납", "신카할부완납", "캐피탈분납"];
 
@@ -251,7 +257,7 @@ export default function CasesPage() {
                       </div>
                       <div className="mt-0.5 text-xs text-slate-500">{globalSuperView ? `${c._lawFirmName ?? "-"} · ` : ""}{c.caseNumber} · 담당 {c.assignedStaff}</div>
                     </div>
-                    <StatusBadge status={c.status} />
+                    <StatusBadge status={caseListStatus(c, can("cases.view_finance"))} />
                   </div>
                   <div className="text-xs text-slate-400">{fmtDate(c.contractDate)} 계약</div>
                   {can("cases.view_finance") && <div className="grid grid-cols-2 gap-1 text-sm">
@@ -304,7 +310,7 @@ export default function CasesPage() {
                       {can("cases.view_finance") ? (receivable > 0 ? <span className="font-semibold text-red-600">{fmtWon(receivable)}</span> : <span className="text-slate-300">-</span>) : <span className="text-slate-300">-</span>}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={c.status} />
+                      <StatusBadge status={caseListStatus(c, can("cases.view_finance"))} />
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">

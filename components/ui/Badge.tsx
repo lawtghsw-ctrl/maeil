@@ -16,9 +16,10 @@ export function StageBadge({ stage, caseType }: { stage: CaseStage; caseType: Ca
   return <Badge tone={tone}>{STAGE_LABELS[caseType][stage]}</Badge>;
 }
 
-export function StatusBadge({ status }: { status: CaseStatus }) {
-  const toneMap: Record<CaseStatus, BadgeTone> = {
+export function StatusBadge({ status }: { status: CaseStatus | "납부완료" }) {
+  const toneMap: Record<CaseStatus | "납부완료", BadgeTone> = {
     진행중: "blue",
+    납부완료: "green",
     보류: "amber",
     취하: "red",
     종결: "green",
