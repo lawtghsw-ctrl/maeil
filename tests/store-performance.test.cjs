@@ -102,6 +102,18 @@ async function runSuite(){
     const phoneStart=source.indexOf('  const updateClientPhone ='),phoneEnd=source.indexOf('  const deleteLead =',phoneStart);
     assert.ok(phoneStart>=0&&phoneEnd>phoneStart);
     let current=(source.slice(0,phoneStart)+source.slice(phoneEnd)).replace(phoneValidation,'').replace(addition,'');
+    // Shared-read-only guards are exercised against the actual provider in
+    // long-absent-sharing. Strip only their exact additions for historical parity.
+    const sharedGuard = '      if (isSharedLeadReadOnly(profile, before, can, currentStaff)) {\n        setSyncError("다른 담당자의 장기부재 DB는 조회만 가능합니다.");\n        return false;\n      }\n';
+    assert.equal(current.split(sharedGuard).length, 2);
+    current = current.replace(sharedGuard, '');
+    for (const [before, after] of [
+      ['if (!target || isSharedLeadReadOnly(profile, target, can, currentStaff)) return;', 'if (!target) return;'],
+      ['if (!lead || isSharedLeadReadOnly(profile, lead, can, currentStaff)) return undefined;', 'if (!lead) return undefined;'],
+      ['[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile, can, currentStaff]', '[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile]'],
+      ['[can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite, profile, currentStaff]', '[can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite]'],
+      ['[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile, currentStaff]', '[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile]'],
+    ]) { assert.equal(current.split(before).length, 2, 'Expected exact shared-read-only guard'); current = current.replace(before, after); }
     // Writer restrictions and the explicitly introduced case-basic permission
     // are exercised by writing-staff-ui against the actual provider. Remove
     // only these exact additions here; every original callback remains compared.

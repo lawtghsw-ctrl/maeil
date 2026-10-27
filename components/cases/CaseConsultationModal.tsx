@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useStore } from "@/lib/store";
 import type { CaseRecord, ConsultDirection, DbLead } from "@/lib/types";
-import { canReadLeadForProfile } from "@/lib/writing-staff";
+import { canReadLeadForProfile, isSharedLeadReadOnly } from "@/lib/writing-staff";
 import { fmtDate } from "@/lib/format";
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import { caseConsultationLead } from "@/lib/case-consultation";
@@ -31,7 +31,7 @@ function CaseConsultationEditor({ lead, record, resetKey, onClose }: {
   const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(!!lead.reservationAt);
   const [reservationAt, setReservationAt] = useState<string | undefined>(lead.reservationAt);
   const canReadCase = can("cases.view") && (can("cases.view_all") || (!!currentStaff && record.assignedStaff === currentStaff));
-  const readOnly = !can("db.edit_consultation");
+  const readOnly = !can("db.edit_consultation") || isSharedLeadReadOnly(profile, lead, can, currentStaff);
   return <ConsultationModal
     open
     resetKey={resetKey}
@@ -59,7 +59,7 @@ function CaseConsultationEditor({ lead, record, resetKey, onClose }: {
     } : undefined}
     onReservationAtChange={!readOnly && can("db.manage_reservation") ? setReservationAt : undefined}
     onSave={async (consultation, customerName, customerPhone) => {
-      if (!canReadCase || !can("db.view_consultation") || !can("db.edit_consultation") || !canReadLeadForProfile(profile, lead, can, currentStaff)) return false;
+      if (readOnly || !canReadCase || !can("db.view_consultation") || !can("db.edit_consultation") || !canReadLeadForProfile(profile, lead, can, currentStaff)) return false;
       const patch: Partial<DbLead> = { consultation };
       if (can("db.edit_basic")) {
         if (customerName !== undefined && customerName !== lead.name) patch.name = customerName;

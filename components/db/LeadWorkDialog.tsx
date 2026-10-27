@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Modal } from "@/components/ui/Primitives";
 import { useStore } from "@/lib/store";
 import type { DbLead } from "@/lib/types";
+import { isSharedLeadReadOnly } from "@/lib/writing-staff";
 
 export default function LeadWorkDialog({leadId,onClose}:{leadId:string;onClose:()=>void}) {
   const { leads, updateLead, profile, currentStaff, can, superAdminFirmScope }=useStore();
@@ -10,7 +11,7 @@ export default function LeadWorkDialog({leadId,onClose}:{leadId:string;onClose:(
   const [type,setType]=useState<"phone"|"sms">("phone"),[connected,setConnected]=useState("unknown"),[duration,setDuration]=useState(""),[note,setNote]=useState("");
   const [invalidReason,setInvalid]=useState(lead?.invalidReason??""),[nonContractReason,setNonContract]=useState(lead?.nonContractReason??"");
   const [busy,setBusy]=useState(false),[error,setError]=useState("");
-  const writable=can("db.edit_consultation") && !(profile?.platformRole==="super_admin"&&!superAdminFirmScope);
+  const writable=!!lead && !isSharedLeadReadOnly(profile,lead,can,currentStaff) && can("db.edit_consultation") && !(profile?.platformRole==="super_admin"&&!superAdminFirmScope);
   const input="mt-1 h-10 w-full rounded-lg border bg-white px-3 text-sm disabled:opacity-50";
   async function save(contact:boolean,replacement=false) {
     if(!lead||busy||!writable)return;

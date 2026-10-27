@@ -4,7 +4,7 @@ import { caseConsultationLead } from "@/lib/case-consultation";
 
 type WritingProfile = {
   role?: string; platformRole?: string; platform_role?: string;
-  lawFirmId?: string; staffName?: string; displayName?: string; permissions?: PermissionMap;
+  isActive?: boolean; lawFirmId?: string; staffName?: string; displayName?: string; permissions?: PermissionMap;
 };
 
 export function isWritingStaff(profile: WritingProfile | null | undefined): boolean {
@@ -24,10 +24,23 @@ export function writingPermission(permission: PermissionKey): boolean {
   return WRITING_STAFF_PERMISSIONS[permission] === true;
 }
 
+/** Only the new, same-firm shared scope. Never substitutes for write permission. */
+export function isSharedLongAbsentLead(profile: WritingProfile | null | undefined, lead: DbLead, can: (permission: PermissionKey) => boolean): boolean {
+  return !!profile && profile.isActive === true && !isWritingStaff(profile)
+    && !!profile.lawFirmId && lead._lawFirmId === profile.lawFirmId && can("db.view")
+    && (lead.detailStage ?? DB_LEAD_DEFAULT_STAGE_BY_STATUS[lead.status]) === "장기부재";
+}
+
+export function isSharedLeadReadOnly(profile: WritingProfile | null | undefined, lead: DbLead, can: (permission: PermissionKey) => boolean, currentStaff?: string): boolean {
+  if (!isSharedLongAbsentLead(profile, lead, can) || can("db.view_all")) return false;
+  const names = [currentStaff, profile?.staffName, profile?.displayName].map(name => name?.trim()).filter(Boolean);
+  return !names.includes(lead.assignedStaff?.trim());
+}
+
 export function canReadLeadForProfile(profile: WritingProfile | null | undefined, lead: DbLead, can: (permission: PermissionKey) => boolean, currentStaff?: string): boolean {
   if (!can("db.view") || (profile?.platformRole !== "super_admin" && profile?.lawFirmId && lead._lawFirmId && profile.lawFirmId !== lead._lawFirmId)) return false;
   if (isWritingStaff(profile) && !isWritingLead(lead)) return false;
-  if (can("db.view_all")) return true;
+  if (can("db.view_all") || isSharedLongAbsentLead(profile, lead, can)) return true;
   const names = [currentStaff, profile?.staffName, profile?.displayName].map(name => name?.trim()).filter(Boolean);
   return names.includes(lead.assignedStaff?.trim());
 }

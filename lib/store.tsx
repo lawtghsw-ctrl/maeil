@@ -37,7 +37,7 @@ import { changedCustomerPhone } from "./customer-phone";
 import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
-import { isWritingStaff, isWritingLead, writingPermission, writingCaseAllowed, writingWorkspaceData } from "./writing-staff";
+import { isWritingStaff, isWritingLead, isSharedLeadReadOnly, writingPermission, writingCaseAllowed, writingWorkspaceData } from "./writing-staff";
 
 type DocumentState = Record<string, Record<string, boolean>>;
 
@@ -732,6 +732,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSyncError("저장 실패 · 수정할 DB를 찾지 못했습니다. 목록을 새로 확인해주세요.");
         return false;
       }
+      if (isSharedLeadReadOnly(profile, before, can, currentStaff)) {
+        setSyncError("다른 담당자의 장기부재 DB는 조회만 가능합니다.");
+        return false;
+      }
       // Validate before the optimistic update, including direct store callers.
       // Unchanged legacy/imported numbers must not block unrelated edits.
       if (Object.prototype.hasOwnProperty.call(patch, "phone")) {
@@ -763,7 +767,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile]
+    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile, can, currentStaff]
   );
 
   const updateClientPhone = useCallback(
@@ -804,7 +808,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       if (isGlobalSuperAdmin || !can("db.delete")) return;
       const target = leads.find((lead) => lead.id === id);
-      if (!target) return;
+      if (!target || isSharedLeadReadOnly(profile, target, can, currentStaff)) return;
 
       setLeads((prev) => prev.filter((lead) => lead.id !== id));
       queueWrite(deleteEntity("app_leads", id));
@@ -817,14 +821,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           : "DB 고객정보 및 상담일지·메모·예약정보 삭제"
       );
     },
-    [can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite]
+    [can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite, profile, currentStaff]
   );
 
   const convertLeadToClient = useCallback(
     (leadId: string): string | undefined => {
       if (isGlobalSuperAdmin || !can("db.convert")) return undefined;
       const lead = leads.find((l) => l.id === leadId);
-      if (!lead) return undefined;
+      if (!lead || isSharedLeadReadOnly(profile, lead, can, currentStaff)) return undefined;
       if (isWritingStaff(profile) && !isWritingLead(lead)) return undefined;
 
       // v27.11 보정: v27.10에서 이미 고객만 생성되고 계약이 생성되지 않은 리드는
@@ -925,7 +929,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       logChange("DB관리", "수정", lead.name, "고객 및 계약관리 미접수 계약 생성");
       return client.id;
     },
-    [can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile]
+    [can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile, currentStaff]
   );
 
   const toggleDocument = useCallback(

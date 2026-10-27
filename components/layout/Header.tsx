@@ -10,6 +10,7 @@ import { useStore, useStoreSession } from "@/lib/store";
 import Link from "next/link";
 import { fmtDate, fmtWon } from "@/lib/format";
 import { firstByKey } from "@/lib/list-indexes";
+import { isSharedLongAbsentLead } from "@/lib/writing-staff";
 
 function kstDate(): string {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -185,7 +186,7 @@ function FirmHeader() {
     if (!needle) return [] as Array<{ id: string; kind: "lead" | "client"; name: string; phone: string; assignedStaff?: string; caseId?: string }>;
     const compactNeedle = needle.replace(/[\s\-().]/g, "");
     const ownNames = new Set([currentStaff, profile?.staffName, profile?.displayName].map((v) => String(v ?? "").trim()).filter(Boolean));
-    const leadScope = canViewAllLeads ? leads : leads.filter((lead) => ownNames.has(String(lead.assignedStaff ?? "").trim()));
+    const leadScope = canViewAllLeads ? leads : leads.filter((lead) => ownNames.has(String(lead.assignedStaff ?? "").trim()) || isSharedLongAbsentLead(profile, lead, can));
     const canViewAllClients = isAdmin || can("cases.view_all") || can("dashboard.company_metrics");
     const clientScope = canViewAllClients ? clients : clients.filter((client) => ownNames.has(String(client.assignedStaff ?? "").trim()));
 
@@ -212,7 +213,7 @@ function FirmHeader() {
       }));
 
     return [...leadRows, ...clientRows].slice(0, 10);
-  }, [q, leads, clients, caseNumbersByClientId, firstCaseByClientId, canViewAllLeads, isAdmin, can, currentStaff, profile?.staffName, profile?.displayName]);
+  }, [q, leads, clients, caseNumbersByClientId, firstCaseByClientId, canViewAllLeads, isAdmin, can, currentStaff, profile]);
 
   const overdueAlerts = useMemo(
     () =>

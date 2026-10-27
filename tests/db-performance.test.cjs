@@ -414,3 +414,20 @@ test('reason save does not append contacts and failed saves preserve the entered
     assert.equal(hostNodes(h,'textarea').find(node=>node.props.maxLength===2000).props.value,'재시도할 내용');
   }finally{h.close();}
 });
+
+test('same-firm other-assignee long absence appears on desktop/mobile as read-only and leaves when stage changes', () => {
+  const h = createHarness(current,{rights:['db.view','db.edit_basic','db.edit_consultation','db.view_consultation','db.change_stage','db.change_assignee','db.manage_reservation','db.convert','db.delete','sms.send']});
+  try {
+    h.store.profile={...h.store.profile,role:'staff',isActive:true,lawFirmId:'firm-1'};
+    const row={...h.store.leads[1],id:'shared-only',name:'공유 장기부재',assignedStaff:'담당B',_lawFirmId:'firm-1',detailStage:'장기부재',convertedClientId:undefined,convertedCaseId:undefined};
+    h.store.leads=[row];h.refresh();
+    assert.deepEqual(h.snapshot().rowIds,['shared-only']);
+    assert.ok(JSON.stringify(h.tree()).includes('공유 장기부재'));
+    assert.ok(hostNodes(h,'select').filter(node=>['개인회생','개인파산','담당B','장기부재'].includes(node.props.value)).every(node=>node.props.disabled));
+    for(const label of ['문자발송','고객전환','삭제','상담일지 작성']) assert.equal(hostNodes(h,'button').filter(node=>hostText(node)===label).length,0,label);
+    assert.ok(hostNodes(h,'button').some(node=>hostText(node)==='상담일지 조회'));
+    h.store.leads=[{...row,detailStage:'상담'}];h.refresh();assert.deepEqual(h.snapshot().rowIds,[]);
+    h.store.leads=[{...row,_lawFirmId:'firm-2'}];h.refresh();assert.deepEqual(h.snapshot().rowIds,[]);
+    h.store.leads=[row];h.store.profile={...h.store.profile,permissions:{'staff.writer':true}};h.refresh();assert.deepEqual(h.snapshot().rowIds,[]);
+  }finally{h.close();}
+});
