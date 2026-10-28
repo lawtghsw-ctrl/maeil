@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useStore } from "@/lib/store";
 import type { CaseRecord, ConsultDirection, DbLead } from "@/lib/types";
-import { canReadLeadForProfile, isSharedLeadReadOnly } from "@/lib/writing-staff";
+import { canReadLeadForProfile, canLeadPermission, isSharedLongAbsentLead } from "@/lib/writing-staff";
 import { fmtDate } from "@/lib/format";
 import { ConsultationModal } from "@/components/ui/consultation/ConsultationModal";
 import { caseConsultationLead } from "@/lib/case-consultation";
@@ -16,7 +16,7 @@ export function CaseConsultationModal({ caseId, onClose }: { caseId: string; onC
   const client = clients.find(item => item.id === record?.clientId);
   const lead = record ? caseConsultationLead(record, client, leads, firmId) : undefined;
   const canReadCase = can("cases.view") && (can("cases.view_all") || (!!currentStaff && record?.assignedStaff === currentStaff));
-  if (!record || !lead || !canReadCase || !can("db.view_consultation") || !canReadLeadForProfile(profile, lead, can, currentStaff)) return null;
+  if (!record || !lead || !canReadCase || !canLeadPermission(profile, lead, can, "db.view_consultation", currentStaff) || !canReadLeadForProfile(profile, lead, can, currentStaff)) return null;
   const resetKey = `case-consultation:${profile?.id ?? ""}:${firmId}:${lead.id}`;
   return <CaseConsultationEditor key={`${resetKey}:${record.id}`} lead={lead} record={record} resetKey={resetKey} onClose={onClose} />;
 }
@@ -24,32 +24,36 @@ export function CaseConsultationModal({ caseId, onClose }: { caseId: string; onC
 function CaseConsultationEditor({ lead, record, resetKey, onClose }: {
   lead: DbLead; record: CaseRecord; resetKey: string; onClose: () => void;
 }) {
-  const { profile, currentStaff, can, updateLead } = useStore();
+  const { profile, currentStaff, can: baseCan, updateLead, syncError } = useStore();
+  const can: typeof baseCan = permission => canLeadPermission(profile, lead, baseCan, permission, currentStaff);
+  const [editBase] = useState(lead);
   // A changed identity remounts this controller. A mount effect here would run
   // after the child's localStorage restore and overwrite its restored values.
-  const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
-  const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(!!lead.reservationAt);
-  const [reservationAt, setReservationAt] = useState<string | undefined>(lead.reservationAt);
-  const canReadCase = can("cases.view") && (can("cases.view_all") || (!!currentStaff && record.assignedStaff === currentStaff));
-  const readOnly = !can("db.edit_consultation") || isSharedLeadReadOnly(profile, lead, can, currentStaff);
+  const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(editBase.applicationType);
+  const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(!!editBase.reservationAt);
+  const [reservationAt, setReservationAt] = useState<string | undefined>(editBase.reservationAt);
+  const canReadCase = baseCan("cases.view") && (baseCan("cases.view_all") || (!!currentStaff && record.assignedStaff === currentStaff));
+  const readOnly = !can("db.edit_consultation");
   return <ConsultationModal
     open
     resetKey={resetKey}
+    sourceVersion={isSharedLongAbsentLead(profile, editBase, baseCan) ? JSON.stringify(editBase) : undefined}
+    saveErrorMessage={syncError}
     onClose={onClose}
-    displayName={lead.name}
-    displayPhone={lead.phone}
+    displayName={editBase.name}
+    displayPhone={editBase.phone}
     allowPhoneEdit={!readOnly && can("db.edit_basic")}
-    joinedAtLabel={fmtDate(lead.receivedAt)}
+    joinedAtLabel={fmtDate(editBase.receivedAt)}
     caseNumberLabel={record.caseNumber}
     allowNameEdit={!readOnly && can("db.edit_basic")}
     applicationType={applicationType}
     onApplicationTypeChange={setApplicationType}
     allowApplicationTypeEdit={!readOnly && can("db.edit_basic")}
-    initialConsultation={lead.consultation}
+    initialConsultation={editBase.consultation}
     contractAmount={record.contractAmount}
     paidAmount={record.paidAmount}
     outstandingAmount={Math.max(0, record.contractAmount - record.paidAmount)}
-    showFinanceSummary={can("cases.view_finance") && can("db.view_finance")}
+    showFinanceSummary={baseCan("cases.view_finance") && can("db.view_finance")}
     readOnly={readOnly}
     reservationChoice={reservationChoice}
     reservationAt={reservationAt}
@@ -59,16 +63,16 @@ function CaseConsultationEditor({ lead, record, resetKey, onClose }: {
     } : undefined}
     onReservationAtChange={!readOnly && can("db.manage_reservation") ? setReservationAt : undefined}
     onSave={async (consultation, customerName, customerPhone) => {
-      if (readOnly || !canReadCase || !can("db.view_consultation") || !can("db.edit_consultation") || !canReadLeadForProfile(profile, lead, can, currentStaff)) return false;
+      if (readOnly || !canReadCase || !can("db.view_consultation") || !can("db.edit_consultation") || !canReadLeadForProfile(profile, lead, baseCan, currentStaff)) return false;
       const patch: Partial<DbLead> = { consultation };
       if (can("db.edit_basic")) {
-        if (customerName !== undefined && customerName !== lead.name) patch.name = customerName;
+        if (customerName !== undefined && customerName !== editBase.name) patch.name = customerName;
         // The existing lead trigger synchronizes its linked client atomically.
-        if (customerPhone !== undefined && customerPhone !== lead.phone) patch.phone = customerPhone;
+        if (customerPhone !== undefined && customerPhone !== editBase.phone) patch.phone = customerPhone;
         patch.applicationType = applicationType;
       }
       if (can("db.manage_reservation")) patch.reservationAt = reservationChoice === true ? reservationAt : undefined;
-      return await updateLead(lead.id, patch);
+      return await updateLead(lead.id, patch, editBase);
     }}
   />;
 }

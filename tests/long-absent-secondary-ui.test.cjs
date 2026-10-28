@@ -37,13 +37,15 @@ function harness(owned = false, all = false) {
   }
   return { load, state, writes, captures, routes, storage };
 }
-test('case consultation shared lead is read-only and direct save invocation performs no write', async () => {
+test('case consultation shares ordinary edits while preserving the opening snapshot', async () => {
   const h = harness(), Component = h.load('components/cases/CaseConsultationModal.tsx').CaseConsultationModal;
   let view; await act(async () => { view = renderer.create(React.createElement(Component, { caseId: 'case', onClose() {} })); });
   try {
-    const props = h.captures.consultation; assert.ok(props); assert.equal(props.readOnly, true);
-    for (const key of ['allowPhoneEdit', 'allowNameEdit', 'allowApplicationTypeEdit']) assert.equal(props[key], false);
-    assert.equal(await props.onSave({}, 'changed'), false); assert.equal(h.writes.length, 0);
+    const props = h.captures.consultation; assert.ok(props); assert.equal(props.readOnly, false);
+    for (const key of ['allowPhoneEdit', 'allowNameEdit', 'allowApplicationTypeEdit']) assert.equal(props[key], true);
+    assert.equal(await props.onSave({}, 'changed'), true); assert.equal(h.writes.length, 1);
+    assert.equal(h.writes[0][0], 'lead'); assert.equal(h.writes[0][1].name, 'changed');
+    assert.equal(h.writes[0][2], h.state.leads[0], 'shared save carries the original snapshot');
   } finally { await act(async () => view.unmount()); }
 });
 test('own and preexisting view_all case consultation rights remain writable', async () => {
@@ -54,14 +56,16 @@ test('own and preexisting view_all case consultation rights remain writable', as
     finally { await act(async () => view.unmount()); }
   }
 });
-test('shared contact/reason dialog disables both fieldsets and direct save handlers', async () => {
+test('shared contact/reason dialog enables ordinary actions and supplies the opening snapshot', async () => {
   const h = harness(), Component = h.load('components/db/LeadWorkDialog.tsx').default;
   let view; await act(async () => { view = renderer.create(React.createElement(Component, { leadId: 'lead', onClose() {} })); });
   try {
     assert.equal(view.root.findAllByType('fieldset').length, 2);
-    assert.ok(view.root.findAllByType('fieldset').every(node => node.props.disabled));
-    for (const button of view.root.findAllByType('button')) await act(async () => button.props.onClick());
-    assert.equal(h.writes.length, 0);
+    assert.ok(view.root.findAllByType('fieldset').every(node => node.props.disabled === false));
+    await act(async () => view.root.findAllByType('button')[0].props.onClick());
+    assert.equal(h.writes.length, 1);
+    assert.equal(h.writes[0][1].contactLog.length, 1);
+    assert.equal(h.writes[0][2], h.state.leads[0]);
   } finally { await act(async () => view.unmount()); }
 });
 

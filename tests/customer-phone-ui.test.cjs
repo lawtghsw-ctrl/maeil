@@ -71,6 +71,8 @@ test('unrelated consultation saves and reverted phone edits never overwrite a re
     assert.equal(stored.customerPhone, undefined);
     await act(async () => h.button().props.onClick()); assert.equal(h.snapshots[0].phone, '010-2222-3333');
     await act(async () => save(h).props.onClick()); assert.equal(h.saved[0][2], undefined);
+    // A successful save calls onClose; start a fresh editor session before editing again.
+    await h.update({ open: false }); await h.update({ open: true });
     await act(async () => h.captures.BasicInfoSection.onPhoneChange('010-9999-8888'));
     await h.update({ displayPhone: '010-4444-5555' });
     assert.equal(h.captures.BasicInfoSection.displayPhone, '010-9999-8888', 'intentional edit remains intact');

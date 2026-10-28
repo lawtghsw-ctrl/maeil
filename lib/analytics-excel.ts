@@ -1,6 +1,9 @@
 "use client";
 
-export type AnalyticsCell = string | number | boolean | null | undefined;
+import type { Cell, Row, Workbook, Worksheet, PaperSize } from "exceljs";
+
+export type AnalyticsCell = string | number | boolean | Date | null | undefined;
+/** percent1 accepts the existing analytics percentage-point values (25 means 25%). */
 export type AnalyticsCellFormat = "text" | "integer" | "number1" | "won" | "percent1" | "date";
 
 export interface AnalyticsKpi {
@@ -16,6 +19,8 @@ export interface AnalyticsSection {
   formats?: AnalyticsCellFormat[];
   widths?: number[];
   note?: string;
+  /** Explicit source totals only. Never infer totals for rates, balances or mixed rows. */
+  totalRow?: AnalyticsCell[];
 }
 
 export interface AnalyticsMeetingSheet {
@@ -31,185 +36,266 @@ export interface AnalyticsMeetingWorkbookInput {
   periodLabel: string;
   scopeLabel: string;
   sheets: AnalyticsMeetingSheet[];
+  /** Cancel stale downloads after a reporting-month/scope change or unmount. */
+  canDownload?: () => boolean;
 }
-
-type CellStyle = Record<string, unknown>;
 
 const COLORS = {
-  navy: "FF16324F",
-  blue: "FF2563EB",
-  sky: "FFEFF6FF",
-  pale: "FFF8FAFC",
-  border: "FFD9E2EC",
-  text: "FF172033",
-  muted: "FF64748B",
-  white: "FFFFFFFF",
-  green: "FF047857",
-  red: "FFB91C1C",
-  amber: "FFB45309",
+  header: "FFE6EAE5",
+  body: "FFF2F7EE",
+  alternate: "FFE8F1E2",
+  section: "FFDFE9D9",
+  total: "FFD2E2C8",
+  border: "FFACBAA6",
+  text: "FF233127",
+  muted: "FF596558",
+  accent: "FF54734A",
 };
 
-const BORDER = {
-  top: { style: "thin", color: { rgb: COLORS.border } },
-  bottom: { style: "thin", color: { rgb: COLORS.border } },
-  left: { style: "thin", color: { rgb: COLORS.border } },
-  right: { style: "thin", color: { rgb: COLORS.border } },
+const FORMATS: Record<AnalyticsCellFormat, string> = {
+  text: "@",
+  integer: "#,##0;[Red]-#,##0;0",
+  number1: "#,##0.0;[Red]-#,##0.0;0.0",
+  won: '#,##0"원";[Red]-#,##0"원";0"원"',
+  percent1: "0.0%;[Red]-0.0%;0.0%",
+  date: "yyyy-mm-dd",
 };
 
-function safeSheetName(name: string) {
-  return name.replace(/[\\/?*\[\]:]/g, " ").slice(0, 31) || "Sheet";
-}
+type TableSpec = AnalyticsSection & { rowFormats?: AnalyticsCellFormat[][] };
+type RowKind = "header" | "data" | "total" | "section" | "note";
 
-function colName(index: number) {
-  let n = index + 1;
-  let out = "";
-  while (n > 0) {
-    const r = (n - 1) % 26;
-    out = String.fromCharCode(65 + r) + out;
-    n = Math.floor((n - 1) / 26);
+function sheetName(name: string, used: Set<string>) {
+  let base = name.replace(/[\\/?*\[\]:\x00-\x1f]/g, " ").trim().replace(/^'+|'+$/g, "").slice(0, 31).trim().replace(/^'+|'+$/g, "");
+  if (!base) base = "Sheet";
+  if (base.toLowerCase() === "history") base = "History_";
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate.toLowerCase())) {
+    const ending = ` (${suffix++})`;
+    candidate = base.slice(0, 31 - ending.length) + ending;
   }
-  return out;
+  used.add(candidate.toLowerCase());
+  return candidate;
 }
 
-function applyStyle(ws: any, row: number, startCol: number, endCol: number, style: CellStyle) {
-  for (let c = startCol; c <= endCol; c += 1) {
-    const addr = `${colName(c)}${row}`;
-    if (!ws[addr]) ws[addr] = { t: "s", v: "" };
-    ws[addr].s = style;
+/** Only date columns are parsed, and invalid calendar dates remain visible source text. */
+function typedValue(value: AnalyticsCell, format?: AnalyticsCellFormat): Exclude<AnalyticsCell, undefined> {
+  // Empty strings are genuinely blank cells, not shared-string references.
+  if (value == null || value === "") return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("엑셀에 내보낼 수 없는 숫자가 있습니다.");
+    return format === "percent1" ? value / 100 : value;
   }
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) throw new Error("엑셀에 내보낼 수 없는 날짜가 있습니다.");
+    return new Date(value.getTime());
+  }
+  if (format === "date" && typeof value === "string") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (match) {
+      const date = new Date(`${value}T00:00:00.000Z`);
+      if (Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value) return date;
+    }
+  }
+  // In particular, strings beginning with '=' remain literal text, not formulas.
+  return value;
 }
 
-function applyCellFormat(cell: any, format?: AnalyticsCellFormat) {
-  if (!cell || !format) return;
-  if (format === "integer") cell.z = "#,##0";
-  if (format === "number1") cell.z = "#,##0.0";
-  if (format === "won") cell.z = '#,##0"원";[Red]-#,##0"원"';
-  if (format === "percent1") cell.z = '0.0"%"';
-  if (format === "date") cell.z = "yyyy-mm-dd";
+function visualLength(value: string) {
+  return Array.from(value).reduce((width, char) => width + (char.charCodeAt(0) > 255 ? 2 : 1), 0);
 }
 
-function styleWorkbookSheet(XLSX: any, spec: AnalyticsMeetingSheet, periodLabel: string, scopeLabel: string) {
-  const rows: AnalyticsCell[][] = [];
-  const meta: Array<{ row: number; kind: "title" | "subtitle" | "meta" | "kpiLabel" | "kpiValue" | "section" | "header" | "data" | "note"; start: number; end: number; formats?: AnalyticsCellFormat[] }> = [];
-  const merges: any[] = [];
-  const widths: number[] = [];
+function displayText(value: AnalyticsCell, format?: AnalyticsCellFormat) {
+  if (value == null) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value !== "number") return String(value);
+  if (format === "percent1") return `${value.toFixed(1)}%`;
+  const text = value.toLocaleString("en-US", { minimumFractionDigits: format === "number1" ? 1 : 0, maximumFractionDigits: format === "number1" ? 1 : format === "integer" || format === "won" ? 0 : 10 });
+  return format === "won" ? `${text}원` : text;
+}
 
-  const maxColumns = Math.max(
-    8,
-    ...(spec.sections ?? []).map((section) => section.headers.length || 1),
-  );
-
-  const pushMerged = (values: AnalyticsCell[], kind: "title" | "subtitle" | "meta" | "section" | "note", span = maxColumns) => {
-    rows.push(values);
-    const row = rows.length;
-    if (span > 1) merges.push({ s: { r: row - 1, c: 0 }, e: { r: row - 1, c: span - 1 } });
-    meta.push({ row, kind, start: 0, end: span - 1 });
+function setStyle(cell: Cell, kind: RowKind, alternate = false) {
+  cell.font = {
+    name: "맑은 고딕", size: 11, family: 2, charset: 129,
+    bold: kind === "header" || kind === "total" || kind === "section",
+    color: { argb: kind === "note" ? COLORS.muted : COLORS.text },
   };
+  cell.alignment = { vertical: "middle", horizontal: kind === "header" ? "center" : "left", wrapText: true };
+  if (kind === "note") return;
+  const fill = kind === "header" ? COLORS.header
+    : kind === "total" ? COLORS.total
+    : kind === "section" ? COLORS.section
+    : alternate ? COLORS.alternate : COLORS.body;
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+  cell.border = {
+    top: { style: kind === "total" ? "double" : "thin", color: { argb: COLORS.border } },
+    bottom: { style: "thin", color: { argb: COLORS.border } },
+    ...(kind !== "section" && {
+      left: { style: "thin", color: { argb: COLORS.border } },
+      right: { style: "thin", color: { argb: COLORS.border } },
+    }),
+  };
+}
 
-  pushMerged([spec.title], "title");
-  if (spec.subtitle) pushMerged([spec.subtitle], "subtitle");
-  pushMerged([`조회기간  ${periodLabel}    ·    범위  ${scopeLabel}`], "meta");
-  pushMerged([`생성일시  ${new Date().toLocaleString("ko-KR")}`], "meta");
-  rows.push([]);
+function setValue(cell: Cell, value: AnalyticsCell, format?: AnalyticsCellFormat) {
+  cell.value = typedValue(value, format);
+  cell.numFmt = format ? FORMATS[format] : value instanceof Date ? FORMATS.date : typeof value === "number" ? "#,##0.##########" : FORMATS.text;
+  cell.alignment = {
+    ...cell.alignment,
+    horizontal: format === "date" || value instanceof Date || typeof value === "boolean" ? "center"
+      : typeof value === "number" || (format && format !== "text") ? "right" : "left",
+  };
+}
 
-  const kpis = spec.kpis ?? [];
-  if (kpis.length) {
-    const kpiColumns = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(kpis.length))));
-    for (let i = 0; i < kpis.length; i += kpiColumns) {
-      const slice = kpis.slice(i, i + kpiColumns);
-      const row: AnalyticsCell[] = [];
-      slice.forEach((kpi) => row.push(kpi.label, kpi.value));
-      rows.push(row);
-      const rowIndex = rows.length;
-      slice.forEach((kpi, idx) => {
-        meta.push({ row: rowIndex, kind: "kpiLabel", start: idx * 2, end: idx * 2 });
-        meta.push({ row: rowIndex, kind: "kpiValue", start: idx * 2 + 1, end: idx * 2 + 1, formats: [kpi.format ?? "text"] });
-        widths[idx * 2] = Math.max(widths[idx * 2] ?? 0, 20);
-        widths[idx * 2 + 1] = Math.max(widths[idx * 2 + 1] ?? 0, 18);
-      });
-    }
-    rows.push([]);
-  }
-
-  for (const section of spec.sections ?? []) {
-    const sectionCols = Math.max(1, section.headers.length);
-    pushMerged([section.title], "section", sectionCols);
-    if (section.note) pushMerged([section.note], "note", sectionCols);
-    rows.push(section.headers);
-    meta.push({ row: rows.length, kind: "header", start: 0, end: sectionCols - 1 });
-    section.headers.forEach((h, i) => {
-      const base = section.widths?.[i] ?? Math.max(12, Math.min(34, String(h).length * 2 + 4));
-      widths[i] = Math.max(widths[i] ?? 0, base);
+function tableSpecs(spec: AnalyticsMeetingSheet): TableSpec[] {
+  const sections: TableSpec[] = [...(spec.sections ?? [])];
+  if (spec.kpis?.length) {
+    sections.push({
+      title: "핵심 지표", headers: ["지표", "값"],
+      rows: spec.kpis.map(kpi => [kpi.label, kpi.value]),
+      rowFormats: spec.kpis.map(kpi => ["text", kpi.format ?? "text"]),
+      widths: [28, 22],
     });
-    for (const row of section.rows) {
-      rows.push(row);
-      meta.push({ row: rows.length, kind: "data", start: 0, end: sectionCols - 1, formats: section.formats });
-      row.forEach((value, i) => {
-        const valueWidth = Math.min(42, Math.max(10, String(value ?? "").length + 3));
-        widths[i] = Math.max(widths[i] ?? 0, section.widths?.[i] ?? valueWidth);
+  }
+  return sections.length ? sections : [{ title: "", headers: ["항목", "값"], rows: [] }];
+}
+
+function measureColumns(sections: TableSpec[]) {
+  const widths: number[] = [];
+  for (const section of sections) {
+    section.headers.forEach((header, col) => {
+      // Leave space for the filter button as well as two-byte Korean characters.
+      widths[col] = Math.max(widths[col] ?? 12, section.widths?.[col] ?? 0, Math.min(36, visualLength(header) + 5));
+    });
+    [...section.rows, ...(section.totalRow ? [section.totalRow] : [])].forEach((row, index) => {
+      row.forEach((value, col) => {
+        const format = section.rowFormats?.[index]?.[col] ?? section.formats?.[col];
+        const length = Math.max(...displayText(value, format).split("\n").map(visualLength));
+        widths[col] = Math.max(widths[col] ?? 12, Math.min(42, length + 3));
       });
-    }
-    rows.push([]);
+    });
   }
+  return widths.map(width => Math.min(52, width));
+}
 
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws["!merges"] = merges;
-  ws["!cols"] = Array.from({ length: Math.max(maxColumns, widths.length) }, (_, i) => ({ wch: Math.min(44, Math.max(11, widths[i] ?? 14)) }));
-  ws["!rows"] = rows.map((_, idx) => ({ hpt: idx === 0 ? 28 : idx < 4 ? 19 : 18 }));
-  ws["!freeze"] = { xSplit: 0, ySplit: 4, topLeftCell: "A5", activePane: "bottomLeft", state: "frozen" };
-  ws["!margins"] = { left: 0.25, right: 0.25, top: 0.55, bottom: 0.55, header: 0.2, footer: 0.2 };
+function fitRow(row: Row, values: AnalyticsCell[], widths: number[], formats?: AnalyticsCellFormat[], header = false) {
+  const lines = values.reduce<number>((max, value, col) => {
+    const available = Math.max(4, (widths[col] ?? 12) - (header ? 4 : 2));
+    const count = displayText(value, formats?.[col]).split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(visualLength(line) / available)), 0);
+    return Math.max(max, count);
+  }, 1);
+  row.height = Math.min(409, Math.max(header ? 32 : 24, lines * 16 + 8));
+}
 
-  const titleStyle: CellStyle = { font: { name: "맑은 고딕", sz: 18, bold: true, color: { rgb: COLORS.white } }, fill: { fgColor: { rgb: COLORS.navy } }, alignment: { vertical: "center" }, border: BORDER };
-  const subtitleStyle: CellStyle = { font: { name: "맑은 고딕", sz: 11, bold: true, color: { rgb: COLORS.navy } }, fill: { fgColor: { rgb: "FFE8EEF5" } }, alignment: { vertical: "center" }, border: BORDER };
-  const metaStyle: CellStyle = { font: { name: "맑은 고딕", sz: 9, color: { rgb: COLORS.muted } }, fill: { fgColor: { rgb: COLORS.pale } }, alignment: { vertical: "center" }, border: BORDER };
-  const sectionStyle: CellStyle = { font: { name: "맑은 고딕", sz: 11, bold: true, color: { rgb: COLORS.navy } }, fill: { fgColor: { rgb: "FFDCEAFB" } }, alignment: { vertical: "center" }, border: BORDER };
-  const noteStyle: CellStyle = { font: { name: "맑은 고딕", sz: 9, color: { rgb: COLORS.muted } }, fill: { fgColor: { rgb: "FFF7FAFC" } }, alignment: { vertical: "center", wrapText: true }, border: BORDER };
-  const headerStyle: CellStyle = { font: { name: "맑은 고딕", sz: 9, bold: true, color: { rgb: COLORS.white } }, fill: { fgColor: { rgb: COLORS.blue } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: BORDER };
-  const dataStyle: CellStyle = { font: { name: "맑은 고딕", sz: 9, color: { rgb: COLORS.text } }, alignment: { vertical: "center", wrapText: true }, border: BORDER };
-  const kpiLabelStyle: CellStyle = { font: { name: "맑은 고딕", sz: 9, bold: true, color: { rgb: COLORS.muted } }, fill: { fgColor: { rgb: COLORS.sky } }, alignment: { vertical: "center" }, border: BORDER };
-  const kpiValueStyle: CellStyle = { font: { name: "맑은 고딕", sz: 12, bold: true, color: { rgb: COLORS.navy } }, fill: { fgColor: { rgb: COLORS.white } }, alignment: { horizontal: "right", vertical: "center" }, border: BORDER };
+function writeSheet(workbook: Workbook, spec: AnalyticsMeetingSheet, name: string) {
+  const sections = tableSpecs(spec);
+  for (const section of sections) {
+    if (section.rows.some(row => row.length > section.headers.length) || (section.totalRow && section.totalRow.length > section.headers.length)) {
+      throw new Error(`${name}: 열 제목보다 데이터 열이 많습니다.`);
+    }
+  }
+  const widths = measureColumns(sections);
+  const wide = widths.length > 8;
+  const ledger = name === "04 수임매출";
+  const ws = workbook.addWorksheet(name, {
+    properties: { defaultRowHeight: 24, tabColor: { argb: COLORS.accent } },
+    views: [{ state: "frozen", xSplit: ledger ? 5 : 0, ySplit: 1, topLeftCell: ledger ? "F2" : "A2", activeCell: ledger ? "F2" : "A2", showGridLines: false }],
+    pageSetup: {
+      // Wide accounting ledgers paginate horizontally at readable scale, never shrink to one tiny page.
+      // ExcelJS supports A3 (8); its 4.4.0 PaperSize enum omits the documented value.
+      paperSize: (wide ? 8 : 9) as PaperSize, orientation: widths.length > 6 ? "landscape" : "portrait",
+      fitToPage: !wide, fitToWidth: wide ? 0 : 1, fitToHeight: 0, scale: wide ? 90 : 100,
+      ...(ledger ? { printTitlesColumn: "D:E" } : {}),
+      margins: { left: 0.25, right: 0.25, top: 0.4, bottom: 0.4, header: 0.15, footer: 0.15 },
+      printTitlesRow: "1:1",
+    },
+  });
+  widths.forEach((width, index) => { ws.getColumn(index + 1).width = width; });
 
-  for (const item of meta) {
-    const style = item.kind === "title" ? titleStyle
-      : item.kind === "subtitle" ? subtitleStyle
-      : item.kind === "meta" ? metaStyle
-      : item.kind === "section" ? sectionStyle
-      : item.kind === "note" ? noteStyle
-      : item.kind === "header" ? headerStyle
-      : item.kind === "kpiLabel" ? kpiLabelStyle
-      : item.kind === "kpiValue" ? kpiValueStyle
-      : dataStyle;
-    applyStyle(ws, item.row, item.start, item.end, style);
-    if (item.formats) {
-      for (let c = item.start; c <= item.end; c += 1) {
-        const addr = `${colName(c)}${item.row}`;
-        applyCellFormat(ws[addr], item.formats[c - item.start]);
-        if (typeof ws[addr]?.v === "number" && ws[addr].v < 0) {
-          ws[addr].s = { ...ws[addr].s, font: { ...(ws[addr].s?.font ?? {}), color: { rgb: COLORS.red }, bold: true } };
-        }
+  sections.forEach((section, sectionIndex) => {
+    const columns = Math.max(1, section.headers.length);
+    if (sectionIndex > 0) {
+      ws.addRow([]).height = 10;
+      if (section.title) writeLabel(ws, section.title, columns, widths, "section");
+    }
+    const header = ws.addRow(section.headers.length ? section.headers : ["항목"]);
+    for (let col = 1; col <= columns; col++) setStyle(header.getCell(col), "header");
+    fitRow(header, section.headers, widths, undefined, true);
+    section.rows.forEach((values, index) => {
+      const row = ws.addRow([]);
+      const formats = section.rowFormats?.[index] ?? section.formats;
+      for (let col = 1; col <= columns; col++) {
+        const cell = row.getCell(col);
+        setStyle(cell, "data", index % 2 === 1);
+        setValue(cell, values[col - 1], formats?.[col - 1]);
       }
+      if (ledger && sectionIndex === 0) {
+        // Bring the three requested accounting measures forward without dropping legacy columns.
+        for (const col of [9,10,11]) row.getCell(col).font = { ...row.getCell(col).font, bold: true };
+      }
+      fitRow(row, values, widths, formats);
+    });
+    // Excel permits one worksheet-level AutoFilter. Do not include totals or later tables.
+    if (sectionIndex === 0) {
+      ws.autoFilter = { from: { row: header.number, column: 1 }, to: { row: header.number + section.rows.length, column: columns } };
     }
-  }
+    if (section.totalRow) {
+      const row = ws.addRow([]);
+      for (let col = 1; col <= columns; col++) {
+        const cell = row.getCell(col);
+        setStyle(cell, "total");
+        setValue(cell, section.totalRow[col - 1], section.formats?.[col - 1]);
+      }
+      fitRow(row, section.totalRow, widths, section.formats);
+    }
+    // Keep essential definitions, but below their data rather than above row 1.
+    if (section.note) writeLabel(ws, section.note, columns, widths, "note");
+  });
+  ws.pageSetup.printArea = `A1:${ws.getColumn(Math.max(1, widths.length)).letter}${ws.rowCount}`;
+}
 
-  return ws;
+function writeLabel(ws: Worksheet, text: string, columns: number, widths: number[], kind: "section" | "note") {
+  const row = ws.addRow([text]);
+  for (let col = 1; col <= columns; col++) setStyle(row.getCell(col), kind);
+  if (columns > 1) ws.mergeCells(row.number, 1, row.number, columns);
+  const totalWidth = widths.slice(0, columns).reduce((sum, width) => sum + width, 0);
+  fitRow(row, [text], [totalWidth]);
+}
+
+/** Build separately from download so exports can be regression-tested without a browser. */
+export async function buildAnalyticsMeetingWorkbook(input: AnalyticsMeetingWorkbookInput): Promise<Workbook> {
+  if (!input.sheets.length) throw new Error("내보낼 데이터 시트가 없습니다.");
+  // ExcelJS's browser bundle persists styles, panes and page setup in the XLSX itself.
+  // Keep this lazy so the main analytics screen does not load the exporter upfront.
+  const ExcelJS = await import("exceljs");
+  const workbook = new (ExcelJS.default ?? ExcelJS).Workbook();
+  workbook.creator = "LawPower";
+  workbook.title = "로파워 데이터집계";
+  workbook.subject = input.periodLabel;
+  workbook.description = `조회기간: ${input.periodLabel}. 범위: ${input.scopeLabel}.`;
+  workbook.created = new Date();
+  const usedNames = new Set<string>();
+  for (const sheet of input.sheets) writeSheet(workbook, sheet, sheetName(sheet.name, usedNames));
+  const footerLabel = `${input.periodLabel} · ${input.scopeLabel}`.replace(/&/g, "&&");
+  for (const sheet of workbook.worksheets) sheet.headerFooter.oddFooter = `&L${footerLabel}&R&P / &N`;
+  return workbook;
 }
 
 export async function exportAnalyticsMeetingWorkbook(input: AnalyticsMeetingWorkbookInput) {
-  const XLSX = await import("xlsx");
-  const wb = XLSX.utils.book_new();
-  wb.Props = {
-    Title: "로파워 데이터집계 회의자료",
-    Subject: `${input.periodLabel} 데이터집계`,
-    Author: "LawPower",
-    Company: "LawPower",
-    Comments: "CRM 데이터집계 화면의 조회기간 기준 데이터를 회의자료용으로 내보낸 파일입니다.",
-    CreatedDate: new Date(),
-  };
-
-  for (const sheet of input.sheets) {
-    const ws = styleWorkbookSheet(XLSX, sheet, input.periodLabel, input.scopeLabel);
-    XLSX.utils.book_append_sheet(wb, ws, safeSheetName(sheet.name));
+  const workbook = await buildAnalyticsMeetingWorkbook(input);
+  const bytes = await workbook.xlsx.writeBuffer();
+  if (input.canDownload && !input.canDownload()) return;
+  const blob = new Blob([new Uint8Array(bytes)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = input.filename;
+  document.body.appendChild(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    // Do not revoke before browsers have started consuming the download URL.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
-
-  XLSX.writeFile(wb, input.filename);
 }

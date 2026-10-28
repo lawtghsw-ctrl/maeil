@@ -24,7 +24,7 @@ export function writingPermission(permission: PermissionKey): boolean {
   return WRITING_STAFF_PERMISSIONS[permission] === true;
 }
 
-/** Only the new, same-firm shared scope. Never substitutes for write permission. */
+/** Same-firm shared scope; never grants tenant-wide access or sensitive actions. */
 export function isSharedLongAbsentLead(profile: WritingProfile | null | undefined, lead: DbLead, can: (permission: PermissionKey) => boolean): boolean {
   return !!profile && profile.isActive === true && !isWritingStaff(profile)
     && !!profile.lawFirmId && lead._lawFirmId === profile.lawFirmId && can("db.view")
@@ -35,6 +35,34 @@ export function isSharedLeadReadOnly(profile: WritingProfile | null | undefined,
   if (!isSharedLongAbsentLead(profile, lead, can) || can("db.view_all")) return false;
   const names = [currentStaff, profile?.staffName, profile?.displayName].map(name => name?.trim()).filter(Boolean);
   return !names.includes(lead.assignedStaff?.trim());
+}
+
+export const SHARED_LONG_ABSENT_FIELDS = [
+  "name", "phone", "email", "applicationType", "memo", "consultation", "contactLog",
+  "invalidReason", "nonContractReason", "replacementRequestedAt", "detailStage", "status",
+  "assignedStaff", "reservationAt",
+] as const;
+
+const sharedPermissions = new Set<PermissionKey>([
+  "db.view_consultation", "db.edit_consultation", "db.edit_basic", "db.change_stage",
+  "db.change_assignee", "db.manage_reservation",
+]);
+
+export const canManageSharedLongAbsentLead = isSharedLongAbsentLead;
+
+export function isSharedLongAbsentPatch(patch: Partial<DbLead>): boolean {
+  const keys = Object.keys(patch);
+  return keys.length > 0 && keys.every(key => (SHARED_LONG_ABSENT_FIELDS as readonly string[]).includes(key));
+}
+
+export function canLeadPermission(profile: WritingProfile | null | undefined, lead: DbLead, can: (permission: PermissionKey) => boolean, permission: PermissionKey, currentStaff?: string): boolean {
+  if (!canReadLeadForProfile(profile, lead, can, currentStaff)) return false;
+  if (sharedPermissions.has(permission) && canManageSharedLongAbsentLead(profile, lead, can)) return true;
+  // This legacy scope guard remains deliberately in place for delete, conversion,
+  // SMS and any other non-shared operation. It is not a blanket read-only flag.
+  if (isSharedLeadReadOnly(profile, lead, can, currentStaff)
+    && !["db.view", "db.view_finance", "db.view_consultation"].includes(permission)) return false;
+  return can(permission);
 }
 
 export function canReadLeadForProfile(profile: WritingProfile | null | undefined, lead: DbLead, can: (permission: PermissionKey) => boolean, currentStaff?: string): boolean {

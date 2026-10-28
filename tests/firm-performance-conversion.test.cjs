@@ -258,6 +258,7 @@ function renderLegacy(input, rangeStart, rangeEnd, manager = true, tableObserver
       '@/lib/management-analytics': { ...management, useManagementSettings: () => ({ globalSuperView: false, effectiveFirmId: 'firm-a',
         activeSettings: management.DEFAULT_MANAGEMENT_SETTINGS, settingsByFirm: {}, loading: false, error: null }) },
       '@/lib/use-firm-supply': { useFirmSupply: () => ({ data: supplyFixture(rangeStart, rangeEnd), loading: false, error: null }) },
+      '@/lib/use-analytics-source': { useAnalyticsSource: () => ({ data: input, loading: false, error: null, retry: () => {} }) },
 
     '@/components/ui/DateRangePicker': { DateRangePicker: () => null },
       '@/components/analytics/FirmOperationsDetails': { FirmOperationsDetails: () => null },
@@ -472,26 +473,29 @@ test('help uses native keyboard disclosure, stays closed initially and Escape re
   assert.equal(target.open,false);assert.equal(prevented,1);assert.equal(focused,1);
 });
 
-test('actual meeting export handler preserves six tab sheets and exports the same supply/staff denominator', async () => {
+test('monthly meeting export reorders all sheets and preserves supply/staff denominator without removed phone/workload fields', async () => {
   const input=fixture(),data=supplyFixture(),before=JSON.stringify({input,data});
   data.supplyCohort.excludedSupplyRows=1;
   const management=load('lib/management-core.ts');let stateIndex=0,exported,records=[];
   const state=[start,end,'요약','전체',0];
   const {default:Legacy}=load('components/analytics/LegacyAnalytics.tsx',{
-    react:{...React,useState:initial=>[stateIndex<state.length?state[stateIndex++]:initial,()=>{}],useMemo:factory=>factory()},
+    react:{...React,useState:initial=>[stateIndex<state.length?state[stateIndex++]:initial,()=>{}],useMemo:factory=>factory(),useRef:initial=>({current:initial}),useEffect:()=>{}},
     '@/lib/store':{useStore:()=>({...input,workStaffNames:input.staffNames,staffDirectory:[],caseDocuments:{},superAdminFirmScope:null,firmDirectory:[{id:'firm-a',status:'active'}],profile:{role:'admin',platformRole:'firm_admin',lawFirmId:'firm-a'}})},
     '@/lib/management-analytics':{...management,useManagementSettings:()=>({globalSuperView:false,effectiveFirmId:'firm-a',activeSettings:management.DEFAULT_MANAGEMENT_SETTINGS,settingsByFirm:{},loading:false,error:null})},
     '@/lib/use-firm-supply':{useFirmSupply:()=>({data,loading:false,error:null})},
+    '@/lib/use-analytics-source':{useAnalyticsSource:()=>({data:input,loading:false,error:null,retry:()=>{}})},
     '@/components/ui/DateRangePicker':{DateRangePicker:()=>null},
     '@/lib/management-export-client':{recordManagementExport:async payload=>records.push(payload)},
     '@/lib/analytics-excel':{exportAnalyticsMeetingWorkbook:async payload=>{exported=payload}},
   });
   const walk=node=>node&&typeof node==='object'?[node,...Object.values(node.props??{}).flatMap(value=>Array.isArray(value)?value.flatMap(walk):walk(value))]:[];
-  const tree=Legacy(),button=walk(tree).find(node=>node.type==='button'&&node.props.children?.includes('전체 회의자료 XLSX'));
+  const tree=Legacy(),button=walk(tree).find(node=>node.type==='button'&&node.props.children?.includes('이번달 실적 XLSX'));
   assert.ok(button);button.props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(records.length,1);assert.equal(records[0].firmId,'firm-a');assert.equal(records[0].kind,'meeting');
-  assert.deepEqual(Array.from(exported.sheets,sheet=>sheet.name),['00 회의요약','01 팀인원','02 상담운영','03 DB구매유입','04 수임매출','05 사건수납','06 산식기준','07 정산입력']);
-  const summary=exported.sheets[0],staff=exported.sheets[1];
+  assert.deepEqual(Array.from(exported.sheets,sheet=>sheet.name),['04 수임매출','00 회의요약','01 팀인원','02 상담운영','05 사건수납','07 정산입력','06 산식기준','03 DB구매유입']);
+  assert.match(exported.filename,/이번달실적_2026-10\.xlsx$/);
+  assert.doesNotMatch(JSON.stringify(exported.sheets),/전화 시도|업무량 상세/);
+  const summary=exported.sheets.find(sheet=>sheet.name==='00 회의요약'),staff=exported.sheets.find(sheet=>sheet.name==='01 팀인원');
   assert.deepEqual(Array.from(summary.sections.find(row=>row.title==='공급일 기준 수임 전환').rows[0]),[1,4,'25.0%',1]);
   assert.deepEqual(Array.from(summary.sections.find(row=>row.title==='계약일 기준 전체 수임').rows[0]),[7,5,2,1,0]);
   const supplied=staff.sections.find(row=>row.title==='직원별 공급 DB 수임 전환');

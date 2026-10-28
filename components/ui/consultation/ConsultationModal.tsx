@@ -69,6 +69,7 @@ function makePatcher<T>(setState: Updater<T>) {
 
 type StoredConsultationDraft = {
   version: 1;
+  sourceVersion?: string;
   resetKey: string;
   updatedAt: string;
   expiresAt: string;
@@ -106,6 +107,7 @@ function draftSnapshot(
 export function ConsultationModal({
   open,
   resetKey,
+  sourceVersion,
   onClose,
   displayName,
   allowNameEdit = false,
@@ -121,6 +123,7 @@ export function ConsultationModal({
   onDetailStageChange,
   initialConsultation,
   onSave,
+  saveErrorMessage,
   onExportExcel,
   contractAmount = 0,
   paidAmount = 0,
@@ -136,6 +139,8 @@ export function ConsultationModal({
   // 대상(리드/고객)이 바뀔 때마다 내부 draft 상태를 다시 초기화하기 위한 키. 보통
   // lead.id 또는 client.id를 그대로 넘기면 됩니다.
   resetKey: string;
+  // Shared journals bind restored drafts to the exact server snapshot opened.
+  sourceVersion?: string;
   onClose: () => void;
   displayName: string;
   allowNameEdit?: boolean;
@@ -153,6 +158,8 @@ export function ConsultationModal({
   onDetailStageChange?: (v: DbDetailStage | undefined) => void;
   initialConsultation: ConsultationInfo | undefined;
   onSave: (consultation: ConsultationInfo, customerName?: string, customerPhone?: string) => void | boolean | Promise<void | boolean>;
+  // Latest caller rejection text; only shown for a returned false, not local validation.
+  saveErrorMessage?: string | null;
   // 고객관리 화면에만 있는 "고객 상담 엑셀 다운로드" 버튼 — 지금 화면에서 편집 중인
   // draft 스냅샷을 그대로 넘겨줘야 해서(저장하지 않고도 다운로드 가능), 콜백 형태로
   // 뺐습니다. 전달하지 않으면 버튼 자체가 보이지 않습니다(DB관리 화면은 사용 안 함).
@@ -189,8 +196,13 @@ export function ConsultationModal({
   const [draftReady, setDraftReady] = useState(false);
   const [baselineFingerprint, setBaselineFingerprint] = useState("");
   const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null);
+  const [draftConflict, setDraftConflict] = useState(false);
+  const draftSourceVersion = useRef(sourceVersion);
+  const draftDiscarded = useRef(false);
+  const latestSharedDraft = useRef<StoredConsultationDraft | null>(null);
   const [savePending, setSavePending] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [callerSaveRejected, setCallerSaveRejected] = useState(false);
   const [pdfPending, setPdfPending] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfReady, setPdfReady] = useState<{ url: string; filename: string } | null>(null);
@@ -222,7 +234,11 @@ export function ConsultationModal({
     const serverSnapshot = draftSnapshot(initialConsultation, applicationType, detailStage, reservationChoice, reservationAt, displayName);
     setBaselineFingerprint(snapshotFingerprint(serverSnapshot));
     setSaveError(null);
+    setCallerSaveRejected(false);
     setRestoredDraftAt(null);
+    setDraftConflict(false);
+    draftDiscarded.current = false;
+    draftSourceVersion.current = sourceVersion;
 
     let source = initialConsultation;
     let restored: StoredConsultationDraft | null = null;
@@ -239,9 +255,15 @@ export function ConsultationModal({
               draftSnapshot(parsed.consultation, parsed.applicationType, parsed.detailStage, parsed.reservationChoice, parsed.reservationAt, parsed.customerName ?? displayName, parsed.customerPhone)
             );
             const serverFingerprint = snapshotFingerprint(serverSnapshot);
-            if (storedFingerprint !== serverFingerprint) {
+            const sourceMismatch = (sourceVersion !== undefined || parsed.sourceVersion !== undefined)
+              && parsed.sourceVersion !== sourceVersion;
+            if (storedFingerprint !== serverFingerprint || sourceMismatch) {
               restored = parsed;
               source = parsed.consultation;
+              // Never relabel an older (including unversioned legacy) draft with
+              // the latest row version merely because the dialog was reopened.
+              draftSourceVersion.current = parsed.sourceVersion;
+              setDraftConflict(sourceMismatch);
             } else {
               window.localStorage.removeItem(consultationDraftKey(resetKey));
             }
@@ -345,15 +367,34 @@ export function ConsultationModal({
     () => snapshotFingerprint(draftSnapshot(draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit ? editedName : displayName, allowPhoneEdit && phoneEdited ? editedPhone : undefined)),
     [draft, applicationType, detailStage, reservationChoice, reservationAt, allowNameEdit, editedName, displayName, allowPhoneEdit, phoneEdited, editedPhone, displayPhone]
   );
-  const hasUnsavedChanges = !readOnly && draftReady && !!baselineFingerprint && currentFingerprint !== baselineFingerprint;
+  const hasUnsavedChanges = !readOnly && draftReady && (draftConflict || (!!baselineFingerprint && currentFingerprint !== baselineFingerprint));
+
+  latestSharedDraft.current = hasUnsavedChanges && (sourceVersion !== undefined || draftSourceVersion.current !== undefined) ? {
+    version: 1, sourceVersion: draftSourceVersion.current, resetKey,
+    updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    consultation: draft, customerName: allowNameEdit ? editedName : displayName,
+    customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined,
+    applicationType, detailStage, reservationChoice, reservationAt,
+  } : null;
+  useEffect(() => () => {
+    // A colleague's stage change can revoke access and unmount this dialog before
+    // its debounce fires. Preserve the last shared keystroke, but never revive a
+    // successfully saved or explicitly discarded draft.
+    const envelope = latestSharedDraft.current;
+    if (!draftDiscarded.current && envelope?.resetKey === resetKey && typeof window !== "undefined") {
+      try { window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope)); } catch {}
+    }
+  }, [resetKey]);
 
   // 입력이 바뀔 때마다 250ms 지연 후 브라우저 임시저장. 서버 저장과 별개이므로 네트워크/RLS
   // 오류가 나더라도 마지막 작성본은 남습니다. 정상 저장이 확인된 뒤에만 삭제합니다.
   useEffect(() => {
     if (!open || readOnly || !draftReady || !hasUnsavedChanges || typeof window === "undefined") return;
     const timer = window.setTimeout(() => {
+      if (draftDiscarded.current) return;
       const envelope: StoredConsultationDraft = {
         version: 1,
+        sourceVersion: draftSourceVersion.current,
         resetKey,
         updatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -377,8 +418,9 @@ export function ConsultationModal({
   useEffect(() => {
     if (!open || !hasUnsavedChanges || typeof window === "undefined") return;
     const warn = (event: BeforeUnloadEvent) => {
+      if (draftDiscarded.current) return;
       try {
-        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined, applicationType, detailStage, reservationChoice, reservationAt };
+        const envelope: StoredConsultationDraft = { version: 1, sourceVersion: draftSourceVersion.current, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined, applicationType, detailStage, reservationChoice, reservationAt };
         window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
       } catch {}
       event.preventDefault();
@@ -431,7 +473,8 @@ export function ConsultationModal({
   }
 
   async function save() {
-    if (readOnly || savePending) return;
+    if (readOnly || savePending || draftConflict || draftDiscarded.current) return;
+    setCallerSaveRejected(false);
     if (allowNameEdit && !editedName.trim()) {
       setSaveError("고객 이름은 비워둘 수 없습니다.");
       return;
@@ -442,9 +485,11 @@ export function ConsultationModal({
       const customerPhone = changedCustomerPhone(displayPhone, editedPhone, allowPhoneEdit && phoneEdited);
       const result = await onSave(draft, allowNameEdit ? editedName.trim() : undefined, customerPhone);
       if (result === false) {
+        setCallerSaveRejected(true);
         setSaveError("서버 저장에 실패했습니다. 작성 내용은 임시저장되어 있으니 새로고침하지 말고 다시 저장해주세요.");
         return;
       }
+      draftDiscarded.current = true;
       if (typeof window !== "undefined") {
         try { window.localStorage.removeItem(consultationDraftKey(resetKey)); } catch {}
       }
@@ -459,12 +504,26 @@ export function ConsultationModal({
     }
   }
 
+  function discardConflictingDraft() {
+    if (!draftConflict || savePending || typeof window === "undefined") return;
+    if (!window.confirm("이 임시본은 서버의 최신 상담일지와 충돌합니다.\n필요한 내용은 먼저 PDF로 보관해주세요.\n임시본을 삭제하고 닫을까요? 다시 열면 최신 저장본을 불러옵니다.")) return;
+    try {
+      window.localStorage.removeItem(consultationDraftKey(resetKey));
+    } catch {
+      setSaveError("브라우저 임시본을 삭제하지 못했습니다. PDF로 내용을 보관한 뒤 브라우저 저장공간 설정을 확인해주세요.");
+      return;
+    }
+    // Prevent an already queued autosave/beforeunload from recreating this draft.
+    draftDiscarded.current = true;
+    onClose();
+  }
+
   function requestClose() {
-    if (savePending) return;
+    if (savePending || draftDiscarded.current) return;
     if (hasUnsavedChanges && typeof window !== "undefined") {
       // 마지막 키 입력 직후(250ms debounce 전)에 닫아도 최신값을 즉시 보관합니다.
       try {
-        const envelope: StoredConsultationDraft = { version: 1, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined, applicationType, detailStage, reservationChoice, reservationAt };
+        const envelope: StoredConsultationDraft = { version: 1, sourceVersion: draftSourceVersion.current, resetKey, updatedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), consultation: draft, customerName: allowNameEdit ? editedName : displayName, customerPhone: allowPhoneEdit && phoneEdited ? editedPhone : undefined, applicationType, detailStage, reservationChoice, reservationAt };
         window.localStorage.setItem(consultationDraftKey(resetKey), JSON.stringify(envelope));
       } catch {}
       const ok = window.confirm("저장되지 않은 상담일지 작성 내용이 있습니다.\n지금 닫아도 임시저장본은 남아 다음에 다시 열면 자동 복구됩니다.\n그래도 닫으시겠습니까?");
@@ -494,9 +553,13 @@ export function ConsultationModal({
   return (
     <Modal open={open} title={`${allowNameEdit ? (editedName.trim() || displayName) : displayName} · 상담일지`} headerExtra={headerExtra} onClose={requestClose} size="full">
       {readOnly && <div className="mb-1 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">조회 전용 권한입니다. 상담일지 내용은 확인할 수 있지만 수정·파일반영·예약변경·저장은 할 수 없습니다.</div>}
-      {restoredDraftAt && !readOnly && <div className="mb-1 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">이전에 저장하지 못하고 닫힌 상담일지 임시본을 자동 복구했습니다. 내용을 확인한 뒤 [저장]을 눌러 서버에 반영해주세요.</div>}
-      {saveError && <div className="mb-1 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{saveError}</div>}
-      <fieldset disabled={readOnly || savePending} className="min-w-0 border-0 p-0 disabled:opacity-100">
+      {restoredDraftAt && !readOnly && !draftConflict && <div className="mb-1 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">이전에 저장하지 못하고 닫힌 상담일지 임시본을 자동 복구했습니다. 내용을 확인한 뒤 [저장]을 눌러 서버에 반영해주세요.</div>}
+      {draftConflict && <div role="alert" className="mb-1 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+        다른 담당자가 변경했거나 임시본의 원본 버전을 확인할 수 없어 저장을 막았습니다. 입력 내용은 보존되며 PDF로 보관할 수 있습니다. 최신 상담일지를 다시 확인한 뒤 필요한 내용을 반영해주세요.
+        <button type="button" onClick={discardConflictingDraft} disabled={savePending} className="ml-2 rounded border border-amber-400 bg-white px-2 py-1">임시본 삭제 후 닫기</button>
+      </div>}
+      {saveError && <div className="mb-1 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{callerSaveRejected && saveErrorMessage ? saveErrorMessage : saveError}</div>}
+      <fieldset disabled={readOnly || savePending || draftConflict} className="min-w-0 border-0 p-0 disabled:opacity-100">
       <div className="space-y-1">
         <div className="flex min-h-8 flex-wrap items-center gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
           <span className="shrink-0 whitespace-nowrap rounded bg-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">상담 후 방향</span>
@@ -615,7 +678,7 @@ export function ConsultationModal({
           </div>
 
           <div className="min-h-[190px] xl:col-start-1">
-            <ConsultationMemoSection key={resetKey} memoLog={memoLog} setMemoLog={setMemoLog} onDraftChange={captureMemoDraft} readOnly={readOnly || savePending} />
+            <ConsultationMemoSection key={resetKey} memoLog={memoLog} setMemoLog={setMemoLog} onDraftChange={captureMemoDraft} readOnly={readOnly || savePending || draftConflict} />
           </div>
           <div className="min-h-[190px] xl:col-span-2 xl:col-start-2">
             <DebtListSection loanRecords={loanRecords} setLoanRecords={setLoanRecords} setAttachedFiles={setAttachedFiles} />
@@ -637,7 +700,7 @@ export function ConsultationModal({
         </div>
         <div className="flex gap-1">
           <Button variant="secondary" className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={requestClose} disabled={savePending}>취소</Button>
-          {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save} disabled={savePending}>{savePending ? "저장 중..." : "저장"}</Button>}
+          {!readOnly && <Button className="h-10 sm:h-10 min-w-[72px] px-5 text-sm font-bold" onClick={save} disabled={savePending || draftConflict}>{savePending ? "저장 중..." : "저장"}</Button>}
         </div>
       </div>
       {pdfReady && <div role="status" className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">

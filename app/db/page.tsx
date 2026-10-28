@@ -41,7 +41,7 @@ import { ClipboardList, MessageSquareText, Plus, ShieldAlert, Trash2 } from "luc
 import { buildLeadSearchIndex } from "@/lib/list-indexes";
 import { visibleMemoEntries } from "@/lib/consultation-memos";
 import { manualLeadAssignee } from "@/lib/manual-lead-assignment";
-import { isWritingStaff, canReadLeadForProfile, isSharedLeadReadOnly, isSharedLongAbsentLead } from "@/lib/writing-staff";
+import { isWritingStaff, canReadLeadForProfile, isSharedLeadReadOnly, isSharedLongAbsentLead, canLeadPermission } from "@/lib/writing-staff";
 
 // 리드정보(광고 인스턴트 양식 응답) — 예전에는 색상 카드로 가로 나열했지만, "색상카드
 // 빼고 다 텍스트로, 세로로 나오게" 요청에 따라 색상 없는 일반 텍스트를 세로로 나열합니다.
@@ -445,20 +445,22 @@ function LeadMemoCell({ lead, onOpenConsultation }: { lead: DbLead; onOpenConsul
 // v17: 진행단계는 DB관리 상단 통합 보드/리스트에서 직접 관리하므로 상담일지 팝업의
 // 중복 "상세 단계" 드롭다운은 더 이상 띄우지 않습니다. 상담일지는 상담 내용 자체에 집중.
 function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: DbLead; onClose: () => void }) {
-  const { updateLead, cases, can: baseCan, profile, currentStaff } = useStore();
-  const sharedReadOnly = isSharedLeadReadOnly(profile, lead, baseCan, currentStaff);
-  const can = (permission: PermissionKey) => baseCan(permission) && (!sharedReadOnly || ["db.view", "db.view_finance", "db.view_consultation"].includes(permission));
-  const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(lead.applicationType);
+  const { updateLead, cases, can: baseCan, profile, currentStaff, syncError } = useStore();
+  const can = (permission: PermissionKey) => canLeadPermission(profile, lead, baseCan, permission, currentStaff);
+  // Keep the opened draft baseline even when realtime refreshes the current row.
+  // Saving an old draft must conflict, not overwrite another colleague's edits.
+  const [editBase] = useState(lead);
+  const [applicationType, setApplicationType] = useState<ConsultDirection | undefined>(editBase.applicationType);
   const [reservationChoice, setReservationChoice] = useState<boolean | undefined>(
-    !!lead.reservationAt
+    !!editBase.reservationAt
   );
-  const [reservationAt, setReservationAt] = useState<string | undefined>(lead.reservationAt);
+  const [reservationAt, setReservationAt] = useState<string | undefined>(editBase.reservationAt);
 
   useEffect(() => {
     if (!open) return;
-    setApplicationType(lead.applicationType);
-    setReservationChoice(!!lead.reservationAt);
-    setReservationAt(lead.reservationAt);
+    setApplicationType(editBase.applicationType);
+    setReservationChoice(!!editBase.reservationAt);
+    setReservationAt(editBase.reservationAt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead.id]);
 
@@ -478,17 +480,19 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
     <ConsultationModal
       open={open}
       resetKey={lead.id}
+      sourceVersion={isSharedLongAbsentLead(profile, editBase, baseCan) ? JSON.stringify(editBase) : undefined}
+      saveErrorMessage={syncError}
       onClose={onClose}
-      displayName={lead.name}
+      displayName={editBase.name}
       allowNameEdit={can("db.edit_basic") && can("db.edit_consultation")}
-      displayPhone={lead.phone}
+      displayPhone={editBase.phone}
       allowPhoneEdit={can("db.edit_basic") && can("db.edit_consultation")}
-      joinedAtLabel={fmtDate(lead.receivedAt)}
+      joinedAtLabel={fmtDate(editBase.receivedAt)}
       caseNumberLabel="- (법원 접수 전)"
       applicationType={applicationType}
       onApplicationTypeChange={setApplicationType}
       allowApplicationTypeEdit={can("db.edit_basic")}
-      initialConsultation={lead.consultation}
+      initialConsultation={editBase.consultation}
       contractAmount={contractAmount}
       paidAmount={paidAmount}
       outstandingAmount={outstandingAmount}
@@ -502,16 +506,16 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
       } : undefined}
       onReservationAtChange={can("db.manage_reservation") ? setReservationAt : undefined}
       onSave={async (consultation, customerName, customerPhone) => {
-        if (sharedReadOnly) return false;
+        if (!can("db.edit_consultation")) return false;
         const patch: Partial<DbLead> = { consultation };
         // 계약 전환된 DB도 이름 수정 허용. DB 트리거가 같은 로펌의 연결된
         // app_clients 이름을 동일 트랜잭션에서 변경하여 계약관리까지 일치시킵니다.
-        if (can("db.edit_basic") && customerName !== undefined && customerName !== lead.name) {
+        if (can("db.edit_basic") && customerName !== undefined && customerName !== editBase.name) {
           patch.name = customerName;
         }
         // The phone-sync trigger updates only the linked client, in the same
         // transaction. Do not issue a second client write with broader rights.
-        if (can("db.edit_basic") && customerPhone !== undefined && customerPhone !== lead.phone) {
+        if (can("db.edit_basic") && customerPhone !== undefined && customerPhone !== editBase.phone) {
           patch.phone = customerPhone;
         }
         if (can("db.edit_basic")) patch.applicationType = applicationType;
@@ -520,7 +524,7 @@ function LeadConsultationModal({ open, lead, onClose }: { open: boolean; lead: D
           patch.reservationAt = reservationChoice === true ? reservationAt : undefined;
         }
         // v28.25: 서버 저장 성공을 확인한 뒤에만 상담일지 모달이 닫히고 임시본이 삭제됩니다.
-        return await updateLead(lead.id, patch);
+        return await updateLead(lead.id, patch, editBase);
       }}
     />
   );
@@ -670,9 +674,9 @@ function NewLeadModal({ open, onClose }: { open: boolean; onClose: () => void })
 
 type LeadRowProps = {
   writingOnly?: boolean;
-  sharedReadOnly?: boolean;
+  profile: ReturnType<typeof useStore>["profile"]; currentStaff: ReturnType<typeof useStore>["currentStaff"];
   lead: DbLead; globalSuperView: boolean; todayIso: string;
-  can: ReturnType<typeof useStore>["can"]; workStaffNames: StaffName[]; canOpenConsultation: boolean;
+  can: ReturnType<typeof useStore>["can"]; workStaffNames: StaffName[];
   updateLead: ReturnType<typeof useStore>["updateLead"];
   onOpenConsultation: (lead: DbLead) => void; onOpenMemo: (lead: DbLead) => void;
   onConvert: (lead: DbLead) => void; onDelete: (lead: DbLead) => void; onSms: (lead: DbLead) => void; onWork: (lead: DbLead) => void;
@@ -680,9 +684,10 @@ type LeadRowProps = {
 
 // CSS 반응형 트리를 유지해 화면 너비가 바뀌어도 메모 팝오버와 입력 DOM을 보존합니다.
 // 행과 무관한 모달·안내 상태 변경에서는 같은 행의 렌더링을 건너뜁니다.
-const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork, writingOnly = false, sharedReadOnly = false }: LeadRowProps) {
+const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, profile, currentStaff, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork, writingOnly = false }: LeadRowProps) {
   const baseCan = can;
-  can = permission => baseCan(permission) && (!sharedReadOnly || ["db.view", "db.view_finance", "db.view_consultation"].includes(permission));
+  can = permission => canLeadPermission(profile, lead, baseCan, permission, currentStaff);
+  const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
   return (
     <div className="space-y-3 p-4" style={leadStageRowStyle(lead)}>
       <div className="flex items-start justify-between gap-3">
@@ -703,7 +708,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
         value={lead.applicationType ?? ""}
         disabled={!can("db.edit_basic")}
         onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-          updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
+          updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined }, lead)
         }
         className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
       >
@@ -717,7 +722,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
       <select
         value={lead.assignedStaff}
         disabled={!can("db.change_assignee")}
-        onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName }, lead)}
         className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
       >
         {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>담당 {lead.assignedStaff} (기존)</option>}
@@ -732,7 +737,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
         disabled={!can("db.change_stage")}
         onChange={(e: ChangeEvent<HTMLSelectElement>) => {
           const detailStage = e.target.value as DbDetailStage;
-          void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
+          void updateLead(lead.id, stageUpdatePatch(lead, detailStage), lead);
         }}
         className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm disabled:opacity-60"
       >
@@ -748,7 +753,7 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
           <ReservationDateTimeEditor
             value={lead.reservationAt}
             disabled={!can("db.manage_reservation")}
-            onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
+            onChange={(reservationAt) => updateLead(lead.id, { reservationAt }, lead)}
           />
         </label>
       )}
@@ -798,9 +803,10 @@ const MobileLeadRow = memo(function MobileLeadRow({ lead, globalSuperView, today
   );
 });
 
-const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, canOpenConsultation, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork, writingOnly = false, sharedReadOnly = false }: LeadRowProps) {
+const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, todayIso, can, workStaffNames, profile, currentStaff, updateLead, onOpenConsultation, onOpenMemo, onConvert, onDelete, onSms, onWork, writingOnly = false }: LeadRowProps) {
   const baseCan = can;
-  can = permission => baseCan(permission) && (!sharedReadOnly || ["db.view", "db.view_finance", "db.view_consultation"].includes(permission));
+  can = permission => canLeadPermission(profile, lead, baseCan, permission, currentStaff);
+  const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
   return (
     <tr className="border-t border-slate-100 align-top transition-colors" style={leadStageRowStyle(lead)}>
       {globalSuperView && <td className="whitespace-nowrap px-4 py-3"><span className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-bold text-violet-700">{lead._lawFirmName ?? "-"}</span></td>}
@@ -820,7 +826,7 @@ const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, tod
           value={lead.applicationType ?? ""}
           disabled={!can("db.edit_basic")}
           onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-            updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined })
+            updateLead(lead.id, { applicationType: (e.target.value || undefined) as ConsultDirection | undefined }, lead)
           }
           className="min-w-[100px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
         >
@@ -836,7 +842,7 @@ const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, tod
         <select
           value={lead.assignedStaff}
           disabled={!can("db.change_assignee")}
-          onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName })}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => updateLead(lead.id, { assignedStaff: e.target.value as StaffName }, lead)}
           className="min-w-[90px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
         >
           {!workStaffNames.includes(lead.assignedStaff) && <option value={lead.assignedStaff}>{lead.assignedStaff} (기존)</option>}
@@ -853,7 +859,7 @@ const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, tod
           disabled={!can("db.change_stage")}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => {
             const detailStage = e.target.value as DbDetailStage;
-            void updateLead(lead.id, stageUpdatePatch(lead, detailStage));
+            void updateLead(lead.id, stageUpdatePatch(lead, detailStage), lead);
           }}
           className="min-w-[130px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-60"
         >
@@ -868,7 +874,7 @@ const DesktopLeadRow = memo(function DesktopLeadRow({ lead, globalSuperView, tod
         <ReservationDateTimeEditor
           value={lead.reservationAt}
           disabled={!can("db.manage_reservation")}
-          onChange={(reservationAt) => updateLead(lead.id, { reservationAt })}
+          onChange={(reservationAt) => updateLead(lead.id, { reservationAt }, lead)}
           compact
         />
       </td>
@@ -947,15 +953,16 @@ export default function DbManagementPage() {
   useEffect(() => {setSmsTarget(null);setWorkTarget(null);}, [profile?.id, profile?.lawFirmId, superAdminFirmScope?.id]);
 
   const canViewAllDb = can("db.view_all");
-  const canOpenConsultation = can("db.view_consultation") || can("db.edit_consultation");
 
-  // 기존 담당자 범위에 같은 로펌 장기부재 조회만 추가합니다.
+  // 같은 로펌 장기부재는 일반 관리 권한도 공유하되 별도 관리자 권한은 유지합니다.
   const accessibleLeads = useMemo(() => {
     if (writer) return leads.filter(lead => canReadLeadForProfile(profile, lead, can, currentStaff));
     if (canViewAllDb) return leads;
     const myNames = new Set([currentStaff, profile?.staffName, profile?.displayName].map(value => String(value ?? "").trim()).filter(Boolean));
     return leads.filter(lead => myNames.has(String(lead.assignedStaff ?? "").trim()) || isSharedLongAbsentLead(profile, lead, can));
   }, [canViewAllDb, leads, currentStaff, profile, can, writer]);
+
+  const currentConsultLead = consultTarget ? accessibleLeads.find(lead => lead.id === consultTarget.id) : undefined;
 
   // 최상단 통합검색에서 DB를 선택한 경우 DB관리 검색창으로 검색어를 넘겨받습니다.
   useEffect(() => {
@@ -1284,7 +1291,7 @@ export default function DbManagementPage() {
         {/* 모바일: 카드 리스트 */}
         <div className="divide-y divide-slate-100 md:hidden">
           {rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">조건에 맞는 DB가 없습니다.</div>}
-          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} sharedReadOnly={isSharedLeadReadOnly(profile, lead, can, currentStaff)} writingOnly={writer} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
+          {visibleRows.map((lead) => <MobileLeadRow key={lead.id} lead={lead} profile={profile} currentStaff={currentStaff} writingOnly={writer} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
         </div>
 
         {/* 데스크톱: 테이블 */}
@@ -1300,7 +1307,7 @@ export default function DbManagementPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} sharedReadOnly={isSharedLeadReadOnly(profile, lead, can, currentStaff)} writingOnly={writer} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} canOpenConsultation={canOpenConsultation} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
+              {visibleRows.map((lead) => <DesktopLeadRow key={lead.id} lead={lead} profile={profile} currentStaff={currentStaff} writingOnly={writer} globalSuperView={globalSuperView} todayIso={todayIso} can={can} workStaffNames={workStaffNames} updateLead={updateLead} onOpenConsultation={openConsultation} onOpenMemo={setConsultTarget} onConvert={tryConvert} onDelete={setDeleteTarget} onSms={openSms} onWork={setWorkTarget}/>)}
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={globalSuperView ? 11 : 10} className="px-4 py-10 text-center text-slate-400">
@@ -1349,11 +1356,11 @@ export default function DbManagementPage() {
       <LeadSmsDialog lead={can("sms.send") && smsTarget && !isSharedLeadReadOnly(profile, smsTarget, can, currentStaff) ? smsTarget : null} onClose={closeSms}/>
       <NewLeadModal open={newLeadOpen} onClose={() => setNewLeadOpen(false)} />
 
-      {consultTarget && accessibleLeads.some(lead => lead.id === consultTarget.id) && (
+      {consultTarget && currentConsultLead && (
         <LeadConsultationModal
           key={consultTarget.id}
           open={!!consultTarget}
-          lead={consultTarget}
+          lead={currentConsultLead}
           onClose={() => setConsultTarget(null)}
         />
       )}

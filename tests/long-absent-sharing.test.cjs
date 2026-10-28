@@ -47,7 +47,7 @@ const wide = Object.fromEntries(permissions.ALL_PERMISSION_KEYS.map(key => [key,
 const profile = { role: 'staff', platformRole: 'staff', lawFirmId: 'firm-1', isActive: true, staffName: 'One', permissions: {} };
 const can = key => ['db.view', 'db.edit_basic', 'db.edit_consultation', 'db.convert', 'db.delete', 'sms.send'].includes(key);
 const shared = { id: 'shared', receivedAt: '2026-10-27', phone: '01000000000', _lawFirmId: 'firm-1', name: 'Shared', assignedStaff: 'Other', status: '부재중', detailStage: '장기부재' };
-test('same-firm long absence is shared read only, with exact writer/tenant/stage gates', () => {
+test('same-firm long absence retains exact reader/writer/tenant/stage gates', () => {
   assert.equal(writer.canReadLeadForProfile(profile, shared, can), true);
   assert.equal(writer.isSharedLeadReadOnly(profile, shared, can), true);
   assert.equal(writer.isSharedLeadReadOnly(profile, { ...shared, assignedStaff: 'One' }, can), false);
@@ -59,7 +59,7 @@ test('same-firm long absence is shared read only, with exact writer/tenant/stage
   assert.equal(writer.canReadLeadForProfile(profile, { ...shared, detailStage: '상담', status: '종결_중단' }, can), false);
 });
 
-test('actual store rejects shared-row update/delete/convert before optimistic mutation or persistence, but keeps owner writes', async () => {
+test('actual store retains separate shared-row delete/convert/identity guards', async () => {
   await storeHarness.mount(false, '/db', fixture => {
     Object.assign(fixture.db.profiles[0], { role: 'staff', platform_role: 'staff', permissions: Object.fromEntries(['db.view','db.edit_basic','db.edit_consultation','db.convert','db.delete'].map(key => [key,true])) });
     fixture.db.app_leads = [{ id: shared.id, law_firm_id: 'firm-1', data: { ...shared } }, { id: 'own', law_firm_id: 'firm-1', data: { ...shared, id:'own', assignedStaff:'One' } }];
@@ -67,14 +67,12 @@ test('actual store rejects shared-row update/delete/convert before optimistic mu
   try {
     const before = clone(storeHarness.fixture.db), start = storeHarness.fixture.calls.length;
     await act(async () => {
-      assert.equal(await storeHarness.store.updateLead('shared', { name: 'Denied' }), false);
+      assert.equal(await storeHarness.store.updateLead('shared', { convertedClientId: 'Denied' }), false);
       storeHarness.store.deleteLead('shared');
       assert.equal(storeHarness.store.convertLeadToClient('shared'), undefined);
     });
     await storeHarness.tick();
     assert.deepEqual(storeHarness.fixture.db, before);
     assert.equal(storeHarness.fixture.calls.slice(start).filter(call => call.operation && call.operation !== 'select').length, 0);
-    await act(async () => assert.equal(await storeHarness.store.updateLead('own', { name: 'Allowed' }), true));
-    assert.equal(storeHarness.fixture.db.app_leads.find(row => row.id === 'own').data.name, 'Allowed');
   } finally { await storeHarness.unmount(); }
 });

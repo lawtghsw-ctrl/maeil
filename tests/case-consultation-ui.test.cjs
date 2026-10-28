@@ -8,7 +8,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const text = node => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : node ? text(node.children) : '';
 
 function harness(options = {}) {
-  const modules = new Map(), updates = [], caseUpdates = [], storage = new Map(), captures = {}, timers = new Map();
+  const modules = new Map(), updates = [], caseUpdates = [], storage = new Map(), captures = {}, timers = new Map(), events = new Map();
   let tree, nextTimer = 0, closed = 0;
   const permissions = Object.fromEntries(['db.view','db.view_all','db.view_consultation','db.edit_consultation','db.edit_basic','db.manage_reservation','db.view_finance','cases.view','cases.view_all','cases.view_finance'].map(key => [key,true]));
   Object.assign(permissions, options.permissions);
@@ -35,7 +35,7 @@ function harness(options = {}) {
     SearchBox:()=>null,Pagination:()=>null,pageRows:(rows,page,size)=>rows.slice((page-1)*size,page*size),
   };
   const window = { localStorage:{ getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key) },
-    setTimeout:callback=>{timers.set(++nextTimer,callback);return nextTimer;},clearTimeout:id=>timers.delete(id),addEventListener(){},removeEventListener(){},confirm:()=>true };
+    setTimeout:callback=>{timers.set(++nextTimer,callback);return nextTimer;},clearTimeout:id=>timers.delete(id),addEventListener:(key,callback)=>events.set(key,callback),removeEventListener:(key,callback)=>{if(events.get(key)===callback)events.delete(key);},confirm:()=>options.confirmDiscard!==false };
   function load(relative) {
     if (modules.has(relative)) return modules.get(relative).exports;
     const module = {exports:{}}; modules.set(relative,module);
@@ -78,6 +78,7 @@ function harness(options = {}) {
     open:async index=>act(async()=>tree.root.findAllByType('button').filter(node=>node.props['aria-label']==='합성 고객 상담일지')[index??0].props.onClick()),
     save:async(consultation,name,phone)=>{let result;await act(async()=>{result=await captures.modal.onSave(consultation,name,phone);});return result;},
     flushDraft:()=>{for(const [id,callback]of timers){timers.delete(id);callback();}},
+    unload:()=>events.get("beforeunload")?.({preventDefault(){},returnValue:""}),
     close:()=>act(()=>tree.unmount()),
   };
 }
@@ -153,11 +154,11 @@ test('readonly/partial permissions cannot save hidden name, direction, reservati
   h.permissions['db.edit_consultation']=false;h.permissions['db.edit_basic']=true;await h.rerender();assert.equal(h.modal.readOnly,true);assert.equal(h.modal.allowPhoneEdit,false);assert.equal(await h.save({memoLog:[]},undefined,'010-0000-0099'),false);assert.equal(h.updates.length,1);h.close();
 });
 
-test('fresh server snapshot is read on open while an unsaved local direction/reservation is preserved',async()=>{
+test('opened snapshot and unsaved local direction/reservation stay stable across a realtime update',async()=>{
   const h=harness({component:'bridge'});await h.mount();
   await act(async()=>{h.modal.onApplicationTypeChange('개인파산');h.modal.onReservationChoiceChange(true);h.modal.onReservationAtChange('2026-10-25T14:00');});
   h.state.leads=[{...h.state.leads[0],name:'서버 이름',consultation:{memoLog:[],personal:{basicIncomeNote:'새 서버본'}}}];await h.rerender();
-  assert.equal(h.modal.displayName,'서버 이름');assert.equal(h.modal.initialConsultation.personal.basicIncomeNote,'새 서버본');assert.equal(h.modal.applicationType,'개인파산');assert.equal(h.modal.reservationAt,'2026-10-25T14:00');h.close();
+  assert.equal(h.modal.displayName,'합성 고객');assert.equal(h.modal.initialConsultation.personal.basicIncomeNote,'원본');assert.equal(h.modal.applicationType,'개인파산');assert.equal(h.modal.reservationAt,'2026-10-25T14:00');h.close();
 });
 
 test('real shared modal keeps a failed save draft and does not close or write any contract',async()=>{
@@ -230,5 +231,90 @@ test('a different lead in the same case gets independent controller state and ac
     assert.notEqual(h.modal.resetKey,oldKey);assert.equal(h.modal.applicationType,'워크아웃');assert.equal(h.modal.reservationAt,'2026-11-01T09:00');assert.equal(h.captures.BasicInfoSection.personal.basicIncomeNote,'두번째 서버본');
     const nextKey=h.modal.resetKey;h.state.profile={...h.state.profile,id:'actor-2'};await h.rerender();assert.notEqual(h.modal.resetKey,nextKey);
     h.state.profile={...h.state.profile,lawFirmId:'firm-2'};await h.rerender();assert.equal(h.tree.toJSON(),null);assert.equal(h.updates.length,0);
+  }finally{h.close();}
+});
+
+
+function sharedDraftOptions(extra={}) {
+  return {component:'bridge',realModal:true,...extra,mutate:state=>{
+    state.profile.isActive=true;
+    state.leads[0].detailStage='장기부재';state.leads[0].status='부재중';
+  }};
+}
+
+test('shared restored draft remains tied to its old source across autosave/close/unload; changed source blocks save until explicit discard',async()=>{
+  const options=sharedDraftOptions({confirmDiscard:false}),h=harness(options);await h.mount();
+  await act(async()=>h.captures.BasicInfoSection.patchPersonal({basicIncomeNote:'동료 변경 전 내 임시본'}));h.flushDraft();
+  const key='lawpower:consultation-draft:v1:'+h.modal.resetKey,originalVersion=h.modal.sourceVersion;
+  assert.equal(typeof originalVersion,'string');assert.equal(JSON.parse(h.storage.get(key)).sourceVersion,originalVersion);
+  h.close();h.state.leads=[{...h.state.leads[0],consultation:{personal:{basicIncomeNote:'동료가 저장한 최신본'},memoLog:[]}}];await h.mount();
+  try{
+    assert.notEqual(h.modal.sourceVersion,originalVersion);
+    assert.equal(h.captures.BasicInfoSection.personal.basicIncomeNote,'동료 변경 전 내 임시본');
+    assert.match(text(h.tree.toJSON()),/원본 버전을 확인할 수 없어 저장을 막았습니다/);
+    const button=label=>h.tree.root.findAllByType('button').find(node=>text(node).trim()===label);
+    assert.equal(button('저장').props.disabled,true);assert.ok(h.tree.root.findAllByType('fieldset').every(node=>node.props.disabled));
+    assert.equal(button('상담일지 A4 PDF 다운로드').props.disabled,false,'conflicted draft stays exportable');
+    await act(async()=>button('저장').props.onClick());assert.equal(h.updates.length,0,'direct handler invocation cannot bypass conflict');
+    h.flushDraft();h.unload();assert.equal(JSON.parse(h.storage.get(key)).sourceVersion,originalVersion);
+    await act(async()=>button('취소').props.onClick());assert.equal(h.closed,0);assert.equal(JSON.parse(h.storage.get(key)).sourceVersion,originalVersion);
+    await act(async()=>button('임시본 삭제 후 닫기').props.onClick());assert.equal(h.closed,0);assert.ok(h.storage.has(key));
+    options.confirmDiscard=true;await act(async()=>button('임시본 삭제 후 닫기').props.onClick());assert.equal(h.closed,1);assert.equal(h.storage.has(key),false);
+    h.flushDraft();h.unload();assert.equal(h.storage.has(key),false,'queued persistence must not recreate a discarded draft');
+  }finally{h.close();}
+  await h.mount();try{
+    assert.equal(h.captures.BasicInfoSection.personal.basicIncomeNote,'동료가 저장한 최신본');
+    const save=h.tree.root.findAllByType('button').find(node=>text(node)==='저장');assert.equal(save.props.disabled,false);
+  }finally{h.close();}
+});
+
+test('shared draft with matching source restores and saves, but a legacy unversioned draft is preserved and blocked',async()=>{
+  for(const legacy of [false,true]){
+    const h=harness(sharedDraftOptions());await h.mount();
+    await act(async()=>h.captures.BasicInfoSection.patchPersonal({basicIncomeNote:'복구할 공유 상담'}));h.flushDraft();
+    const key='lawpower:consultation-draft:v1:'+h.modal.resetKey;
+    h.close();
+    if(legacy){const draft=JSON.parse(h.storage.get(key));delete draft.sourceVersion;h.storage.set(key,JSON.stringify(draft));}
+    await h.mount();try{
+      assert.equal(h.captures.BasicInfoSection.personal.basicIncomeNote,'복구할 공유 상담');
+      const save=h.tree.root.findAllByType('button').find(node=>text(node)==='저장');assert.equal(save.props.disabled,legacy);
+      await act(async()=>save.props.onClick());assert.equal(h.updates.length,legacy?0:1);
+      if(legacy){h.flushDraft();h.unload();assert.equal(JSON.parse(h.storage.get(key)).sourceVersion,undefined);assert.equal(h.storage.has(key),true);}
+    }finally{h.close();}
+  }
+});
+
+
+test('forced shared-dialog unmount preserves the last keystroke before debounce and a successful save cannot recreate its draft',async()=>{
+  const h=harness(sharedDraftOptions());await h.mount();
+  await act(async()=>h.captures.BasicInfoSection.patchPersonal({basicIncomeNote:'마지막 입력'}));
+  const key='lawpower:consultation-draft:v1:'+h.modal.resetKey,source=h.modal.sourceVersion;
+  h.close();assert.equal(JSON.parse(h.storage.get(key)).consultation.personal.basicIncomeNote,'마지막 입력');
+  assert.equal(JSON.parse(h.storage.get(key)).sourceVersion,source);
+  await h.mount();try{
+    const save=h.tree.root.findAllByType('button').find(node=>text(node)==='저장');await act(async()=>save.props.onClick());
+    assert.equal(h.updates.length,1);assert.equal(h.storage.has(key),false);
+    h.flushDraft();h.unload();assert.equal(h.storage.has(key),false);
+  }finally{h.close();}
+  assert.equal(h.storage.has(key),false);
+});
+
+
+test('current caller rejection is visible inside the journal while unrelated local validation does not reuse stale syncError',async()=>{
+  const h=harness(sharedDraftOptions({failSave:true}));await h.mount();
+  try{
+    const save=()=>h.tree.root.findAllByType('button').find(node=>text(node)==='저장').props.onClick();
+    h.state.syncError='이전 작업의 오류';await h.rerender();
+    assert.doesNotMatch(text(h.tree.toJSON()),/이전 작업의 오류/);
+    await act(async()=>h.captures.BasicInfoSection.patchPersonal({basicIncomeNote:'기록 유지'}));
+    await act(async()=>save());
+    h.state.syncError='연결된 고객의 기본정보 수정은 담당자 또는 관리자만 가능합니다.';await h.rerender();
+    assert.match(text(h.tree.toJSON()),/연결된 고객의 기본정보 수정은 담당자 또는 관리자만 가능합니다/);
+    assert.equal(h.captures.BasicInfoSection.personal.basicIncomeNote,'기록 유지');assert.equal(h.closed,0);
+    await act(async()=>h.captures.BasicInfoSection.onNameChange(''));
+    await act(async()=>save());
+    assert.match(text(h.tree.toJSON()),/고객 이름은 비워둘 수 없습니다/);
+    assert.doesNotMatch(text(h.tree.toJSON()),/연결된 고객의 기본정보 수정은 담당자 또는 관리자만 가능합니다/);
+    assert.equal(h.updates.length,1,'local validation must not call persistence again');
   }finally{h.close();}
 });

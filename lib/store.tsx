@@ -37,7 +37,7 @@ import { changedCustomerPhone } from "./customer-phone";
 import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
-import { isWritingStaff, isWritingLead, isSharedLeadReadOnly, writingPermission, writingCaseAllowed, writingWorkspaceData } from "./writing-staff";
+import { isWritingStaff, isWritingLead, isSharedLeadReadOnly, canManageSharedLongAbsentLead, isSharedLongAbsentPatch, writingPermission, writingCaseAllowed, writingWorkspaceData } from "./writing-staff";
 
 type DocumentState = Record<string, Record<string, boolean>>;
 
@@ -151,7 +151,7 @@ interface AppStoreValue {
   updateClient: (id: string, patch: Partial<Client>) => void;
   updateClientPhone: (id: string, phone: string) => Promise<boolean>;
   deleteClient: (id: string) => void;
-  updateLead: (id: string, patch: Partial<DbLead>) => Promise<boolean>;
+  updateLead: (id: string, patch: Partial<DbLead>, expectedLead?: DbLead) => Promise<boolean>;
   deleteLead: (id: string) => void;
   convertLeadToClient: (leadId: string) => string | undefined;
   toggleDocument: (caseId: string, itemId: string) => void;
@@ -722,18 +722,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const updateLead = useCallback(
-    async (id: string, patch: Partial<DbLead>): Promise<boolean> => {
-      if (isGlobalSuperAdmin || !canPatchLead(patch)) {
+    async (id: string, patch: Partial<DbLead>, expectedLead?: DbLead): Promise<boolean> => {
+      const before = leads.find((l) => l.id === id);
+      const shared = !!before && isSharedLongAbsentPatch(patch) && (canManageSharedLongAbsentLead(profile, before, can)
+        || (!!expectedLead && canManageSharedLongAbsentLead(profile, expectedLead, can)));
+      if (isGlobalSuperAdmin || (!shared && !canPatchLead(patch))) {
         setSyncError("저장 실패 · 현재 계정에 해당 DB 항목을 수정할 권한이 없습니다.");
         return false;
       }
-      const before = leads.find((l) => l.id === id);
       if (!before) {
         setSyncError("저장 실패 · 수정할 DB를 찾지 못했습니다. 목록을 새로 확인해주세요.");
         return false;
       }
-      if (isSharedLeadReadOnly(profile, before, can, currentStaff)) {
-        setSyncError("다른 담당자의 장기부재 DB는 조회만 가능합니다.");
+      if (!shared && isSharedLeadReadOnly(profile, before, can, currentStaff)) {
+        setSyncError("장기부재 공동관리에서 허용되지 않는 작업입니다.");
         return false;
       }
       // Validate before the optimistic update, including direct store callers.
@@ -745,6 +747,46 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           patch = { ...patch, phone: phone ?? before.phone };
         } catch (err) {
           setSyncError(`저장 실패 · ${err instanceof Error ? err.message : "연락처를 확인해주세요."}`);
+          return false;
+        }
+      }
+      if (shared) {
+        // Never optimistic-write a shared row: the server locks and checks the
+        // original snapshot before persisting only the explicitly supplied keys.
+        // In particular, leaving 장기부재 cannot lend rights to a later request.
+        try {
+          if (!supabase || !effectiveFirmId || before._lawFirmId !== effectiveFirmId) throw new Error("현재 로펌 연결을 확인해주세요.");
+          const expected = expectedLead ?? before;
+          if (expected.id !== id || expected._lawFirmId !== before._lawFirmId) throw new Error("수정할 DB가 변경되었습니다.");
+          const { _lawFirmId: _firm, _lawFirmName: _name, ...expectedData } = expected;
+          const patchData = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === undefined ? null : value]));
+          const { data, error } = await supabase.rpc("update_shared_long_absent_lead", {
+            target_lead_id: id, patch: patchData, expected_data: expectedData,
+          });
+          if (error) throw error;
+          if (data?.id !== id || data?.law_firm_id !== effectiveFirmId || !data?.data || typeof data.data !== "object") throw new Error("서버 저장 결과를 확인하지 못했습니다.");
+          // The endpoint writes its audit entry atomically, so do not double-log.
+          if (readScopeRef.current?.firmId !== effectiveFirmId || readScopeRef.current?.userId !== currentUser?.id) return true;
+          dataVersions.current.app_leads = (dataVersions.current.app_leads ?? 0) + 1;
+          const saved = { ...data.data, id, _lawFirmId: effectiveFirmId, _lawFirmName: before._lawFirmName } as DbLead;
+          setLeads(prev => prev.map(row => row.id === id && row._lawFirmId === effectiveFirmId ? saved : row));
+          setSyncError(null);
+          // Preserve the existing best-effort Meta queue dispatch after an
+          // ordinary lead save. The DB's existing automation triggers remain
+          // unchanged; failure here never rolls back an already confirmed save.
+          try {
+            const { data: sessionData } = await supabase.auth.getSession();
+            const token = sessionData.session?.access_token;
+            if (token) await fetch("/api/integrations/meta/flush", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ limit: 10 }),
+            });
+          } catch { /* best-effort only, matching saveEntity */ }
+          return true;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : (err && typeof err === "object" && "message" in err ? String(err.message) : "서버 저장에 실패했습니다.");
+          setSyncError(`저장 실패 · 입력값은 유지됩니다. 다른 담당자의 변경 여부를 확인한 뒤 다시 열어 저장해주세요. (${message})`);
           return false;
         }
       }
@@ -767,7 +809,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile, can, currentStaff]
+    [canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile, can, currentStaff, supabase, effectiveFirmId, currentUser?.id]
   );
 
   const updateClientPhone = useCallback(

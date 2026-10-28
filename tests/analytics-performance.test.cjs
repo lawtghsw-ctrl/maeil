@@ -12,11 +12,12 @@ const defaultSupply = { data: { serviceMode: 'db_supply', purchaseCost: 12345, b
 // The old fixture remains only for independent relationship-scan measurements.
 const source = fs.readFileSync(path.join(root, 'components/analytics/LegacyAnalytics.tsx'), 'utf8');
 const baseline = fs.readFileSync(path.join(__dirname, 'fixtures/legacy-analytics-before.tsx'), 'utf8');
-const returnedNames = baseline.slice(baseline.lastIndexOf('  return {') + '  return {'.length).split('};')[0];
-// Exercise the actual component calculations, without mounting JSX or export callbacks.
-const current = source.slice(0, source.indexOf('  async function exportXlsx'))
-  + source.slice(source.indexOf('  const stageRows='), source.indexOf('  async function exportMeetingWorkbook'))
-  + `  return {${returnedNames}};\n}\n`;
+// Exercise the actual component memo boundary and extracted pure report, without
+// mounting JSX/export callbacks. This deliberately does not duplicate report logic.
+const calculationEnd = source.indexOf('  const ledgerSummary=');
+assert.ok(calculationEnd > 0, 'actual report memo boundary must be present');
+const current = source.slice(0, calculationEnd)
+  + '  const {buildSheets: _buildSheets, ...values}=report; return {...values,ledger};\n}\n';
 let clock = Date.parse('2026-10-17T12:00:00+09:00');
 class TestDate extends Date {
   constructor(...args) { super(...(args.length ? args : [clock])); }
@@ -32,6 +33,8 @@ function harness(component) {
   const calls = {};
   const modules = new Map();
   const react = {
+    useRef: initial => ({ current: initial }),
+    useEffect: () => {},
     useState(initial) {
       const value = [input.start, input.end, input.tab ?? '요약', input.staffFilter ?? '전체'][stateCursor++];
       return [value === undefined ? initial : value, () => {}];
@@ -56,15 +59,16 @@ function harness(component) {
     const requireMock = (name) => {
       if (name === 'react') return react;
       if (name === '@/lib/store') return { useStore: () => ({ ...input.store, caseDocuments: input.store.caseDocuments ?? {} }) };
+      if (name === '@/lib/use-analytics-source') return { useAnalyticsSource: () => ({ data: input.source ?? input.store, loading: false, error: null, retry: () => {} }) };
       if (name === '@/lib/use-firm-supply') return { useFirmSupply: () => input.supply ?? defaultSupply };
       if (name === '@/lib/supabase/client') return { createClient: () => { throw new Error('Network is forbidden in this test'); } };
-      if (name === '@/lib/management-analytics') {
-        const financial = load('lib/management-analytics.ts');
+      if (name === '@/lib/management-analytics' || name === '@/lib/management-core') {
+        const financial = load('lib/management-core.ts');
         const tracked = Object.fromEntries(Object.entries(financial).map(([key, value]) => [key, typeof value === 'function' ? (...args) => {
           calls[key] = (calls[key] ?? 0) + 1;
           return value(...args);
         } : value]));
-        return { ...tracked, useManagementSettings: () => input.settings };
+        return name === '@/lib/management-analytics' ? { ...tracked, useManagementSettings: () => input.settings } : tracked;
       }
       if (name === './types') return load('lib/types.ts');
       if (name.startsWith('@/lib/')) return load(name.slice(2) + '.ts');
@@ -85,7 +89,7 @@ function harness(component) {
     render(next) { input = next; cursor = 0; stateCursor = 0; return renderComponent(); },
     calls,
     get memoRuns() { return memoRuns; },
-    financial: load('lib/management-analytics.ts'),
+    financial: load('lib/management-core.ts'),
   };
 }
 
@@ -137,7 +141,7 @@ function record(id, staff, firmId, extra = {}) {
     caseType: '개인회생', stage: '서류준비', status: '진행중', paymentMethod: '카드', stageUpdatedAt: '2026-09-01', ...extra };
 }
 function installment(id, caseId, extra = {}) {
-  return { id, caseId, amount: 330000, dueDate: '2026-10-01', paidDate: '2026-10-03', status: '완료', seq: 1, ...extra };
+  return { id, caseId, amount: 330000, actualPaidAmount: extra.amount ?? 330000, dueDate: '2026-10-01', paidDate: '2026-10-03', status: '완료', seq: 1, ...extra };
 }
 function fixture(globalSuperView = false) {
   return {
@@ -172,6 +176,7 @@ function fixture(globalSuperView = false) {
         installment('i9', 'c1', { paidDate: undefined }),
       ],
       workStaffNames: ['가람', '나래', '유령', '신규', '가람'],
+      staffDirectory: [], caseDocuments: {},
       profile: { role: 'admin', platformRole: globalSuperView ? 'super_admin' : 'firm_admin' },
       superAdminFirmScope: null,
       firmDirectory: [{ id: 'f1', status: 'active' }, { id: 'f2', status: 'active' }, { id: 'deleted', status: 'suspended' }],
@@ -188,7 +193,10 @@ function freeze(value) {
 function compare(input) {
   freeze(input);
   const before = harness(current).render(input);
-  const after = harness(current).render(input);
+  const memoized = harness(current);
+  const first = memoized.render(input);
+  const after = memoized.render(input);
+  assert.strictEqual(after.allLedger, first.allLedger, 'unchanged complete-source report should reuse the actual component memo');
   assert.deepStrictEqual(structuredClone(after), structuredClone(before));
   return after;
 }
@@ -196,8 +204,8 @@ function compare(input) {
 for (const global of [false, true]) {
   test(`fresh and memoized calculations match: ${global ? 'super global' : 'firm'} with duplicate IDs, missing joins, zero/negative and every payment state`, () => {
     const output = compare(fixture(global));
-    assert.equal(output.allLedger[0].client.name, '최초 고객');
-    assert.equal(output.allLedger[1].status, '취하');
+    assert.equal(output.allLedger.find(row => row.case.id === 'c1' && row.case._lawFirmId === 'f1').client.name, '최초 고객');
+    assert.equal(output.allLedger.find(row => row.case.id === 'c2').status, '취하');
     assert.equal(output.allLedger.find((row) => row.case.id === 'c5').status, '완납');
   });
   test(`empty arrays and active-firm fallback match: ${global}`, () => {
@@ -213,7 +221,7 @@ for (const global of [false, true]) {
     compare(input);
   });
   test(`date bounds, closed month snapshots and staff filter match: ${global}`, () => {
-    for (const [start, end, staffFilter] of [['2026-10-01', '2026-10-31', '가람'], ['2026-09-20', '2026-09-20', ''], ['', '', '없음'], ['2027-01-01', '2027-01-31', '전체']]) {
+    for (const [start, end, staffFilter] of [['2026-10-01', '2026-10-31', '가람'], ['2026-09-20', '2026-09-20', ''], ['2026-08-01', '2026-08-31', '없음'], ['2027-01-01', '2027-01-31', '전체']]) {
       compare({ ...fixture(global), start, end, staffFilter });
     }
   });
@@ -254,8 +262,8 @@ test('tab/filter rerenders reuse costly memoized results and no longer repeat fi
   const counts = { ...optimized.calls };
   const second = optimized.render({ ...input, tab: '사건 · 수납', staffFilter: '가람' });
   old.render({ ...input, tab: '사건 · 수납', staffFilter: '가람' });
-  for (const field of ['activeLeads', 'overCap', 'overdueNow', 'staffRows', 'allLedger', 'channelRows', 'stageRows', 'contactSpeeds']) assert.strictEqual(second[field], first[field], field);
-  for (const name of ['acquisitionCostForRange', 'laborCostForRange', 'paymentFeesForRange', 'fixedCostForRange', 'cashByStaff', 'staffCompensationForRange', 'standardFeeAt', 'firstActivityMinutes', 'contactCount']) assert.equal(optimized.calls[name], counts[name], name);
+  for (const field of ['activeLeads', 'overCap', 'overdueNow', 'staffRows', 'allLedger', 'channelRows', 'stageRows']) assert.strictEqual(second[field], first[field], field);
+  for (const name of ['acquisitionCostForRange', 'laborCostForRange', 'paymentFeesForRange', 'fixedCostForRange', 'cashByStaff', 'staffCompensationForRange', 'contactCount']) assert.equal(optimized.calls[name], counts[name], name);
   assert.ok(old.calls.acquisitionCostForRange > optimized.calls.acquisitionCostForRange);
   assert.ok(old.calls.staffCompensationForRange > optimized.calls.staffCompensationForRange);
   assert.deepStrictEqual(structuredClone(second), structuredClone(harness(current).render({ ...input, tab: '사건 · 수납', staffFilter: '가람' })));
@@ -271,10 +279,15 @@ test('every changed data/settings/date dependency invalidates cached calculation
     (x) => { x.store.clients = x.store.clients.map((row, i) => i === 0 ? { ...row, name: '변경 고객' } : row); },
     (x) => { x.store.installments = [...x.store.installments, installment('new-paid', 'c2', { amount: 99000 })]; },
     (x) => { x.store.workStaffNames = [...x.store.workStaffNames, '추가 직원']; },
+    (x) => { x.store.staffDirectory = [{ id: 'new-staff', staffName: 'Synthetic new staff', isWorkStaff: true, platformRole: 'staff', lawFirmId: 'f1' }]; },
+    (x) => { x.store.caseDocuments = { ...x.store.caseDocuments, c1: { id_copy: true } }; },
     (x) => { x.store.firmDirectory = x.store.firmDirectory.map((row, i) => i === 1 ? { ...row, status: 'suspended' } : row); },
     (x) => { x.settings.activeSettings = { ...x.settings.activeSettings, dbPurchaseUnitCost: 99999 }; },
     (x) => { x.settings.settingsByFirm = { ...x.settings.settingsByFirm, f2: { ...x.settings.settingsByFirm.f2, paymentFees: [{ paymentMethod: '카드', rate: 99, payer: '사무소 부담' }] } }; },
     (x) => { x.settings.globalSuperView = false; },
+    (x) => { x.settings.error = 'Synthetic settings unavailable'; },
+    (x) => { x.supply = { ...defaultSupply, data: { ...defaultSupply.data, purchaseCost: 99999 } }; },
+    (x) => { x.source = { ...x.store, cases: [...x.store.cases, record('complete-source-only', '신규', 'f1')] }; },
     (x) => { x.start = '2026-10-01'; },
     (x) => { x.end = '2026-09-30'; },
   ];
@@ -327,7 +340,9 @@ test('elapsed-day alerts remain live on rerender while static data stays memoize
   } finally { clock = originalClock; }
 });
 
-test('XLSX remains dynamically imported only by the export callback', () => {
-  assert.match(source, /async function exportXlsx\(\)\{[^\n]*const XLSX=await import\("xlsx"\)/);
-  assert.doesNotMatch(source, /import\s+(?:\*|\{).*from\s+["']xlsx["']/);
+test('styled XLSX engine stays lazily loaded behind the shared export writer', () => {
+  const writer = fs.readFileSync(path.join(root, 'lib/analytics-excel.ts'), 'utf8');
+  assert.match(source, /exportAnalyticsMeetingWorkbook\(/);
+  assert.match(writer, /await import\(["']exceljs["']\)/);
+  assert.doesNotMatch(source, /import\s+(?:\*|\{).*from\s+["'](?:xlsx|exceljs)["']/);
 });

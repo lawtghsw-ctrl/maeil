@@ -102,15 +102,16 @@ async function runSuite(){
     const phoneStart=source.indexOf('  const updateClientPhone ='),phoneEnd=source.indexOf('  const deleteLead =',phoneStart);
     assert.ok(phoneStart>=0&&phoneEnd>phoneStart);
     let current=(source.slice(0,phoneStart)+source.slice(phoneEnd)).replace(phoneValidation,'').replace(addition,'');
-    // Shared-read-only guards are exercised against the actual provider in
-    // long-absent-sharing. Strip only their exact additions for historical parity.
-    const sharedGuard = '      if (isSharedLeadReadOnly(profile, before, can, currentStaff)) {\n        setSyncError("다른 담당자의 장기부재 DB는 조회만 가능합니다.");\n        return false;\n      }\n';
-    assert.equal(current.split(sharedGuard).length, 2);
-    current = current.replace(sharedGuard, '');
+    // Shared editing intentionally replaces updateLead. Its actual provider and
+    // persistence/error paths are covered by shared-longabsence-store.test.cjs;
+    // preserve historical byte-equivalence for every other callback below.
+    const updateStart=current.indexOf('  const updateLead ='),updateEnd=current.indexOf('  const deleteLead =',updateStart);
+    const originalStart=original.indexOf('  const updateLead ='),originalEnd=original.indexOf('  const deleteLead =',originalStart);
+    assert.ok(updateStart>=0&&updateEnd>updateStart&&originalStart>=0&&originalEnd>originalStart);
+    current=current.slice(0,updateStart)+original.slice(originalStart,originalEnd)+current.slice(updateEnd);
     for (const [before, after] of [
       ['if (!target || isSharedLeadReadOnly(profile, target, can, currentStaff)) return;', 'if (!target) return;'],
       ['if (!lead || isSharedLeadReadOnly(profile, lead, can, currentStaff)) return undefined;', 'if (!lead) return undefined;'],
-      ['[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile, can, currentStaff]', '[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile]'],
       ['[can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite, profile, currentStaff]', '[can, deleteEntity, isGlobalSuperAdmin, leads, logChange, queueWrite]'],
       ['[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile, currentStaff]', '[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile]'],
     ]) { assert.equal(current.split(before).length, 2, 'Expected exact shared-read-only guard'); current = current.replace(before, after); }
@@ -119,7 +120,6 @@ async function runSuite(){
     // only these exact additions here; every original callback remains compared.
     const writerAdditions=[
       '        if (["caseNumber", "caseType", "court", "stage", "stageUpdatedAt", "status", "filingDate", "nextHearingDate", "monthlyRepayment", "contractDate", "memo"].includes(key)) return can("cases.edit_basic");\n',
-      '      if (isWritingStaff(profile) && (!isWritingLead(before) || !isWritingLead(next) || Object.keys(patch).some(key => ["id", "_lawFirmId", "_lawFirmName"].includes(key)))) {\n        setSyncError("저장 실패 · 작성직원은 착수 이후 DB만 수정할 수 있습니다.");\n        return false;\n      }\n',
       '      if (isWritingStaff(profile) && !isWritingLead(lead)) return undefined;\n',
       '      if (isWritingStaff(profile) && (!writingCaseAllowed(before, clients, leads, effectiveFirmId) || !writingCaseAllowed(next, clients, leads, effectiveFirmId))) return;\n',
       '      const editableCase = cases.find(record => record.id === caseId);\n      if (isWritingStaff(profile) && (!editableCase || !writingCaseAllowed(editableCase, clients, leads, effectiveFirmId))) {\n        setSyncError("저장 실패 · 작성직원은 착수 이후 DB에 연결된 계약만 수정할 수 있습니다.");\n        return false;\n      }\n',
@@ -127,7 +127,6 @@ async function runSuite(){
     ];
     for(const addition of writerAdditions){assert.equal(current.split(addition).length,2,'Expected one precise writer addition');current=current.replace(addition,'');}
     for(const [before,after]of [
-      ['[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity, profile]','[canPatchLead, isGlobalSuperAdmin, leads, logChange, saveEntity]'],
       ['[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity, profile]','[can, clients, isGlobalSuperAdmin, leads, logChange, queueWrite, saveEntity]'],
       ['[canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity, profile, clients, leads, effectiveFirmId]','[canPatchCase, cases, isGlobalSuperAdmin, logChange, queueWrite, saveEntity]'],
       ['[can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity, profile, clients, leads, effectiveFirmId]','[can, cases, deleteEntity, installments, isGlobalSuperAdmin, logChange, saveEntity]'],

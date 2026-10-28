@@ -1,8 +1,21 @@
 import { requirePlatformUser } from "@/lib/platform/server";
 import { summarizeFirmSupply, type FirmSupplyContract, type SupplyLedgerRow } from "@/lib/firm-reporting";
 import type { CaseRecord, DbLead } from "@/lib/types";
+import { kstPerformanceDate, performanceRange } from "@/lib/performance/firm";
 
 type Admin = Awaited<ReturnType<typeof requirePlatformUser>>["admin"];
+
+/** Cumulative exports do not need the prior-period comparison used by performance pages. */
+export function firmSupplyRange(start: string, end: string, cumulative = false): { start: string; end: string } {
+  if (!cumulative) return performanceRange(start, end);
+  const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && kstPerformanceDate(value) === value;
+  if (!validDay(start) || !validDay(end) || start > end) {
+    throw new Error("시작일과 종료일을 YYYY-MM-DD 형식의 올바른 기간으로 선택해주세요.");
+  }
+  const maxEnd = `${new Date().getUTCFullYear() + 1}-12-31`;
+  if (end < "1900-01-01" || end > maxEnd) throw new Error("누적 실적 기준일을 확인해주세요.");
+  return { start: `${start.slice(0, 7)}-01`, end };
+}
 export async function readFirmRows(admin: Admin, table: string, firmId: string, columns: string): Promise<Record<string, any>[]> {
   const result: Record<string, any>[] = [];
   let after: string | undefined;
@@ -19,15 +32,31 @@ export async function readFirmRows(admin: Admin, table: string, firmId: string, 
     after = next;
   }
 }
-export async function readFirmSupply(admin: Admin, firmId: string, start: string, end: string) {
-  const [contracts, ledger, adjustments, cases, leads, staff] = await Promise.all([
+export async function readFirmSupply(admin: Admin, firmId: string, start: string, end: string, cumulative = false) {
+  if (cumulative) ({ start, end } = firmSupplyRange(start, end, true));
+  const [contracts, ledger, adjustments, cases, leads, staff, payments] = await Promise.all([
     readFirmRows(admin, "platform_supply_contracts", firmId, "id,law_firm_id,product,category,unit_price,monthly_quantity,start_date,end_date,status,confirmed_at"),
     readFirmRows(admin, "lead_supply_ledger", firmId, "id,law_firm_id,lead_id,supplied_at,billable,unit_price_snapshot,classification,origin"),
     readFirmRows(admin, "platform_supply_adjustments", firmId, "id,law_firm_id,event_date,kind,quantity"),
     readFirmRows(admin, "app_cases", firmId, "id,law_firm_id,fromLeadId:data->>fromLeadId,status:data->>status,contractAmount:data->>contractAmount,contractDate:data->>contractDate"),
-    readFirmRows(admin, "app_leads", firmId, "id,law_firm_id,assignedStaff:data->>assignedStaff,convertedCaseId:data->>convertedCaseId,source:data->>source"),
+    readFirmRows(admin, "app_leads", firmId, "id,law_firm_id,receivedAt:data->>receivedAt,assignedStaff:data->>assignedStaff,convertedCaseId:data->>convertedCaseId,source:data->>source"),
     readFirmRows(admin, "profiles", firmId, "id,law_firm_id,staff_name,display_name,platform_role,is_work_staff"),
+    cumulative ? readFirmRows(admin, "app_installments", firmId, "id,law_firm_id,paidDate:data->>paidDate,status:data->>status") : Promise.resolve([]),
   ]);
+  if (cumulative) {
+    // Derive real history on the server, never from a caller-supplied epoch.
+    // Empty reports begin in the selected month. Fail, never truncate, bad history.
+    start = `${end.slice(0, 7)}-01`;
+    const sourceDates = [...ledger.map(row=>row.supplied_at), ...cases.map(row=>row.contractDate),
+      ...leads.map(row=>row.receivedAt), ...adjustments.map(row=>row.event_date),
+      ...payments.filter(row=>row.status==="완료").map(row=>row.paidDate)];
+    for (const value of sourceDates) {
+      const day = kstPerformanceDate(value);
+      if (day && day <= end && day < start) start = `${day.slice(0, 7)}-01`;
+    }
+    const months = (Number(end.slice(0,4))-Number(start.slice(0,4)))*12+Number(end.slice(5,7))-Number(start.slice(5,7))+1;
+    if (months > 1200) throw new Error("집계 원본 날짜가 100년 범위를 초과합니다. 최초 기록일을 확인해주세요.");
+  }
   const visibleContracts: FirmSupplyContract[] = contracts.map(row => ({ id: row.id, product: row.product, category: row.category, unitPrice: row.unit_price === null ? null : Number(row.unit_price), monthlyQuantity: row.monthly_quantity, startDate: row.start_date, endDate: row.end_date, status: row.status, confirmedAt: row.confirmed_at }));
   const replaced = adjustments.filter(row => row.kind === "replacement" && row.event_date >= start && row.event_date <= end).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const { data: commercial, error: commercialError } = await admin.from("platform_firm_commercial_profiles").select("law_firm_id,service_mode").eq("law_firm_id", firmId).maybeSingle();

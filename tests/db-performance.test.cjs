@@ -211,7 +211,7 @@ test('row edit and reservation handlers preserve payloads; callbacks and permiss
     }
     assert.deepEqual(next.writes,old.writes);
     const before=next.stats.mobile+next.stats.desktop;
-    old.permissions(['db.view_all','db.view_consultation']);next.permissions(['db.view_all','db.view_consultation']);equalPair(old,next);
+    old.permissions(['db.view','db.view_all','db.view_consultation']);next.permissions(['db.view','db.view_all','db.view_consultation']);equalPair(old,next);
     assert.equal(next.stats.mobile+next.stats.desktop-before,20);
     const nextCount=next.stats.mobile+next.stats.desktop;
     next.store.updateLead=async()=>true;next.refresh();assert.equal(next.stats.mobile+next.stats.desktop-nextCount,20);
@@ -383,7 +383,7 @@ test('restored contact dialog appends a record and preserves the existing contac
 });
 
 test('restored dialog respects consultation permission and closes on account or firm changes',()=>{
-  const h=createHarness(current,{workDialog:true,rights:['db.view_all','db.view_consultation']});try{
+  const h=createHarness(current,{workDialog:true,rights:['db.view','db.view_all','db.view_consultation']});try{
     renderer.act(()=>hostNodes(h,'button').find(node=>hostText(node)==='컨택 · 사유').props.onClick());
     assert.ok(hostNodes(h,'fieldset').every(node=>node.props.disabled));
     h.store.profile={...h.store.profile,id:'other-viewer'};h.refresh();
@@ -415,7 +415,7 @@ test('reason save does not append contacts and failed saves preserve the entered
   }finally{h.close();}
 });
 
-test('same-firm other-assignee long absence appears on desktop/mobile as read-only and leaves when stage changes', () => {
+test('same-firm other-assignee long absence enables shared editing on desktop/mobile and leaves when stage changes', () => {
   const h = createHarness(current,{rights:['db.view','db.edit_basic','db.edit_consultation','db.view_consultation','db.change_stage','db.change_assignee','db.manage_reservation','db.convert','db.delete','sms.send']});
   try {
     h.store.profile={...h.store.profile,role:'staff',isActive:true,lawFirmId:'firm-1'};
@@ -423,9 +423,9 @@ test('same-firm other-assignee long absence appears on desktop/mobile as read-on
     h.store.leads=[row];h.refresh();
     assert.deepEqual(h.snapshot().rowIds,['shared-only']);
     assert.ok(JSON.stringify(h.tree()).includes('공유 장기부재'));
-    assert.ok(hostNodes(h,'select').filter(node=>['개인회생','개인파산','담당B','장기부재'].includes(node.props.value)).every(node=>node.props.disabled));
-    for(const label of ['문자발송','고객전환','삭제','상담일지 작성']) assert.equal(hostNodes(h,'button').filter(node=>hostText(node)===label).length,0,label);
-    assert.ok(hostNodes(h,'button').some(node=>hostText(node)==='상담일지 조회'));
+    assert.ok(hostNodes(h,'select').filter(node=>['개인회생','개인파산','담당B','장기부재'].includes(node.props.value)).every(node=>node.props.disabled===false));
+    for(const label of ['문자발송','고객 전환','삭제']) assert.equal(hostNodes(h,'button').filter(node=>hostText(node)===label).length,0,label);
+    assert.ok(hostNodes(h,'button').some(node=>hostText(node)==='상담일지 작성'));
     h.store.leads=[{...row,detailStage:'상담'}];h.refresh();assert.deepEqual(h.snapshot().rowIds,[]);
     h.store.leads=[{...row,_lawFirmId:'firm-2'}];h.refresh();assert.deepEqual(h.snapshot().rowIds,[]);
     h.store.leads=[row];h.store.profile={...h.store.profile,permissions:{'staff.writer':true}};h.refresh();assert.deepEqual(h.snapshot().rowIds,[]);
