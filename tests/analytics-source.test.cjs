@@ -30,10 +30,10 @@ function load(file, mocks = {}, globals = {}, cache = new Map()) {
   return module.exports;
 }
 
-function fixtureDatabase({ size = 0, cap = 500, brokenTable, brokenAfter = -1, foreignTable, malformedTable, duplicateTable, firmStatus = 'active', noFirm = false } = {}) {
+function fixtureDatabase({ size = 0, cap = 500, databaseOrder, brokenTable, brokenAfter = -1, foreignTable, malformedTable, duplicateTable, firmStatus = 'active', noFirm = false } = {}) {
   const calls = [];
   const entities = Object.fromEntries(Object.values(TABLES).map(table => [table, Array.from({ length: size }, (_, index) => ({
-    id: `${String(index).padStart(6, '0')}`, law_firm_id: 'firm-a',
+    id: databaseOrder?.[index] ?? `${String(index).padStart(6, '0')}`, law_firm_id: 'firm-a',
     data: { id: `spoof-${index}`, name: `Synthetic ${index}`, _lawFirmId: 'untrusted-firm', _lawFirmName: 'untrusted-name', law_firm_id: 'untrusted-firm', actualPaidAmount: index },
   }))]));
   const admin = { from(table) {
@@ -60,7 +60,8 @@ function fixtureDatabase({ size = 0, cap = 500, brokenTable, brokenAfter = -1, f
           if (table === brokenTable && after >= brokenAfter) {
             calls.push({ ...state, error: true }); return Promise.resolve({ data: null, error: { message: 'Synthetic read failure' } }).then(resolve, reject);
           }
-          let rows = entities[table].filter(row => state.after === undefined || row.id > state.after).slice(0, Math.min(state.maximum, cap));
+          const rank = new Map(entities[table].map((row, index) => [row.id, index]));
+          let rows = entities[table].filter(row => state.after === undefined || (databaseOrder ? rank.get(row.id) > rank.get(state.after) : row.id > state.after)).slice(0, Math.min(state.maximum, cap));
           if (rows.length && table === foreignTable) rows = [{ ...rows[0], law_firm_id: 'firm-b' }, ...rows.slice(1)];
           if (rows.length && table === malformedTable) rows = [{ ...rows[0], data: null }, ...rows.slice(1)];
           if (rows.length > 1 && table === duplicateTable && state.after === undefined) rows = [rows[0], { ...rows[0] }, ...rows.slice(2)];
@@ -130,6 +131,33 @@ test('HTTP transport reads 1,107 rows in all four entities without giant respons
   assert.equal(harness.route.dynamic, 'force-dynamic'); assert.equal(harness.route.revalidate, 0); assert.equal(harness.route.fetchCache, 'force-no-store');
 });
 
+
+test('database-collated mixed-case underscore/hyphen IDs traverse within and across pages without lexical rejection', async () => {
+  // This order is returned by PostgreSQL en_US.UTF-8 for these synthetic strings.
+  const databaseOrder = ['lead_a', 'lead_a1', 'lead-A', 'lead-Z'];
+  assert.ok(databaseOrder[2] < databaseOrder[1], 'fixture must regress the former JavaScript <= check');
+  for (const cap of [1, 2, 3, 50]) {
+    const h = routeHarness({ size: databaseOrder.length, cap, databaseOrder });
+    const data = await routeClient(h).fetchAnalyticsSource('firm-a', new AbortController().signal);
+    for (const entity of Object.keys(TABLES)) {
+      assert.deepEqual(Array.from(data[entity], row => row.id), databaseOrder);
+      assert.equal(data.counts[entity], databaseOrder.length);
+    }
+    assert.equal(data.complete, true);
+  }
+});
+
+test('cursor repeats and cross-page ID cycles still reject the entire refresh under any collation', async () => {
+  for (const repeated of ['lead_a', 'lead-Z']) {
+    const client = clientModule(async url => {
+      const cursor = new URL(url, 'https://synthetic.invalid').searchParams.get('after');
+      const id = cursor === null ? 'lead_a' : cursor === 'lead_a' ? 'lead-Z' : repeated;
+      return pageFor(url, [{ id, _lawFirmId: 'firm-a' }]);
+    });
+    await assert.rejects(client.fetchAnalyticsSource('firm-a', new AbortController().signal), /페이지 순서/);
+  }
+});
+
 test('each manager role is scoped on every page; staff, foreign firm, bad entity and malformed cursor fail before source reads', async () => {
   for (const profile of [
     { platform_role: 'firm_admin', role: 'staff', law_firm_id: 'firm-a' },
@@ -179,7 +207,7 @@ function pageFor(url, rows = [], overrides = {}) {
     rows, count: rows.length, complete: rows.length === 0, nextCursor: rows.length ? rows.at(-1).id : null, ...overrides };
 }
 
-test('client refuses forged count, early-complete, scope, cursor skips, backwards rows, and missing end marker', async () => {
+test('client refuses forged count, early-complete, scope, cursor skips, repeated rows, and missing end marker', async () => {
   for (const corrupt of [
     page => { page.count++; }, page => { page.complete = true; }, page => { page.firmId = 'foreign'; },
     page => { page.entity = 'profiles'; }, page => { page.cursor = 'skip'; }, page => { page.nextCursor = 'skip'; },
@@ -198,7 +226,7 @@ test('client refuses forged count, early-complete, scope, cursor skips, backward
 
 function hookHarness() {
   const state = [], requests = [], timers = new Map();
-  let cursor = 0, deps, pendingEffect, cleanup, timerId = 0;
+  let cursor = 0, deps, pendingEffect, cleanup, timerId = 0, now = 0;
   const module = load('lib/use-analytics-source.ts', {
     react: {
       useState: initial => { const index = cursor++; if (!(index in state)) state[index] = initial;
@@ -207,7 +235,7 @@ function hookHarness() {
     },
     '@/lib/platform/client': { authJson: (url, init) => new Promise((resolve, reject) => requests.push({ url, init, resolve, reject })) },
   }, {
-    setTimeout: (fn, delay) => { assert.equal(delay, 30000); const id = ++timerId; timers.set(id, fn); return id; },
+    setTimeout: (fn, delay) => { assert.equal(delay, 120000); const id = ++timerId; timers.set(id, { fn, due: now + delay }); return id; },
     clearTimeout: id => timers.delete(id),
   });
   return { requests, module, timers,
@@ -216,7 +244,8 @@ function hookHarness() {
       if (pendingEffect) { cleanup?.(); const effect = pendingEffect; pendingEffect = undefined; cleanup = effect(); }
       return output;
     },
-    timeout() { for (const [id, fn] of [...timers]) { timers.delete(id); fn(); } },
+    timeout() { for (const [id, timer] of [...timers]) { timers.delete(id); timer.fn(); } },
+    advance(ms) { now += ms; for (const [id, timer] of [...timers]) if (timer.due <= now) { timers.delete(id); timer.fn(); } },
     unmount() { cleanup?.(); },
   };
 }
@@ -261,7 +290,24 @@ test('revision/token/manual retry restart all pages; a single error aborts peers
   harness.unmount(); assert.ok(harness.requests.slice(12).every(request => request.init.signal.aborted)); assert.equal(harness.timers.size, 0);
 });
 
-test('overall 30-second timeout aborts all pages and ignores late data; retry starts from first cursor', async () => {
+
+test('slow complete pagination can pass the old 30-second deadline without returning partial data', async () => {
+  const harness = hookHarness(); harness.render();
+  const first = harness.requests.slice();
+  first[0].resolve(pageFor(first[0].url, [{ id: 'lead_a', _lawFirmId: 'firm-a' }]));
+  endRequests(first.slice(1)); await settle();
+  harness.advance(31000);
+  assert.equal(harness.render().loading, true); assert.equal(harness.render().data, null);
+  const next = harness.requests[4];
+  next.resolve(pageFor(next.url, [{ id: 'lead-Z', _lawFirmId: 'firm-a' }])); await settle();
+  harness.advance(31000);
+  assert.equal(harness.render().loading, true); assert.equal(harness.render().data, null);
+  endRequests(harness.requests.slice(5)); await settle();
+  assert.equal(harness.render().data.counts.leads, 2);
+  assert.equal(harness.render().loading, false); assert.equal(harness.timers.size, 0);
+});
+
+test('bounded 120-second full-history timeout aborts all pages and ignores late data; retry starts from first cursor', async () => {
   const harness = hookHarness(); harness.render(); harness.timeout();
   let result = harness.render(); assert.equal(result.loading, false); assert.equal(result.data, null); assert.match(result.error, /시간이 초과/);
   assert.ok(harness.requests.every(request => request.init.signal.aborted));

@@ -222,15 +222,45 @@ test('complete source response, not the truncated live store, supplies every rec
   assert.equal(JSON.stringify(complete), before); h.close();
 });
 
-test('source loading/error never falls back to a partial store; explicit retry can restore exports', async () => {
+test('source loading/error keeps both export actions visible but disabled without partial-store fallback; retry restores exports', async () => {
   const h = harness(); h.sourceState.data = null; h.sourceState.loading = true; await h.mount();
-  assert.equal(button(h, '이번달 실적 XLSX'), undefined); assert.match(text(h.tree().toJSON()), /전체 계약·회차별 입금 자료/);
+  const assertBlocked = async () => {
+    assert.equal(h.tree().root.findAllByType('header').length, 1);
+    assert.ok(h.tree().root.findByProps({ 'aria-label': '조회 월' }));
+    for (const label of ['이번달 실적 XLSX', '누적 실적 XLSX']) {
+      assert.equal(button(h, label).props.disabled, true);
+      assert.equal(button(h, label).props['aria-describedby'], 'analytics-source-status');
+      // Disabled UI is not the only guard: even direct invocation cannot audit/read/export.
+      await click(h, label);
+    }
+    assert.equal(h.audits.length, 0); assert.equal(h.reads.length, 0); assert.equal(h.exports.length, 0);
+    assert.equal(h.tree().root.findAllByType('table').length, 0, 'partial live-store totals remain hidden');
+  };
+  await assertBlocked(); assert.match(text(h.tree().toJSON()), /전체 계약·회차별 입금 자료/);
   h.sourceState.loading = false; h.sourceState.error = 'Synthetic source page failure';
   let retries = 0; h.sourceState.retry = () => { retries++; }; await h.update();
-  assert.equal(button(h, '이번달 실적 XLSX'), undefined); assert.match(text(h.tree().toJSON()), /일부 자료만으로 정산표를 만들지 않습니다/);
-  await click(h, '자료 다시 불러오기'); assert.equal(retries, 1); assert.equal(h.audits.length, 0);
-  h.sourceState.data = h.store; h.sourceState.error = null; await h.update(); await click(h, '이번달 실적 XLSX');
-  assert.equal(h.exports.length, 1); h.close();
+  await assertBlocked(); assert.match(text(h.tree().toJSON()), /일부 자료만으로 정산표를 만들지 않습니다/);
+  assert.match(text(h.tree().toJSON()), /XLSX 다운로드가 활성화됩니다/);
+  // An error must also block a stale non-null source object, not just null source data.
+  h.sourceState.data = h.store; await h.update(); await assertBlocked();
+  await click(h, '자료 다시 불러오기'); assert.equal(retries, 1);
+  h.sourceState.error = null; await h.update();
+  for (const label of ['이번달 실적 XLSX', '누적 실적 XLSX']) assert.equal(button(h, label).props.disabled, false);
+  await click(h, '이번달 실적 XLSX'); assert.equal(h.exports.length, 1); h.close();
+});
+
+test('settings loading and missing source retain disabled export controls without rendering totals', async () => {
+  for (const state of ['settings-loading', 'missing-source']) {
+    const h = harness();
+    if (state === 'settings-loading') h.settings.loading = true;
+    else h.sourceState.data = null;
+    await h.mount();
+    for (const label of ['이번달 실적 XLSX', '누적 실적 XLSX']) {
+      assert.equal(button(h, label).props.disabled, true); await click(h, label);
+    }
+    assert.equal(h.tree().root.findAllByType('table').length, 0);
+    assert.equal(h.audits.length, 0); assert.equal(h.reads.length, 0); assert.equal(h.exports.length, 0); h.close();
+  }
 });
 
 test('scheduled amount is never treated as actual cash when a completed payment lacks actualPaidAmount', async () => {

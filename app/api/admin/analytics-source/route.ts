@@ -37,14 +37,16 @@ export async function GET(request: NextRequest) {
     const { data: rawRows, error: readError } = await query;
     if (readError || !Array.isArray(rawRows)) throw new Error("전체 집계 자료 페이지를 읽지 못했습니다. 다시 불러와주세요.");
     if (rawRows.length > PAGE_SIZE) throw new Error("전체 집계 자료 페이지 크기를 확인할 수 없습니다.");
-    let previousId = cursor;
+    // Text IDs are ordered by PostgreSQL collation, not JavaScript UTF-16 order.
+    // Keep database order + gt pagination; validate identity/cycles without re-sorting.
+    const pageIds = new Set<string>(cursor ? [cursor] : []);
     const rows = rawRows.map(row => {
         if (row.law_firm_id !== firmId) throw new Error("FORBIDDEN");
-        if (typeof row.id !== "string" || !row.id || (previousId !== null && row.id <= previousId)
+        if (typeof row.id !== "string" || !row.id || pageIds.has(row.id)
           || !row.data || typeof row.data !== "object" || Array.isArray(row.data)) {
           throw new Error(`전체 집계 자료를 확인할 수 없습니다. (${table})`);
         }
-        previousId = row.id;
+        pageIds.add(row.id);
         const { id: _id, _lawFirmId: _firmId, _lawFirmName: _firmName, law_firm_id: _legacyFirmId, ...data } = row.data;
         return { ...data, id: row.id, _lawFirmId: firmId, _lawFirmName: firmName };
     });

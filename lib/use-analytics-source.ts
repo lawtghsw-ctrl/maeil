@@ -39,6 +39,7 @@ export async function fetchAnalyticsSource(firmId: string, signal: AbortSignal):
   async function readEntity(entity: Entity) {
     const result: SourcePage["rows"] = [];
     let cursor: string | null = null;
+    const seenIds = new Set<string>();
     for (;;) {
       if (signal.aborted) throw new Error("집계 자료 요청이 취소되었습니다.");
       const params = new URLSearchParams({ firmId, entity });
@@ -55,17 +56,20 @@ export async function fetchAnalyticsSource(firmId: string, signal: AbortSignal):
         return result;
       }
       if (page.complete) throw new Error("일부 집계 자료를 전체 자료로 표시할 수 없습니다.");
-      let previous: string | null = cursor;
+      // The database collation owns ordering. JavaScript string comparison can
+      // reject valid legacy mixed-case / underscore / hyphen ID pages.
+      let lastId: string | null = null;
       for (const row of page.rows) {
         if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id
-          || row._lawFirmId !== firmId || (previous !== null && row.id <= previous)) {
+          || row._lawFirmId !== firmId || seenIds.has(row.id)) {
           throw new Error("집계 자료의 페이지 순서 또는 로펌 범위를 확인할 수 없습니다.");
         }
-        previous = row.id;
+        seenIds.add(row.id);
+        lastId = row.id;
       }
-      if (page.nextCursor !== previous) throw new Error("다음 집계 자료 페이지를 확인할 수 없습니다.");
+      if (page.nextCursor !== lastId) throw new Error("다음 집계 자료 페이지를 확인할 수 없습니다.");
       result.push(...page.rows);
-      cursor = previous;
+      cursor = lastId;
     }
   }
   const [leads, cases, clients, installments] = await Promise.all(ENTITIES.map(readEntity));
@@ -105,11 +109,13 @@ export function useAnalyticsSource(firmId: string | undefined, enabled = true, r
     const controller = new AbortController();
     let active = true;
     setState({ key, data: null, error: null, loading: true });
+    // Full history needs multiple sequential pages per entity, especially on cold starts.
+    // Bound the entire refresh while still aborting all peers on any error or scope change.
     const timeout = setTimeout(() => {
       if (!active) return;
       controller.abort();
       setState({ key, data: null, error: "전체 집계 자료 요청 시간이 초과됐습니다. 다시 불러오기를 눌러주세요.", loading: false });
-    }, 30_000);
+    }, 120_000);
     void fetchAnalyticsSource(firmId, controller.signal).then(data => {
       if (!active || controller.signal.aborted) return;
       if (!isCompleteAnalyticsSource(data, firmId)) throw new Error("전체 집계 자료의 범위 또는 건수를 확인할 수 없습니다. 다시 불러와주세요.");
