@@ -262,7 +262,7 @@ test('tab/filter rerenders reuse costly memoized results and no longer repeat fi
   const counts = { ...optimized.calls };
   const second = optimized.render({ ...input, tab: '사건 · 수납', staffFilter: '가람' });
   old.render({ ...input, tab: '사건 · 수납', staffFilter: '가람' });
-  for (const field of ['activeLeads', 'overCap', 'overdueNow', 'staffRows', 'allLedger', 'channelRows', 'stageRows']) assert.strictEqual(second[field], first[field], field);
+  for (const field of ['activeLeads', 'overCap', 'overdueNow', 'staffRows', 'allLedger', 'receiptResult', 'receiptSection', 'channelRows', 'stageRows']) assert.strictEqual(second[field], first[field], field);
   for (const name of ['acquisitionCostForRange', 'laborCostForRange', 'paymentFeesForRange', 'fixedCostForRange', 'cashByStaff', 'staffCompensationForRange', 'contactCount']) assert.equal(optimized.calls[name], counts[name], name);
   assert.ok(old.calls.acquisitionCostForRange > optimized.calls.acquisitionCostForRange);
   assert.ok(old.calls.staffCompensationForRange > optimized.calls.staffCompensationForRange);
@@ -278,6 +278,8 @@ test('every changed data/settings/date dependency invalidates cached calculation
     (x) => { x.store.cases = [...x.store.cases, record('new-case', '신규', 'f2')]; },
     (x) => { x.store.clients = x.store.clients.map((row, i) => i === 0 ? { ...row, name: '변경 고객' } : row); },
     (x) => { x.store.installments = [...x.store.installments, installment('new-paid', 'c2', { amount: 99000 })]; },
+    (x) => { x.store.installments = x.store.installments.map((row, i) => i === 0 ? { ...row, actualPaidAmount: 12345 } : row); },
+    (x) => { x.store.installments = x.store.installments.map((row, i) => i === 0 ? { ...row, paidDate: '2026-11-01' } : row); },
     (x) => { x.store.workStaffNames = [...x.store.workStaffNames, '추가 직원']; },
     (x) => { x.store.staffDirectory = [{ id: 'new-staff', staffName: 'Synthetic new staff', isWorkStaff: true, platformRole: 'staff', lawFirmId: 'f1' }]; },
     (x) => { x.store.caseDocuments = { ...x.store.caseDocuments, c1: { id_copy: true } }; },

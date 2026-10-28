@@ -16,7 +16,7 @@ import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { kstPerformanceDate } from "@/lib/performance/firm";
 import { getRetainedLeadIds } from "@/lib/performance/lead-retainer-conversion";
 import type { StaffRetainerConversionRow } from "@/components/analytics/StaffRetainerConversionTable";
-import { createLedgerSection, createReceiptSection } from "@/lib/analytics-ledger-sheet";
+import { buildAnalyticsReceipts, createReceiptOnlySection } from "@/lib/analytics-receipts";
 import { buildAnalyticsLedger, analyticsLedgerDate, recordedActualPayment, type AnalyticsLedgerMode } from "@/lib/analytics-ledger";
 
 function supplyConversionRateLabel(supplied: number, rate: number | null | undefined) { return supplied === 0 ? "—" : typeof rate === "number" && Number.isFinite(rate) ? `${rate.toFixed(1)}%` : "확인 필요"; }
@@ -232,12 +232,8 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
   const clientsById=compute(()=>firstByKey(clients,c=>c.id),[clients]);
   const monthStart = `${end.slice(0,7)}-01`;
   const ledgerResult = buildAnalyticsLedger({cases,clients,installments:sourceInstallments,periodStart:monthStart,periodEnd:end,cutoff:end,mode:input.mode??"monthly",firmId:effectiveFirmId});
-  const excludedIds=new Set(ledgerResult.warnings.filter(row=>["unmatched-payment","ambiguous-payment","excluded-contract-receipt"].includes(row.code)).map(row=>row.paymentId));
-  const excludedReceipts=Array.from(firstByKey(sourceInstallments,row=>JSON.stringify([row._lawFirmId??effectiveFirmId??"",row.id])).values()).filter(row=>{
-    const date=analyticsLedgerDate(row.paidDate);
-    return excludedIds.has(row.id)&&row.status==="완료"&&recordedActualPayment(row)!==undefined&&date&&date<=end&&(input.mode==="cumulative"||date>=monthStart);
-  });
-  const undatedReceipts=Array.from(firstByKey(sourceInstallments,row=>JSON.stringify([row._lawFirmId??effectiveFirmId??"",row.id])).values()).filter(row=>row.status==="완료"&&!analyticsLedgerDate(row.paidDate)&&recordedActualPayment(row)!==undefined);
+  const receiptResult=buildAnalyticsReceipts({cases,clients,installments:sourceInstallments,periodStart:monthStart,cutoff:end,mode:input.mode??"monthly",firmId:effectiveFirmId});
+  const receiptSection=createReceiptOnlySection(receiptResult.rows);
   const fullMonthCash=ledgerResult.totals.periodPaid+ledgerResult.totals.excludedPeriodPaid;
   const fullCumulativeCash=installments.reduce((sum,row)=>sum+(row.status==="완료"&&row.paidDate&&row.paidDate<=end?(recordedActualPayment(row)??0):0),0);
   const allLedger = ledgerResult.rows.map(row=>{
@@ -272,7 +268,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
   const feeRuleRows=settingsContexts.flatMap(x=>x.settings.feeRules.map(r=>[x.name,r.caseType,r.baseFee,r.minFee,r.approvalDiscountAmount,r.effectiveFrom]));
 
   const cashLabel=closed?"회수 매출 · 마감 스냅샷":"회수 매출 · 확인분";
-  const snapshotNote=closed?"수임·실입금·비용은 저장된 마감 스냅샷입니다. 04 수임매출의 현재 기록·실납부액 확인분과 다를 수 있으며 마감 원본은 변경하지 않습니다.":"실입금·비용 중 입금 기준 계산은 실제 금액과 납부일이 기록된 완료 회차 확인분입니다. 미확인 기록은 04 수임매출에서 별도 확인합니다.";
+  const snapshotNote=closed?"수임·실입금·비용은 저장된 마감 스냅샷입니다. 04 입금내역의 현재 실납부액 확인분과 다를 수 있으며 마감 원본은 변경하지 않습니다.":"실입금·비용 중 입금 기준 계산은 실제 금액과 납부일이 기록된 완료 회차 확인분입니다. 날짜·실납부액 미확인 회차는 입금내역에서 제외하며 앱의 안내에서 확인합니다.";
   const sheets:AnalyticsMeetingSheet[]=[
     {
       name:"00 회의요약",title:"로파워 데이터집계 · 회의요약",subtitle:"선택 기간의 핵심 매출·수익·영업 지표를 한 장에 정리한 회의용 요약입니다.",
@@ -307,31 +303,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
       sections:[{title:"채널 · 소재 효율",headers:["소재/구분","비용","DB","DB당 구매비","연결률","계약","수임매출","수임당 구매비"],rows:channelRows.map(r=>[r.label,costKnown?r.spend:"확인 필요",r.db,costKnown?r.cpl:"확인 필요",r.connRate,r.won,r.revenue,costKnown?r.cpa:"확인 필요"]),formats:["text","won","integer","won","percent1","integer","won","won"],widths:[34,18,12,18,14,12,20,18]}],
     },
     {
-      name:"04 수임매출",title:"수임 · 매출",subtitle:"계약별 실입금 · 누적입금 · 미수잔금 원장",
-      kpis:[{label:"원장 계약",value:allLedger.length,format:"integer"},{label:"해당 월 확인 실입금 · 전체",value:fullMonthCash,format:"won"},{label:"누적 실입금 · 원장 계약",value:ledgerResult.totals.cumulativePaid,format:"won"},{label:"잔금 확인 필요",value:ledgerResult.totals.uncertainBalanceCases,format:"integer"}],
-      sections:[createLedgerSection(allLedger),createReceiptSection(allLedger,input.mode??"monthly"),
-        {title:"계약 연결 확인 필요 입금",headers:["납부일","계약 ID","입금 기록 ID","회차","확인 실입금액","확인사항"],rows:excludedReceipts.map(row=>[analyticsLedgerDate(row.paidDate),row.caseId,row.id,row.seq,recordedActualPayment(row),"실제 입금은 포함 · 계약일/연결 확인 전 수임료·잔금 집계 제외"]),formats:["date","text","text","integer","won","text"],widths:[16,30,30,10,22,60],totalRow:["연결 확인 입금 합계","","","",excludedReceipts.reduce((sum,row)=>sum+(recordedActualPayment(row)??0),0),""]},
-        {title:"납부일 미확인 입금 회차 · 상세",headers:["계약 ID","입금 기록 ID","회차","기록 실납부액","확인사항"],rows:undatedReceipts.map(row=>[row.caseId,row.id,row.seq,recordedActualPayment(row),"납부일 미확인 · 월/누적 실입금 및 확정 잔금에 미합산"]),formats:["text","text","integer","won","text"],widths:[28,30,10,22,60],totalRow:["날짜 미확인 기록액 합계","","",undatedReceipts.reduce((sum,row)=>sum+(recordedActualPayment(row)??0),0),""],note:"원장 연결 여부와 관계없이 실납부액은 기록됐지만 납부일이 없는 회차를 모두 표시합니다. 아래 계약별 미확인 기록 목록에 같은 회차가 포함될 수 있으므로 두 목록을 더하지 않습니다. 날짜 확인 전 월/누적 실입금에 포함하지 않습니다."},
-        {title:"입금일 · 실납부액 확인 필요",headers:["확인유형","계약 ID","입금 기록 ID","기록 납부일","원본 기록액 / 확인분","기준"],rows:[
-          ...ledgerResult.unallocatedCases.map(row=>["일자 미확인",row.caseId,"","",row.amount,row.amountKnown?(row.includedInRows?"원장 포함 · 누적 실입금에 미합산":"원장 밖 과거 계약 · 별도 확인"):"실입금 미확인 원본 집계액 · 실제 입금으로 합산하지 않음"]),
-          ...ledgerResult.incompletePayments.map(row=>["실납부액 미확인",row.caseId,row.id,row.paidDate??"","확인 필요","예정금액으로 대체하지 않음"]),
-        ],formats:["text","text","text","date","won","text"],widths:[24,28,30,16,20,50]},
-        {title:"입금 확인 · 대사",headers:["항목","금액 / 건수","기준"],rows:[
-          ["해당 월 확인 실입금 전체 (원)",fullMonthCash,"원장 확인 입금 + 계약 연결 확인 필요 입금 · 실납부액 미확인 제외"],
-          ["해당 월 원장 입금",ledgerResult.totals.periodPaid,"한 계약 한 행 · 실제 완료 입금"],
-          ["해당 월 연결 확인 필요 입금",ledgerResult.totals.excludedPeriodPaid,"미연결 / 계약일 미확인 / 기준일 이후 계약의 입금 · 원장과 별도"],
-          ["월말 누적 확인 실입금 전체 (원)",fullCumulativeCash,"최초 기록부터 월말까지 전체 완료 회차 · 월 원장에 없는 과거 계약 포함 · 미확인 금액 제외"],
-          ["누적 연결 확인 필요 입금",ledgerResult.totals.excludedCumulativePaid,"월말까지 완료 입금 중 원장에 연결하지 못한 금액"],
-          ["원장 밖 미확인 입금 기록액",ledgerResult.totals.excludedUnallocatedPaid,"원장에 없는 과거 계약의 미확인 기록 · 실제 입금 여부/일자 별도 확인"],
-          ["실납부액 미확인 회차",ledgerResult.incompletePayments.length,"완료 상태라도 실제 금액 미기록은 예정금액으로 대체하지 않음"],
-          ["해당 월 실납부액 미확인 회차",ledgerResult.totals.periodUnknownActualCount,"확인된 해당 월 실입금과 별도 · 합계 미확정"],
-          ["원장 내 미확인 입금 기록액",ledgerResult.totals.unallocatedPaid,"월 / 누적 실입금에 합산하지 않음 · 별도 확인"],
-          ["미확정 잔금 계약",ledgerResult.totals.uncertainBalanceCases,"입금일 확인 전 미수 잔금 확정 불가"],
-          ["마감 스냅샷 회수 매출",closed?.cashSales??"해당 없음","저장된 마감 합계 · 현재 원장 확인분과 별도"],
-          ["마감 대비 현재 확인분 차이",closed?cashSales-liveCashSales:"해당 없음","마감 스냅샷 − 해당 조회기간 현재 확인 실입금 · 원본 변경 안 함"],
-          ["원본 / 연결 확인",ledgerResult.warnings.length,"중복 ID·미연결·일자 미확인 등을 원본 기록에서 확인"],
-        ],formats:["text","integer","text"],widths:[32,22,65]},
-      ],
+      name:"04 입금내역",title:"입금내역",sections:[receiptSection],
     },
     {
       name:"05 사건수납",title:"사건 · 수납",subtitle:"현재 사건 진행 단계와 장기체류·연체·취하 데이터를 상세 목록으로 제공합니다.",
@@ -340,7 +312,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
         {title:"사건 진행 단계",headers:["단계","건수"],rows:stageRows.map(r=>[STAGE_GENERIC_LABELS[r.stage],r.count]),formats:["text","integer"],widths:[24,12]},
         {title:"서류준비 장기체류",headers:["의뢰인","사건번호","담당","사건유형","단계 변경일","체류일"],rows:docDelay.map(c=>{const client=clients.find(x=>x.id===c.clientId);return[client?.name??"-",c.caseNumber,c.assignedStaff,c.caseType,c.stageUpdatedAt,daysSince(c.stageUpdatedAt)]}),formats:["text","text","text","text","date","integer"],widths:[16,22,15,14,15,12]},
         {title:"연체 · 결제실패 상세",headers:["납부예정일","의뢰인","사건번호","담당","회차","금액","상태","실납부일"],rows:overdueDetail,formats:["date","text","text","text","integer","won","text","date"],widths:[15,16,22,15,10,18,12,15]},
-        {title:"선택 기간 취하 사건",note:"취하 사건의 원본 요약금액입니다. 실입금·환불 여부가 확인된 금액으로 간주하지 않으며, 확인된 회차별 입금은 04 수임매출에서 별도로 표시합니다.",headers:["계약일","의뢰인","사건번호","담당","사건유형","계약금액","원본 입금 집계액 · 미확인"],rows:cancelled,formats:["date","text","text","text","text","won","won"],widths:[15,16,22,15,14,18,18]},
+        {title:"선택 기간 취하 사건",note:"취하 사건의 원본 요약금액입니다. 실입금·환불 여부가 확인된 금액으로 간주하지 않으며, 확인된 회차별 입금은 04 입금내역에서 별도로 표시합니다.",headers:["계약일","의뢰인","사건번호","담당","사건유형","계약금액","원본 입금 집계액 · 미확인"],rows:cancelled,formats:["date","text","text","text","text","won","won"],widths:[15,16,22,15,14,18,18]},
       ],
     },
     {
@@ -358,8 +330,8 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
       ],
     },
   ];
-  const order = ["04 수임매출", "00 회의요약", "01 팀인원", "02 상담운영", "05 사건수납", "07 정산입력", "06 산식기준", "03 DB구매유입"];
+  const order = ["04 입금내역", "00 회의요약", "01 팀인원", "02 상담운영", "05 사건수납", "07 정산입력", "06 산식기준", "03 DB구매유입"];
   return order.map(name=>sheets.find(sheet=>sheet.name===name)!);
   }
-  return { firmIds,totalStandardFee,totalDiscount,activeLeads,latePaid,overdueDue,converted,closed,costKnown,rangeLeads,dbRetainerConversion,periodCases,rangeCases,rangePaid,cashSales,contractSales,acquisitionCost,laborCost,paymentFees,fixedCost,contractCount,contractNet,cashProfit,averageFee,collectionRate,contractTarget,isCurrentMonthRange,expectedContractsByToday,projectedMonthContracts,requiredContractsPerDay,targetProgress,standardKnown,discountRate,activeCap,neglectDays,neglected,stageUnknown,overCap,overdueNow,missingDocuments,docDelay,allStaff,staffRows,avgContacts,connected,consult,completed,shortClosed,channelRows,clientsById,ledgerResult,fullMonthCash,fullCumulativeCash,allLedger,stageRows,selfInstallments,overdueRecovery,scopeLabel,periodLabel,buildSheets };
+  return { firmIds,totalStandardFee,totalDiscount,activeLeads,latePaid,overdueDue,converted,closed,costKnown,rangeLeads,dbRetainerConversion,periodCases,rangeCases,rangePaid,cashSales,contractSales,acquisitionCost,laborCost,paymentFees,fixedCost,contractCount,contractNet,cashProfit,averageFee,collectionRate,contractTarget,isCurrentMonthRange,expectedContractsByToday,projectedMonthContracts,requiredContractsPerDay,targetProgress,standardKnown,discountRate,activeCap,neglectDays,neglected,stageUnknown,overCap,overdueNow,missingDocuments,docDelay,allStaff,staffRows,avgContacts,connected,consult,completed,shortClosed,channelRows,clientsById,ledgerResult,receiptResult,receiptSection,fullMonthCash,fullCumulativeCash,allLedger,stageRows,selfInstallments,overdueRecovery,scopeLabel,periodLabel,buildSheets };
 }

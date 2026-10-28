@@ -36,7 +36,16 @@ function supply(start = '2026-10-01', end = '2026-10-31') {
   };
 }
 function harness(options = {}) {
-  const modules = new Map(), exports = [], downloads = [], audits = [], reads = [];
+  const modules = new Map(), exports = [], downloads = [], audits = [], reads = [], csvDownloads = [];
+  const blobs = new Map();
+  class TestURL extends URL {
+    static createObjectURL(blob) { const url = `blob:synthetic-${blobs.size}`; blobs.set(url, blob); return url; }
+    static revokeObjectURL(url) { blobs.delete(url); }
+  }
+  const document = { createElement: tag => {
+    assert.equal(tag, 'a');
+    return { click() { csvDownloads.push({ filename: this.download, blob: blobs.get(this.href) }); } };
+  } };
   const store = fixture();
   const supplyState = { data: supply(), loading: false, error: null };
   const sourceState = { data: store, loading: false, error: null, retry: () => {} };
@@ -68,7 +77,7 @@ function harness(options = {}) {
       }
       throw new Error(`Unexpected import: ${name}`);
     };
-    vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { Date: TestDate, Error, Intl, URL, URLSearchParams, Map, Set, Number, Math, setTimeout, clearTimeout, AbortController, fetch: () => { throw new Error('Network is forbidden'); } }, { filename: relative })(requireMock, module, module.exports);
+    vm.runInNewContext(`(function(require,module,exports){${code}\n})`, { Date: TestDate, Error, Intl, URL: TestURL, URLSearchParams, Blob, document, Map, Set, Number, Math, setTimeout, clearTimeout, AbortController, fetch: () => { throw new Error('Network is forbidden'); } }, { filename: relative })(requireMock, module, module.exports);
     modules.set(relative, module.exports); return module.exports;
   }
   const core = load('lib/management-core.ts');
@@ -76,7 +85,7 @@ function harness(options = {}) {
   activeSettings.fixedCosts = [{ id: 'synthetic-cost', label: 'Synthetic fixed cost', monthlyAmount: 100 }];
   settings = { globalSuperView: false, effectiveFirmId: firm, activeSettings, settingsByFirm: {}, loading: false, error: null };
   const Component = load('components/analytics/LegacyAnalytics.tsx').default;
-  return { store, settings, supplyState, sourceState, exports, downloads, audits, reads, load,
+  return { store, settings, supplyState, sourceState, exports, downloads, audits, reads, csvDownloads, load,
     mount: async () => { await act(async () => { tree = Renderer.create(React.createElement(Component)); }); },
     update: async () => { await act(async () => tree.update(React.createElement(Component))); },
     tree: () => tree,
@@ -87,8 +96,23 @@ const button = (h, label) => h.tree().root.findAllByType('button').find(node => 
 const click = async (h, label) => act(async () => { button(h, label).props.onClick(); });
 const changeMonth = async (h, month) => act(async () => { h.tree().root.findByProps({ 'aria-label': '조회 월' }).props.onChange({ target: { value: month } }); });
 const settle = async fn => act(async () => { fn?.(); await Promise.resolve(); await Promise.resolve(); });
-const ledgerRows = workbook => {
-  const section = workbook.sheets[0].sections[0];
+const receiptHeaders = ['입금일', '담당', '의뢰인', '회차', '납부방식', '실입금액'];
+const sectionRows = section => section.rows.map(row => Object.fromEntries(section.headers.map((header, index) => [header, row[index]])));
+const receiptSection = workbook => {
+  const first = workbook.sheets[0];
+  assert.equal(first.name, '04 입금내역');
+  assert.equal(first.sections.length, 1, 'the first sheet contains only the receipt table');
+  assert.equal(first.kpis?.length ?? 0, 0, 'contract/snapshot KPIs must not reappear on the receipt sheet');
+  const section = first.sections[0];
+  assert.deepEqual(Array.from(section.headers), receiptHeaders);
+  assert.ok(section.rows.every(row => row.length === 6), 'one six-column row per recorded receipt');
+  assert.doesNotMatch(JSON.stringify(first), /계약 ID|입금 기록 ID|미수 잔금|초과입금|확인사항|마감 스냅샷/);
+  return section;
+};
+const receiptRows = workbook => sectionRows(receiptSection(workbook));
+const currentReport = h => h.load('lib/analytics-report.ts').buildAnalyticsReport({ store: h.sourceState.data ?? h.store, settings: h.settings, start: '2026-10-01', end: '2026-10-31', mode: 'monthly', supply: h.supplyState });
+const contractRows = h => {
+  const section = h.load('lib/analytics-ledger-sheet.ts').createLedgerSection(currentReport(h).allLedger);
   return section.rows.map(row => Object.fromEntries(section.headers.map((header, index) => [header, row[index]])));
 };
 
@@ -98,23 +122,25 @@ test('monthly button includes earlier contracts paid this month; cumulative butt
   assert.match(text(h.tree().toJSON()), /해당 월 실입금/);
   await click(h, '이번달 실적 XLSX');
   assert.equal(h.exports.length, 1); assert.equal(h.reads.length, 0);
-  const monthly = h.exports[0], rows = ledgerRows(monthly);
+  const monthly = h.exports[0], rows = receiptRows(monthly);
   assert.match(monthly.filename, /이번달실적_2026-10\.xlsx$/);
-  assert.deepEqual(Array.from(rows, row => row.사건번호).sort(), ['SYNTHETIC-current', 'SYNTHETIC-old']);
-  const old = rows.find(row => row.사건번호 === 'SYNTHETIC-old');
+  assert.deepEqual(Array.from(rows, row => [row.입금일, row.실입금액]), [['2026-10-02', 50], ['2026-10-03', 200]]);
+  assert.ok(rows.every(row => row.담당 === 'Synthetic staff' && row.의뢰인 === 'Synthetic shared customer' && row.납부방식 === '단순분납' && row.회차 === 1));
+  const contracts = contractRows(h), old = contracts.find(row => row.사건번호 === 'SYNTHETIC-old');
   assert.equal(old['해당 월 실입금'], 200); assert.equal(old['누적 실입금'], 300); assert.equal(old['미수 잔금'], 700);
-  assert.equal(rows.find(row => row.사건번호 === 'SYNTHETIC-current')['누적 실입금'], 50, 'same client must not combine distinct contracts');
-  assert.equal(monthly.sheets[0].sections[1].totalRow[6], 250, 'payment detail totals actual receipts only');
+  assert.equal(contracts.find(row => row.사건번호 === 'SYNTHETIC-current')['누적 실입금'], 50, 'same client must not combine distinct contracts');
+  assert.equal(receiptSection(monthly).totalRow[5], 250, 'payment detail totals actual receipts only');
   assert.equal(monthly.sheets.find(sheet => sheet.name === '00 회의요약').kpis.find(kpi => kpi.label === '회수 매출 · 확인분').value, 250);
   assert.deepEqual({ ...h.audits[0] }, { firmId: firm, start: '2026-10-01', end: '2026-10-31', format: 'xlsx', kind: 'meeting', mode: 'monthly' });
   await click(h, '누적 실적 XLSX');
   assert.equal(h.exports.length, 2); assert.equal(h.reads.length, 1);
   const params = new URL(h.reads[0].url, 'https://offline.invalid').searchParams;
   assert.equal(params.get('start'), '2026-08-01'); assert.equal(params.get('end'), '2026-10-31'); assert.equal(params.get('cumulative'), 'true'); assert.equal(h.reads[0].init.cache, 'no-store');
-  const cumulative = h.exports[1], allRows = ledgerRows(cumulative);
+  const cumulative = h.exports[1], allRows = receiptRows(cumulative);
   assert.match(cumulative.filename, /누적실적_2025-02-01_2026-10-31\.xlsx$/);
-  assert.equal(allRows.length, 3); assert.equal(allRows.some(row => row.사건번호 === 'SYNTHETIC-future'), false);
-  assert.equal(cumulative.sheets[0].sections[1].totalRow[6], 430);
+  assert.deepEqual(Array.from(allRows, row => [row.입금일, row.실입금액]), [['2026-08-12', 100], ['2026-09-03', 80], ['2026-10-02', 50], ['2026-10-03', 200]]);
+  assert.equal(allRows.length, 4, 'multiple payments under one contract remain separate rows');
+  assert.equal(receiptSection(cumulative).totalRow[5], 430);
   const summary = cumulative.sheets.find(sheet => sheet.name === '00 회의요약');
   assert.equal(summary.kpis.find(kpi => kpi.label === '전체 수임 · 계약일').value, 3);
   assert.equal(summary.kpis.find(kpi => kpi.label === '회수 매출 · 확인분').value, 430);
@@ -132,10 +158,52 @@ test('menu, all workbook sheets, and selected historical month agree without pho
   await click(h, '이번달 실적 XLSX');
   const workbook = h.exports[0];
   assert.match(workbook.filename, /이번달실적_2026-09\.xlsx$/);
-  assert.deepEqual(Array.from(workbook.sheets, sheet => sheet.name), ['04 수임매출', '00 회의요약', '01 팀인원', '02 상담운영', '05 사건수납', '07 정산입력', '06 산식기준', '03 DB구매유입']);
+  assert.deepEqual(Array.from(workbook.sheets, sheet => sheet.name), ['04 입금내역', '00 회의요약', '01 팀인원', '02 상담운영', '05 사건수납', '07 정산입력', '06 산식기준', '03 DB구매유입']);
   assert.doesNotMatch(JSON.stringify(workbook.sheets), /첫 전화 시도|전화 시도\(분\)|업무량 상세/);
-  assert.equal(ledgerRows(workbook).length, 1); assert.equal(ledgerRows(workbook)[0]['누적 실입금'], 80);
+  assert.equal(receiptRows(workbook).length, 1); assert.equal(receiptRows(workbook)[0].실입금액, 80);
   assert.equal(h.audits[0].start, '2026-09-01'); assert.equal(h.audits[0].end, '2026-09-30'); h.close();
+});
+
+test('standalone XLSX and CSV use the same receipt-only rows and selected staff while meeting exports stay unfiltered', async () => {
+  const h = harness();
+  h.store.cases = h.store.cases.map(row => row.id === 'future' ? { ...row, assignedStaff: 'Synthetic other staff' } : row);
+  h.store.workStaffNames.push('Synthetic other staff');
+  const receipt = (id, caseId, amount) => ({ ...scopeStamp, id, caseId, actualPaidAmount: amount, amount: 90000, paidDate: '2026-10-12', dueDate: '2026-10-12', status: '완료', seq: 2 });
+  h.store.installments.push(receipt('synthetic-other-receipt', 'future', 17), receipt('synthetic-unmatched-receipt', 'missing-contract', 31));
+  await h.mount();
+  assert.equal(button(h, '원장 XLSX'), undefined); assert.ok(button(h, '입금내역 XLSX'));
+  await click(h, '입금내역 XLSX');
+  assert.equal(h.exports[0].sheets.length, 1);
+  assert.match(h.exports[0].filename, /입금내역_2026-10_전체\.xlsx$/);
+  assert.equal(receiptSection(h.exports[0]).totalRow[5], 298);
+  await click(h, 'CSV');
+  assert.equal(h.csvDownloads.length, 1);
+  assert.match(h.csvDownloads[0].filename, /입금내역_2026-10_전체\.csv$/);
+  const csv = (await h.csvDownloads[0].blob.text()).replace(/^\ufeff/, '').trim().split('\n');
+  assert.equal(csv[0], receiptHeaders.join(','));
+  const cells = line => line.split(',').map(cell => cell.replace(/^"|"$/g, ''));
+  const csvSafe = value => typeof value === 'string' && /^[=+\-@\t\r]/.test(value) ? `'${value}` : String(value);
+  assert.deepEqual(csv.slice(1).map(cells), Array.from(receiptSection(h.exports[0]).rows, row => Array.from(row, csvSafe)), 'CSV preserves the receipt schema and existing spreadsheet-injection escaping');
+  assert.deepEqual({ ...h.audits[0] }, { firmId: firm, start: '2026-10-01', end: '2026-10-31', staff: '전체', format: 'xlsx', kind: 'ledger' });
+  assert.deepEqual({ ...h.audits[1] }, { firmId: firm, start: '2026-10-01', end: '2026-10-31', staff: '전체', format: 'csv', kind: 'ledger' });
+  await act(async () => h.tree().root.findByProps({ 'aria-label': '원장 담당자' }).props.onChange({ target: { value: 'Synthetic staff' } }));
+  await click(h, '입금내역 XLSX');
+  assert.equal(receiptRows(h.exports[1]).length, 2); assert.equal(receiptSection(h.exports[1]).totalRow[5], 250);
+  assert.ok(receiptRows(h.exports[1]).every(row => row.담당 === 'Synthetic staff'));
+  assert.equal(h.audits[2].staff, 'Synthetic staff');
+  await click(h, '이번달 실적 XLSX');
+  assert.equal(receiptSection(h.exports[2]).totalRow[5], 298, 'staff dropdown must not silently narrow full meeting reports');
+  assert.equal(h.audits[3].staff, undefined);
+  h.close();
+});
+
+test('a month with no confirmed receipts exports an empty six-column table instead of contract or scheduled cash', async () => {
+  const h = harness();
+  h.store.installments = [{ ...scopeStamp, id: 'synthetic-unpaid', caseId: 'current', status: '예정', amount: 90000, actualPaidAmount: 90000, paidDate: '2026-10-02', seq: 1 }];
+  await h.mount(); await click(h, '이번달 실적 XLSX');
+  assert.equal(receiptRows(h.exports[0]).length, 0);
+  assert.equal(receiptSection(h.exports[0]).totalRow[5], 0);
+  assert.equal(currentReport(h).allLedger.length, 1, 'unpaid contracted clients remain in the app ledger, not the receipt export'); h.close();
 });
 
 test('rapid repeated export clicks share one operation and visibly disable both buttons until completion', async () => {
@@ -215,10 +283,10 @@ test('complete source response, not the truncated live store, supplies every rec
   h.sourceState.data = complete;
   h.store.cases = h.store.cases.slice(0, 1); h.store.installments = h.store.installments.slice(0, 1);
   const before = JSON.stringify(complete); await h.mount(); await click(h, '이번달 실적 XLSX');
-  const monthly = h.exports[0], receiptSection = monthly.sheets[0].sections[1];
-  assert.equal(receiptSection.rows.length, 1003);
-  assert.equal(receiptSection.totalRow[6], 1251);
-  assert.equal(ledgerRows(monthly).find(row => row.사건번호 === 'SYNTHETIC-old')['해당 월 실입금'], 1201);
+  const monthly = h.exports[0], receipts = receiptSection(monthly);
+  assert.equal(receipts.rows.length, 1003);
+  assert.equal(receipts.totalRow[5], 1251);
+  assert.equal(contractRows(h).find(row => row.사건번호 === 'SYNTHETIC-old')['해당 월 실입금'], 1201);
   assert.equal(JSON.stringify(complete), before); h.close();
 });
 
@@ -268,15 +336,17 @@ test('scheduled amount is never treated as actual cash when a completed payment 
   h.store.installments.push({ ...scopeStamp, id: 'synthetic-unknown-actual', caseId: 'current', status: '완료', amount: 999999, dueDate: '2026-10-10', paidDate: '2026-10-10', seq: 2 });
   h.store.installments.push({ ...scopeStamp, id: 'synthetic-explicit-zero', caseId: 'old', status: '완료', amount: 999999, actualPaidAmount: 0, dueDate: '2026-10-10', paidDate: '2026-10-10', seq: 2 });
   await h.mount(); await click(h, '이번달 실적 XLSX');
-  const workbook = h.exports[0], rows = ledgerRows(workbook);
-  assert.equal(workbook.sheets[0].sections[1].totalRow[6], 250);
+  const workbook = h.exports[0], rows = contractRows(h), receipts = receiptRows(workbook);
+  assert.equal(receiptSection(workbook).totalRow[5], 250);
+  assert.deepEqual(Array.from(receipts, row => row.실입금액).sort((a, b) => a - b), [0, 50, 200], 'explicit zero remains a receipt; scheduled amount and missing actual never become cash');
   assert.equal(workbook.sheets.find(sheet => sheet.name === '00 회의요약').kpis.find(kpi => kpi.label === '회수 매출 · 확인분').value, 250);
   assert.equal(rows.find(row => row.사건번호 === 'SYNTHETIC-current')['미수 잔금'], '확인 필요');
   assert.equal(rows.find(row => row.사건번호 === 'SYNTHETIC-old')['미수 잔금'], 700);
-  assert.match(rows.find(row => row.사건번호 === 'SYNTHETIC-current')['확인사항'], /실납부액|금액 미확인/); h.close();
+  assert.match(rows.find(row => row.사건번호 === 'SYNTHETIC-current')['확인사항'], /실납부액|금액 미확인/);
+  assert.match(text(h.tree().toJSON()), /정산 전 확인/); assert.match(text(h.tree().toJSON()), /실납부액 미확인/); h.close();
 });
 
-test('full-month cash includes dated actual receipts for future, undated, and unmatched contracts once with separate reconciliation details', async () => {
+test('receipt-only sheet includes confirmed future, undated, and unmatched contract receipts while diagnostics remain in the app', async () => {
   const h = harness();
   h.store.cases.push({ ...h.store.cases[1], id: 'undated-contract', contractDate: '', caseNumber: 'SYNTHETIC-undated' });
   const receipt = (id, caseId, amount, patch = {}) => ({ ...scopeStamp, id, caseId, seq: 1, amount: amount + 10000, actualPaidAmount: amount, paidDate: '2026-10-12', dueDate: '2026-10-12', status: '완료', ...patch });
@@ -291,22 +361,25 @@ test('full-month cash includes dated actual receipts for future, undated, and un
   assert.equal(report.fullMonthCash, 321);
   assert.equal(report.cashSales, 321);
   assert.equal(report.fullCumulativeCash, 501, 'whole-firm cumulative cash also includes old contracts outside the monthly ledger');
+  assert.equal(report.ledgerResult.totals.cumulativePaid, 350, 'monthly-ledger cumulative cash remains distinct from whole-firm cumulative cash');
+  assert.ok(report.ledgerResult.warnings.some(row => row.paymentId === 'undated-cash'), 'orphan undated actual cash retains its diagnostic');
   await h.mount();
   assert.match(text(h.tree().toJSON()), /해당 월 실입금 · 전체 확인분321원/);
   await click(h, '이번달 실적 XLSX');
-  const first = h.exports[0].sheets[0];
-  assert.equal(first.kpis.find(kpi => kpi.label === '해당 월 확인 실입금 · 전체').value, 321);
-  assert.equal(first.kpis.find(kpi => kpi.label === '누적 실입금 · 원장 계약').value, 350, 'monthly-ledger cumulative cash is not mislabeled as whole-firm cumulative cash');
-  const excluded = first.sections.find(section => section.title === '계약 연결 확인 필요 입금');
-  assert.equal(excluded.rows.length, 3); assert.equal(excluded.totalRow[4], 71);
-  assert.deepEqual(Array.from(excluded.rows, row => row[2]).sort(), ['future-contract-cash', 'undated-contract-cash', 'unmatched-cash']);
-  const reconciliation = first.sections.find(section => section.title === '입금 확인 · 대사');
-  assert.equal(reconciliation.rows.find(row => row[0] === '해당 월 확인 실입금 전체 (원)')[1], 321);
-  assert.equal(reconciliation.rows.find(row => row[0] === '월말 누적 확인 실입금 전체 (원)')[1], 501);
-  assert.equal(first.sections[1].totalRow[6] + excluded.totalRow[4], 321);
-  const unknownDateDetail = first.sections.flatMap(section => section.rows).find(row => row.includes('undated-cash'));
-  assert.ok(unknownDateDetail, 'known actual money with no date or matching contract must stay identifiable outside period cash totals');
-  assert.ok(unknownDateDetail.includes(800));
+  const receipts = receiptRows(h.exports[0]);
+  assert.equal(receipts.length, 5); assert.equal(receiptSection(h.exports[0]).totalRow[5], 321);
+  assert.deepEqual(Array.from(receipts, row => row.실입금액).sort((a, b) => a - b), [17, 23, 31, 50, 200]);
+  assert.equal(receipts.find(row => row.실입금액 === 17).의뢰인, 'Synthetic future customer', 'future contract date does not invalidate a dated actual receipt');
+  assert.equal(receipts.find(row => row.실입금액 === 23).의뢰인, 'Synthetic shared customer');
+  const unmatched = receipts.find(row => row.실입금액 === 31);
+  assert.equal(unmatched.담당, '-'); assert.equal(unmatched.의뢰인, '-'); assert.equal(unmatched.납부방식, '-', 'unmatched payment must not borrow another contract or payer identity');
+  const app = text(h.tree().toJSON());
+  assert.match(app, /정산 전 확인/); assert.match(app, /납부일|입금일/);
+  assert.doesNotMatch(app, /회차 상세는 실적 XLSX에서 확인/);
+  await click(h, '누적 실적 XLSX');
+  assert.equal(receiptRows(h.exports[1]).length, 7);
+  assert.equal(receiptSection(h.exports[1]).totalRow[5], 501);
+  assert.ok(receiptRows(h.exports[1]).every(row => row.실입금액 < 700), 'undated, unconfirmed, and after-cutoff money never leaks into cumulative receipts');
   h.close();
 });
 
@@ -320,12 +393,15 @@ test('overpaid contract keeps its credit separately and never offsets another co
   assert.equal(ledgerTotals(report.allLedger).balance, 450);
   assert.equal(ledgerTotals(report.allLedger).overpayment, 300);
   await h.mount(); await click(h, '이번달 실적 XLSX');
-  const workbook = h.exports[0], rows = ledgerRows(workbook), section = workbook.sheets[0].sections[0];
+  const workbook = h.exports[0], rows = contractRows(h), section = h.load('lib/analytics-ledger-sheet.ts').createLedgerSection(report.allLedger);
   assert.equal(rows.find(row => row.사건번호 === 'SYNTHETIC-old')['미수 잔금'], 0);
   assert.equal(rows.find(row => row.사건번호 === 'SYNTHETIC-old')['초과입금'], 300);
   assert.equal(rows.find(row => row.사건번호 === 'SYNTHETIC-current')['미수 잔금'], 450);
   assert.equal(section.totalRow[10], 450); assert.equal(section.totalRow[11], 300);
-  assert.match(section.note, /다른 계약 미수금과 상계하지 않습니다/); h.close();
+  assert.match(section.note, /다른 계약 미수금과 상계하지 않습니다/);
+  assert.equal(receiptSection(workbook).totalRow[5], 1250);
+  assert.deepEqual(Array.from(receiptRows(workbook), row => row.실입금액).sort((a, b) => a - b), [50, 200, 1000]);
+  assert.match(text(h.tree().toJSON()), /미수 잔금 · 총 수임료 대비450원/); h.close();
 });
 
 test('immutable month closing stays labeled separately from current confirmed receipt detail and never rewrites source totals', async () => {
@@ -336,15 +412,15 @@ test('immutable month closing stays labeled separately from current confirmed re
   } };
   const before = JSON.stringify(h.settings.activeSettings.monthClosings);
   await h.mount(); await click(h, '이번달 실적 XLSX');
-  const workbook = h.exports[0], summary = workbook.sheets.find(sheet => sheet.name === '00 회의요약'), ledger = workbook.sheets[0];
+  const workbook = h.exports[0], summary = workbook.sheets.find(sheet => sheet.name === '00 회의요약');
   assert.equal(summary.kpis.find(kpi => kpi.label === '회수 매출 · 마감 스냅샷').value, 999);
   const cashSection = summary.sections.find(section => section.title === '수익 구조');
   assert.equal(cashSection.rows.find(row => row[0] === '회수 매출 · 마감 스냅샷')[1], 999);
   assert.equal(cashSection.rows.find(row => row[0] === '현금 기준 영업이익')[1], 840);
   assert.match(cashSection.note, /마감 스냅샷/);
-  assert.equal(ledger.kpis.find(kpi => kpi.label === '해당 월 확인 실입금 · 전체').value, 250);
-  assert.equal(ledger.sections[1].totalRow[6], 250);
-  assert.equal(ledger.sections.find(section => section.title === '입금 확인 · 대사').rows.find(row => row[0] === '마감 스냅샷 회수 매출')[1], 999);
+  assert.equal(currentReport(h).fullMonthCash, 250);
+  assert.equal(receiptSection(workbook).totalRow[5], 250);
+  assert.equal(receiptRows(workbook).length, 2, 'snapshot totals are never receipt rows');
   await click(h, '요약');
   const rendered = text(h.tree().toJSON());
   assert.match(rendered, /마감 스냅샷/);
@@ -356,11 +432,12 @@ test('cancelled case legacy summary remains explicitly unverified and never beco
   h.store.cases.push({ ...h.store.cases[1], id: 'synthetic-cancelled', status: '취하', paidAmount: 555, caseNumber: 'SYNTHETIC-cancelled' });
   await h.mount(); await click(h, '이번달 실적 XLSX');
   const workbook = h.exports[0];
-  assert.equal(workbook.sheets[0].kpis.find(kpi => kpi.label === '해당 월 확인 실입금 · 전체').value, 250);
+  assert.equal(receiptSection(workbook).totalRow[5], 250);
+  assert.equal(receiptRows(workbook).length, 2, 'undated legacy case summary does not generate a receipt or refund row');
   const cancelled = workbook.sheets.find(sheet => sheet.name === '05 사건수납').sections.find(section => section.title === '선택 기간 취하 사건');
   assert.equal(cancelled.rows[0][6], 555);
   assert.equal(cancelled.headers[6], '원본 입금 집계액 · 미확인');
   assert.match(cancelled.note, /실입금·환불 여부가 확인된 금액으로 간주하지 않/);
-  const row = ledgerRows(workbook).find(row => row.사건번호 === 'SYNTHETIC-cancelled');
+  const row = contractRows(h).find(row => row.사건번호 === 'SYNTHETIC-cancelled');
   assert.equal(row['누적 실입금'], 0); assert.equal(row['미수 잔금'], '확인 필요'); assert.equal(row.상태, '취하'); h.close();
 });

@@ -120,7 +120,7 @@ function setStyle(cell: Cell, kind: RowKind, alternate = false) {
     bold: kind === "header" || kind === "total" || kind === "section",
     color: { argb: kind === "note" ? COLORS.muted : COLORS.text },
   };
-  cell.alignment = { vertical: "middle", horizontal: kind === "header" ? "center" : "left", wrapText: true };
+  cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
   if (kind === "note") return;
   const fill = kind === "header" ? COLORS.header
     : kind === "total" ? COLORS.total
@@ -140,11 +140,6 @@ function setStyle(cell: Cell, kind: RowKind, alternate = false) {
 function setValue(cell: Cell, value: AnalyticsCell, format?: AnalyticsCellFormat) {
   cell.value = typedValue(value, format);
   cell.numFmt = format ? FORMATS[format] : value instanceof Date ? FORMATS.date : typeof value === "number" ? "#,##0.##########" : FORMATS.text;
-  cell.alignment = {
-    ...cell.alignment,
-    horizontal: format === "date" || value instanceof Date || typeof value === "boolean" ? "center"
-      : typeof value === "number" || (format && format !== "text") ? "right" : "left",
-  };
 }
 
 function tableSpecs(spec: AnalyticsMeetingSheet): TableSpec[] {
@@ -196,16 +191,14 @@ function writeSheet(workbook: Workbook, spec: AnalyticsMeetingSheet, name: strin
   }
   const widths = measureColumns(sections);
   const wide = widths.length > 8;
-  const ledger = name === "04 수임매출";
   const ws = workbook.addWorksheet(name, {
     properties: { defaultRowHeight: 24, tabColor: { argb: COLORS.accent } },
-    views: [{ state: "frozen", xSplit: ledger ? 5 : 0, ySplit: 1, topLeftCell: ledger ? "F2" : "A2", activeCell: ledger ? "F2" : "A2", showGridLines: false }],
+    views: [{ state: "frozen", xSplit: 0, ySplit: 1, topLeftCell: "A2", activeCell: "A2", showGridLines: false }],
     pageSetup: {
       // Wide accounting ledgers paginate horizontally at readable scale, never shrink to one tiny page.
       // ExcelJS supports A3 (8); its 4.4.0 PaperSize enum omits the documented value.
       paperSize: (wide ? 8 : 9) as PaperSize, orientation: widths.length > 6 ? "landscape" : "portrait",
       fitToPage: !wide, fitToWidth: wide ? 0 : 1, fitToHeight: 0, scale: wide ? 90 : 100,
-      ...(ledger ? { printTitlesColumn: "D:E" } : {}),
       margins: { left: 0.25, right: 0.25, top: 0.4, bottom: 0.4, header: 0.15, footer: 0.15 },
       printTitlesRow: "1:1",
     },
@@ -228,10 +221,6 @@ function writeSheet(workbook: Workbook, spec: AnalyticsMeetingSheet, name: strin
         const cell = row.getCell(col);
         setStyle(cell, "data", index % 2 === 1);
         setValue(cell, values[col - 1], formats?.[col - 1]);
-      }
-      if (ledger && sectionIndex === 0) {
-        // Bring the three requested accounting measures forward without dropping legacy columns.
-        for (const col of [9,10,11]) row.getCell(col).font = { ...row.getCell(col).font, bold: true };
       }
       fitRow(row, values, widths, formats);
     });

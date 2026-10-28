@@ -492,7 +492,10 @@ test('monthly meeting export reorders all sheets and preserves supply/staff deno
   const tree=Legacy(),button=walk(tree).find(node=>node.type==='button'&&node.props.children?.includes('이번달 실적 XLSX'));
   assert.ok(button);button.props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(records.length,1);assert.equal(records[0].firmId,'firm-a');assert.equal(records[0].kind,'meeting');
-  assert.deepEqual(Array.from(exported.sheets,sheet=>sheet.name),['04 수임매출','00 회의요약','01 팀인원','02 상담운영','05 사건수납','07 정산입력','06 산식기준','03 DB구매유입']);
+  assert.deepEqual(Array.from(exported.sheets,sheet=>sheet.name),['04 입금내역','00 회의요약','01 팀인원','02 상담운영','05 사건수납','07 정산입력','06 산식기준','03 DB구매유입']);
+  assert.equal(exported.sheets[0].sections.length,1);
+  assert.deepEqual(Array.from(exported.sheets[0].sections[0].headers),['입금일','담당','의뢰인','회차','납부방식','실입금액']);
+  assert.equal(exported.sheets[0].kpis?.length??0,0);
   assert.match(exported.filename,/이번달실적_2026-10\.xlsx$/);
   assert.doesNotMatch(JSON.stringify(exported.sheets),/전화 시도|업무량 상세/);
   const summary=exported.sheets.find(sheet=>sheet.name==='00 회의요약'),staff=exported.sheets.find(sheet=>sheet.name==='01 팀인원');
