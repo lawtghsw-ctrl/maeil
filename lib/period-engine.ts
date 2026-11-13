@@ -3,6 +3,7 @@
 // 월 상대 주차 라벨링, 구간 합산, 전기간 대비 증감률 계산을 동일한 규칙으로 재구현함.
 
 import type { CaseRecord, CaseType, DayAggregate, DbLead, Installment } from "./types";
+import { isReceiptStatus, installmentPaidAmount } from "./installment-payment";
 
 export type PeriodMode = "year" | "month" | "week" | "day";
 
@@ -41,12 +42,14 @@ export function buildDayMap(
   }
 
   for (const installment of installmentsArr) {
-    if (installment.status !== "완료" || !installment.paidDate) continue;
+    if (!isReceiptStatus(installment.status) || !installment.paidDate) continue;
     const record = casesArr.find((c) => c.id === installment.caseId);
     if (!record) continue;
     const day = ensure(installment.paidDate.slice(0, 10));
-    day.paymentAmount += installment.amount || 0;
-    day.caseTypeSplit[record.caseType] += installment.amount || 0;
+    // Keep the established completed-row basis; prepayments require explicit cash.
+    const amount = installment.status === "선납부" ? installmentPaidAmount(installment) : installment.amount || 0;
+    day.paymentAmount += amount;
+    day.caseTypeSplit[record.caseType] += amount;
   }
 
   for (const day of map.values()) {

@@ -1,8 +1,10 @@
 import type { CaseRecord, DbLead, Installment } from "@/lib/types";
+import { installmentPaidAmount } from "./installment-payment";
 import { buildSupplyConversionCohorts, buildPeriodSupplyContracts, type SupplyConversionResult, type SupplyPeriodContracts } from "./performance/supply-conversion";
 
 /** Cash is the actual recorded amount. An explicit zero never falls back to the schedule. */
-export function actualPayment(row: Pick<Installment, "amount" | "actualPaidAmount">): number {
+export function actualPayment(row: Pick<Installment, "amount" | "actualPaidAmount"> & Partial<Pick<Installment, "status">>): number {
+  if (row.status === "선납부") return installmentPaidAmount({ ...row, status: row.status });
   return Math.max(0, Number(row.actualPaidAmount ?? row.amount) || 0);
 }
 export function isValidRetainer(row: Pick<CaseRecord, "status" | "contractAmount">): boolean {

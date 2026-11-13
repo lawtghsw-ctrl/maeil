@@ -2,6 +2,7 @@ import { requirePlatformUser } from "@/lib/platform/server";
 import { summarizeFirmSupply, type FirmSupplyContract, type SupplyLedgerRow } from "@/lib/firm-reporting";
 import type { CaseRecord, DbLead } from "@/lib/types";
 import { kstPerformanceDate, performanceRange } from "@/lib/performance/firm";
+import { isReceiptStatus } from "@/lib/installment-payment";
 
 type Admin = Awaited<ReturnType<typeof requirePlatformUser>>["admin"];
 
@@ -49,7 +50,7 @@ export async function readFirmSupply(admin: Admin, firmId: string, start: string
     start = `${end.slice(0, 7)}-01`;
     const sourceDates = [...ledger.map(row=>row.supplied_at), ...cases.map(row=>row.contractDate),
       ...leads.map(row=>row.receivedAt), ...adjustments.map(row=>row.event_date),
-      ...payments.filter(row=>row.status==="완료").map(row=>row.paidDate)];
+      ...payments.filter(row=>isReceiptStatus(row.status)).map(row=>row.paidDate)];
     for (const value of sourceDates) {
       const day = kstPerformanceDate(value);
       if (day && day <= end && day < start) start = `${day.slice(0, 7)}-01`;

@@ -1,6 +1,7 @@
 import type { CaseRecord, Client, DbLead, Installment } from "../types";
 import { getRetainedLeadIds } from "./lead-retainer-conversion";
 import { activeMemoEntries } from "../consultation-memos";
+import { isReceiptStatus, installmentPaidAmount, installmentRemainingAmount } from "../installment-payment";
 
 /** Read-only analytics. Period flows use KST calendar dates; current stock values
  * (activeDb/activeCases/outstanding/overdueAmount) are not historical snapshots.
@@ -183,7 +184,7 @@ export function buildFirmPerformanceReport(
   const rowsByCase = new Map<string, Installment[]>();
   for (const installment of installments) {
     if (!caseById.has(installment.caseId)) quality.orphanPayments += 1;
-    if (installment.status === "완료" && !kstPerformanceDate(installment.paidDate)) quality.undatedCompletedPayments += 1;
+    if (isReceiptStatus(installment.status) && !kstPerformanceDate(installment.paidDate)) quality.undatedCompletedPayments += 1;
     const rows = rowsByCase.get(installment.caseId);
     if (rows) rows.push(installment); else rowsByCase.set(installment.caseId, [installment]);
   }
@@ -244,8 +245,8 @@ export function buildFirmPerformanceReport(
   // An orphan receipt cannot be attributed and is excluded, with a quality count.
   for (const installment of installments) {
     const record = caseById.get(installment.caseId);
-    if (!record || installment.status !== "완료") continue;
-    const amount = money(installment.actualPaidAmount ?? installment.amount), date = kstPerformanceDate(installment.paidDate), staff = name(record.assignedStaff);
+    if (!record || !isReceiptStatus(installment.status)) continue;
+    const amount = money(installmentPaidAmount(installment)), date = kstPerformanceDate(installment.paidDate), staff = name(record.assignedStaff);
     if (inPeriod(date, start, end)) {
       metrics(currentByStaff, staff).cash += amount;
       increment(periodPayments, record.id, amount);
@@ -265,7 +266,7 @@ export function buildFirmPerformanceReport(
     // Prefer the installment ledger. Only cases without any ledger rows can use
     // legacy paidAmount; never add that cached total on top of the ledger.
     const paidTotal = payments.length
-      ? payments.reduce((sum, payment) => sum + (payment.status === "완료" ? money(payment.actualPaidAmount ?? payment.amount) : 0), 0)
+      ? payments.reduce((sum, payment) => sum + money(installmentPaidAmount(payment)), 0)
       : money(record.paidAmount);
     if (!payments.length && paidTotal > 0) quality.legacyPaidCases += 1;
     if (payments.length && Math.abs(paidTotal - money(record.paidAmount)) > 0.01) quality.paidTotalMismatches += 1;
@@ -274,7 +275,7 @@ export function buildFirmPerformanceReport(
       if (payment.status === "완료") return sum;
       const due = kstPerformanceDate(payment.dueDate);
       const overdue = payment.status === "연체" || payment.status === "실패" || (!!due && due < today);
-      return sum + (overdue ? money(payment.amount) : 0);
+      return sum + (overdue ? money(installmentRemainingAmount(payment)) : 0);
     }, 0);
     const overdueAmount = Math.min(outstanding, scheduledOverdue);
     for (const target of [current, previous]) {

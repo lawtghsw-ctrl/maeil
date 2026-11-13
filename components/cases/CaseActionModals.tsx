@@ -11,12 +11,12 @@ import FirmEsignDocumentDialog from "@/components/cases/FirmEsignDocumentDialog"
 import { FileSignature, Plus, RefreshCw, Send, Table2, WalletCards } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
-import { PAYMENT_METHOD_NOTE } from "@/lib/types";
+import { INSTALLMENT_STATUS_OPTIONS, PAYMENT_METHOD_NOTE } from "@/lib/types";
+import { installmentPaidAmount, validatePrepaymentRows } from "@/lib/installment-payment";
 import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { fmtWon } from "@/lib/format";
 import { Button, Input, Label, Modal, NumberInput, Select } from "@/components/ui/Primitives";
 
-const INSTALLMENT_STATUSES: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
 const PAYMENT_METHODS = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const DOC_GUIDE_CHANNELS = ["카카오톡 알림톡", "SMS"] as const;
 type DocGuideChannel = (typeof DOC_GUIDE_CHANNELS)[number];
@@ -93,12 +93,12 @@ function CaseInstallmentModal({
     installments
       .filter((i) => i.caseId === caseRecord.id)
       .sort((a, b) => a.seq - b.seq)
-      .map(({ id, dueDate, amount, status, paidDate }) => ({ id, dueDate, amount, status, paidDate }));
+      .map(({ id, dueDate, amount, status, paidDate, actualPaidAmount }) => ({ id, dueDate, amount, status, paidDate, actualPaidAmount }));
 
   const [rows, setRows] = useState<InstallmentDraft[]>(makeRows);
   const [totalDebt, setTotalDebt] = useState(caseRecord.totalDebt);
   const [contractAmount, setContractAmount] = useState(caseRecord.contractAmount);
-  const [paidAmount, setPaidAmount] = useState(caseRecord.paidAmount);
+  const paidAmount = rows.reduce((sum, row) => sum + installmentPaidAmount(row), 0);
   const [installmentCount, setInstallmentCount] = useState(caseRecord.installmentCount ?? makeRows().length);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(caseRecord.paymentMethod);
   const [savePending, setSavePending] = useState(false);
@@ -115,7 +115,6 @@ function CaseInstallmentModal({
     setRows(filledRows.slice(0, nextCount));
     setTotalDebt(caseRecord.totalDebt);
     setContractAmount(caseRecord.contractAmount);
-    setPaidAmount(caseRecord.paidAmount);
     setInstallmentCount(nextCount);
     setPaymentMethod(caseRecord.paymentMethod);
     setSaveError(null);
@@ -154,6 +153,8 @@ function CaseInstallmentModal({
 
   async function save() {
     if (savePending) return;
+    const prepaymentError = validatePrepaymentRows(rows);
+    if (prepaymentError) { setSaveError(prepaymentError); return; }
     setSavePending(true);
     setSaveError(null);
     const ok = await setCaseInstallments(caseRecord.id, rows.filter((row) => row.dueDate), {
@@ -185,7 +186,7 @@ function CaseInstallmentModal({
             <NumberInput value={contractAmount} onChange={setContractAmount} />
           </Label>
           <Label text="납부금액">
-            <NumberInput value={paidAmount} onChange={setPaidAmount} />
+            <Input value={fmtWon(paidAmount)} readOnly />
           </Label>
           <Label text="납부회차">
             <Input
@@ -231,6 +232,9 @@ function CaseInstallmentModal({
               <Label text="회차 금액">
                 <NumberInput value={row.amount} onChange={(value) => update(index, { amount: value })} />
               </Label>
+              <Label text="실납부금액">
+                <NumberInput value={row.actualPaidAmount ?? (row.status === "완료" ? row.amount : 0)} onChange={(value) => update(index, { actualPaidAmount: value })} />
+              </Label>
               <Label text="실제 입금일">
                 <DateInput
                   aria-label="실제 입금일"
@@ -244,7 +248,7 @@ function CaseInstallmentModal({
                   value={row.status}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) => update(index, { status: e.target.value as InstallmentStatus })}
                 >
-                  {INSTALLMENT_STATUSES.map((status) => (
+                  {INSTALLMENT_STATUS_OPTIONS.map((status) => (
                     <option key={status}>{status}</option>
                   ))}
                 </Select>

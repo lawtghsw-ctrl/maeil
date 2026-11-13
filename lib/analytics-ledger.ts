@@ -1,5 +1,6 @@
 import type { CaseRecord, Client, Installment, TenantStamped } from "./types";
 import { kstPerformanceDate } from "./performance/firm";
+import { isReceiptStatus } from "./installment-payment";
 
 export type AnalyticsLedgerMode = "monthly" | "cumulative";
 export type AnalyticsLedgerWarningCode =
@@ -146,7 +147,7 @@ export function buildAnalyticsLedger(input: AnalyticsLedgerInput): AnalyticsLedg
   const clients = unique(input.clients, "duplicate-client");
   const installments = unique(input.installments, "duplicate-installment");
   const incompletePayments = installments.filter(payment => {
-    if (payment.status !== "완료" || recordedActualPayment(payment) !== undefined) return false;
+    if (!isReceiptStatus(payment.status) || recordedActualPayment(payment) !== undefined) return false;
     const date = analyticsLedgerDate(payment.paidDate);
     return !date || date <= cutoff;
   });
@@ -170,7 +171,7 @@ export function buildAnalyticsLedger(input: AnalyticsLedgerInput): AnalyticsLedg
   }
   let excludedPeriodPaid = 0, excludedCumulativePaid = 0;
   const includeExcluded = (payment: Installment) => {
-    if (payment.status !== "완료") return;
+    if (!isReceiptStatus(payment.status)) return;
     const date = analyticsLedgerDate(payment.paidDate);
     const amount = recordedActualPayment(payment);
     if (!date || amount === undefined) return;
@@ -197,7 +198,7 @@ export function buildAnalyticsLedger(input: AnalyticsLedgerInput): AnalyticsLedg
     const addWarning = (code: AnalyticsLedgerWarningCode, payment?: Installment) => rowWarnings.push(warning(code, record, payment));
     const contractDate = analyticsLedgerDate(record.contractDate);
     const payments = paymentsByCase.get(record) ?? [];
-    const completed = payments.filter(payment => payment.status === "완료");
+    const completed = payments.filter(payment => isReceiptStatus(payment.status));
     const periodPayments: Installment[] = [], cumulativePayments: Installment[] = [], undatedPayments: Installment[] = [], missingActualPayments: Installment[] = [];
     for (const payment of completed) {
       const date = analyticsLedgerDate(payment.paidDate);

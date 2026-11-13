@@ -339,6 +339,7 @@ export const DB_DETAIL_STAGE_OPTIONS = [
   "착수금착수",
   "착수 1차안내",
   "착수 추후진행",
+  "사채연결",
   "취소예정",
   // 서류
   "1차 서류미비",
@@ -368,7 +369,7 @@ export type DbDetailStage = (typeof DB_DETAIL_STAGE_OPTIONS)[number];
 
 export const DB_DETAIL_STAGE_GROUPS: Record<DbDetailStageTrack, DbDetailStage[]> = {
   상담: ["미상담", "신규디비", "문자발송완료", "부재", "착수금 안내", "설득필요", "예약", "상담", "장기부재", "불가", "본인취소"],
-  착수: ["착수금착수", "착수 1차안내", "착수 추후진행", "취소예정"],
+  착수: ["착수금착수", "착수 1차안내", "착수 추후진행", "사채연결", "취소예정"],
   서류: ["1차 서류미비", "1차 서류완료", "2차서류안내", "2차서류미비", "2차서류완료", "접수보류"],
   법원: ["법원접수(대기)", "법원접수", "금지명령", "금지기각", "개시결정", "인가결정", "종결"],
   워크아웃: ["워크아웃", "새출발", "워크아웃 신청", "새출발 신청", "워크아웃 완료", "새출발 완료", "파산"],
@@ -489,7 +490,8 @@ export interface CaseRecord extends TenantStamped {
   fromLeadId?: string; // DB관리에서 전환되어 생성된 경우 원본 리드 id
 }
 
-export type InstallmentStatus = "완료" | "예정" | "연체" | "실패";
+export const INSTALLMENT_STATUS_OPTIONS = ["예정", "선납부", "완료", "연체", "실패"] as const;
+export type InstallmentStatus = (typeof INSTALLMENT_STATUS_OPTIONS)[number];
 
 export interface Installment extends TenantStamped {
   id: string;

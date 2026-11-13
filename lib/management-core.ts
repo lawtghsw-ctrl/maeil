@@ -11,6 +11,7 @@ import {
   type PaymentMethod,
 } from "@/lib/types";
 import { actualPayment, firstCallMinutes, structuredContacts } from "@/lib/firm-reporting";
+import { isReceiptStatus } from "@/lib/installment-payment";
 
 export const MANAGEMENT_SETTINGS_KEY = "management_analytics_v1";
 /** One workload standard for every firm; never rewrites stored assignments. */
@@ -284,7 +285,7 @@ export function cashByStaff(
   const byCase = caseMap(cases);
   const map = new Map<string, number>();
   for (const ins of installments) {
-    if (ins.status !== "완료" || !inDateRange(ins.paidDate, start, end)) continue;
+    if (!isReceiptStatus(ins.status) || !inDateRange(ins.paidDate, start, end)) continue;
     const record = byCase.get(ins.caseId);
     if (!record) continue;
     map.set(record.assignedStaff, (map.get(record.assignedStaff) ?? 0) + actualPayment(ins));
@@ -302,7 +303,7 @@ export function paymentFeesForRange(
   const byCase = caseMap(cases);
   let total = 0;
   for (const ins of installments) {
-    if (ins.status !== "완료" || !inDateRange(ins.paidDate, start, end)) continue;
+    if (!isReceiptStatus(ins.status) || !inDateRange(ins.paidDate, start, end)) continue;
     const record = byCase.get(ins.caseId);
     if (!record || !ins.paidDate) continue;
     const config = effectiveFinancialConfig(settings, ins.paidDate.slice(0, 7));
@@ -331,7 +332,7 @@ export function laborCostForRange(
     const e = end < monthEnd ? end : monthEnd;
     const monthCases = cases.filter((record) => inDateRange(record.contractDate, s, e));
     const monthPayments = installments.filter(
-      (ins) => ins.status === "완료" && inDateRange(ins.paidDate, s, e)
+      (ins) => isReceiptStatus(ins.status) && inDateRange(ins.paidDate, s, e)
     );
 
     const daysInThisMonth = new Date(y, m, 0).getDate();

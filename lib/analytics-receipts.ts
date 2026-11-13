@@ -1,6 +1,7 @@
 import type { CaseRecord, Client, Installment, TenantStamped } from "./types";
 import type { AnalyticsCell, AnalyticsSection } from "./analytics-excel";
 import { analyticsLedgerDate, recordedActualPayment, type AnalyticsLedgerMode } from "./analytics-ledger";
+import { isReceiptStatus } from "./installment-payment";
 
 export const RECEIPT_HEADERS = ["입금일", "담당", "의뢰인", "회차", "납부방식", "실입금액"];
 
@@ -41,7 +42,7 @@ export function buildAnalyticsReceipts(input: {
     const paymentKey = key(payment,payment.id);
     if (seen.has(paymentKey)) { duplicateCount++; continue; }
     seen.add(paymentKey);
-    if (payment.status !== "완료") continue;
+    if (!isReceiptStatus(payment.status)) continue;
     const date = analyticsLedgerDate(payment.paidDate);
     if (!date) { undatedCount++; continue; }
     if (date > input.cutoff || (input.mode === "monthly" && date < input.periodStart)) continue;

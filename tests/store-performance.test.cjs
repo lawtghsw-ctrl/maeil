@@ -102,6 +102,14 @@ async function runSuite(){
     const phoneStart=source.indexOf('  const updateClientPhone ='),phoneEnd=source.indexOf('  const deleteLead =',phoneStart);
     assert.ok(phoneStart>=0&&phoneEnd>phoneStart);
     let current=(source.slice(0,phoneStart)+source.slice(phoneEnd)).replace(phoneValidation,'').replace(addition,'');
+    // The new prepayment status deliberately adds validation and counts only
+    // its actual receipt. installment-prepayment-ui covers both real editors
+    // through this provider. Normalize only these exact lines, once each.
+    for (const [before, after] of [
+      ['      const prepaymentError = validatePrepaymentRows(rows);\n      if (prepaymentError) {\n        setSyncError(prepaymentError);\n        return false;\n      }\n', ''],
+      ['      // 선납부는 실입금만, 과거 완료 회차는 기존 금액 대체 규칙을 사용합니다.\n      const receivedAmount = updated.reduce((sum, row) => sum + installmentPaidAmount(row), 0);', '      // 회차별 실납부금액을 우선 사용하고, 과거 완료 건은 예정금액을 실납부액으로 간주합니다.\n      const completedAmount = updated.reduce((sum, i) => sum + (i.status === "완료" ? Math.max(0, i.actualPaidAmount ?? i.amount) : 0), 0);'],
+      ['            paidAmount: receivedAmount,', '            paidAmount: completedAmount,'],
+    ]) { assert.equal(current.split(before).length, 2, 'Expected one exact prepayment addition'); current = current.replace(before, after); }
     // Shared editing intentionally replaces updateLead. Its actual provider and
     // persistence/error paths are covered by shared-longabsence-store.test.cjs;
     // preserve historical byte-equivalence for every other callback below.

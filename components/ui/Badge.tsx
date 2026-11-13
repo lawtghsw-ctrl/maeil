@@ -30,6 +30,7 @@ export function StatusBadge({ status }: { status: CaseStatus | "납부완료" })
 export function InstallmentStatusBadge({ status }: { status: InstallmentStatus }) {
   const toneMap: Record<InstallmentStatus, BadgeTone> = {
     완료: "green",
+    선납부: "blue",
     예정: "gray",
     연체: "amber",
     실패: "red",

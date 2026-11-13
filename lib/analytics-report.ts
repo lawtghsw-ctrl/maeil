@@ -11,6 +11,7 @@ import {
 import type { AnalyticsMeetingSheet } from "@/lib/analytics-excel";
 import { createStaffScopeKey, groupByKey, groupRelatedRows } from "@/lib/analytics-indexes";
 import { firstByKey } from "@/lib/list-indexes";
+import { isReceiptStatus } from "@/lib/installment-payment";
 import { actualPayment, isValidRetainer, standardFeeForCase, structuredContacts, leadStageDays } from "@/lib/firm-reporting";
 import { DOCUMENT_CHECKLIST_TEMPLATE } from "@/lib/documents";
 import { kstPerformanceDate } from "@/lib/performance/firm";
@@ -64,8 +65,8 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
   // Statistics use explicitly recorded receipts only. Scheduled amounts are never actual cash.
   // Keep the raw source for the ledger so missing amounts/dates remain visible for review.
   const installments=Array.from(firstByKey(sourceInstallments,row=>JSON.stringify([row._lawFirmId??effectiveFirmId??"",row.id])).values())
-    .filter(row=>row.status!=="완료"||recordedActualPayment(row)!==undefined)
-    .map(row=>row.status==="완료"?{...row,paidDate:analyticsLedgerDate(row.paidDate)||undefined}:row);
+    .filter(row=>!isReceiptStatus(row.status)||recordedActualPayment(row)!==undefined)
+    .map(row=>isReceiptStatus(row.status)?{...row,paidDate:analyticsLedgerDate(row.paidDate)||undefined}:row);
   const closed=closedTotalsForRange(activeSettings,start,end);
   const costKnown=(!!closed&&closed.purchaseCost!==null)||!!supply.data&&supply.data.purchaseCost!==null&&!supply.error&&!settingsError;
   const rangeLeads=compute(()=>leads.filter(l=>inDateRange(l.receivedAt,start,end)),[leads,start,end]);
@@ -99,7 +100,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
   const periodCases=compute(()=>cases.filter(c=>inDateRange(c.contractDate,start,end)),[cases,start,end]);
   const rangeCases=compute(()=>periodCases.filter(isValidRetainer),[periodCases]);
   const retainedLeadIds=compute(()=>new Set(cases.filter(isValidRetainer).map(c=>c.fromLeadId).filter(Boolean)),[cases]);
-  const rangePaid=compute(()=>installments.filter(i=>i.status==="완료"&&inDateRange(i.paidDate,start,end)),[installments,start,end]);
+  const rangePaid=compute(()=>installments.filter(i=>isReceiptStatus(i.status)&&inDateRange(i.paidDate,start,end)),[installments,start,end]);
   const {cashSales:liveCashSales,contractSales:liveContractSales,converted}=compute(()=>({
     cashSales:rangePaid.reduce((s,i)=>s+actualPayment(i),0),
     contractSales:rangeCases.reduce((s,c)=>s+c.contractAmount,0),
@@ -235,7 +236,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
   const receiptResult=buildAnalyticsReceipts({cases,clients,installments:sourceInstallments,periodStart:monthStart,cutoff:end,mode:input.mode??"monthly",firmId:effectiveFirmId});
   const receiptSection=createReceiptOnlySection(receiptResult.rows);
   const fullMonthCash=ledgerResult.totals.periodPaid+ledgerResult.totals.excludedPeriodPaid;
-  const fullCumulativeCash=installments.reduce((sum,row)=>sum+(row.status==="완료"&&row.paidDate&&row.paidDate<=end?(recordedActualPayment(row)??0):0),0);
+  const fullCumulativeCash=installments.reduce((sum,row)=>sum+(isReceiptStatus(row.status)&&row.paidDate&&row.paidDate<=end?(recordedActualPayment(row)??0):0),0);
   const allLedger = ledgerResult.rows.map(row=>{
     const c=row.case;
     const config=settingsForFirm(settingsByFirm,c._lawFirmId,activeSettings);
@@ -268,7 +269,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
   const feeRuleRows=settingsContexts.flatMap(x=>x.settings.feeRules.map(r=>[x.name,r.caseType,r.baseFee,r.minFee,r.approvalDiscountAmount,r.effectiveFrom]));
 
   const cashLabel=closed?"회수 매출 · 마감 스냅샷":"회수 매출 · 확인분";
-  const snapshotNote=closed?"수임·실입금·비용은 저장된 마감 스냅샷입니다. 04 입금내역의 현재 실납부액 확인분과 다를 수 있으며 마감 원본은 변경하지 않습니다.":"실입금·비용 중 입금 기준 계산은 실제 금액과 납부일이 기록된 완료 회차 확인분입니다. 날짜·실납부액 미확인 회차는 입금내역에서 제외하며 앱의 안내에서 확인합니다.";
+  const snapshotNote=closed?"수임·실입금·비용은 저장된 마감 스냅샷입니다. 04 입금내역의 현재 실납부액 확인분과 다를 수 있으며 마감 원본은 변경하지 않습니다.":"실입금·비용 중 입금 기준 계산은 실제 금액과 납부일이 기록된 완료·선납부 회차 확인분입니다. 날짜·실납부액 미확인 회차는 입금내역에서 제외하며 앱의 안내에서 확인합니다.";
   const sheets:AnalyticsMeetingSheet[]=[
     {
       name:"00 회의요약",title:"로파워 데이터집계 · 회의요약",subtitle:"선택 기간의 핵심 매출·수익·영업 지표를 한 장에 정리한 회의용 요약입니다.",
@@ -317,7 +318,7 @@ export function buildAnalyticsReport(input: AnalyticsReportInput) {
     },
     {
       name:"06 산식기준",title:"지표 산식 · 기준",subtitle:"회의에서 숫자의 의미를 바로 확인할 수 있도록 현재 데이터집계 산식을 함께 제공합니다.",
-      sections:[{title:"주요 지표 산식",headers:["지표","산식/기준","현재 값"],rows:[["해당 월 실입금","해당 월 납부일 · 완료 상태 · 실제 납부액이 기록된 회차 합계 (예정금액 제외 · 계약 연결 미확인 입금 포함)",fullMonthCash],["누적 실입금 · 원장 계약","원장에 표시한 각 계약의 최초 기록부터 선택 월말까지 일자가 확인된 실제 납부액 합계",ledgerResult.totals.cumulativePaid],["월말 누적 실입금 · 전체","전체 완료 회차의 최초 기록부터 선택 월말까지 실제 납부액 확인분 · 계약 연결 미확인 포함",fullCumulativeCash],["미수 잔금","총 수임료 − 누적 실입금 · 입금일/실납부액 미확인 계약은 잔금 미확정",ledgerResult.totals.uncertainBalanceCases?"확인 필요":ledgerResult.rows.reduce((sum,row)=>sum+(row.balanceKnown?Math.max(0,row.balance):0),0)],["월말 이후 입금","누적 실입금·잔금에서 제외 (계약금액·사건 상태는 현재 기록)","제외"],["계약 1건당 순이익","(수임액 - DB 구매비 - 인건비) ÷ 계약건수",costKnown?contractNet:"비용 확인 필요"],["현금 영업이익","회수매출 - DB 구매비 - 인건비 - 납부수수료 - 고정운영비",costKnown?cashProfit:"비용 확인 필요"],["접수 DB 수임전환율 · 참고","취하·0원 제외 수임에 연결된 DB ÷ 선택 기간 유입 DB × 100",pct(converted,rangeLeads.length)],["DB당 구매비","DB 구매비 ÷ 유입 DB",costKnown?moneyPer(acquisitionCost,rangeLeads.length):"비용 확인 필요"],["수임당 구매비","DB 구매비 ÷ 계약 전환 DB",costKnown?moneyPer(acquisitionCost,converted):"비용 확인 필요"],["DB 생산성","수임매출 ÷ 배정 DB",moneyPer(contractSales,rangeLeads.length)],["회수율","실제 입금 ÷ 수임액 × 100",collectionRate],["평균 할인율","계약 당시 기준 기록이 있는 사건의 기준 수임료 대비 할인액 비율",standardKnown?discountRate:"확인 불가"]],formats:["text","text","number1"],widths:[26,56,20]}],
+      sections:[{title:"주요 지표 산식",headers:["지표","산식/기준","현재 값"],rows:[["해당 월 실입금","해당 월 납부일 · 완료·선납부 상태 · 실제 납부액이 기록된 회차 합계 (예정금액 제외 · 계약 연결 미확인 입금 포함)",fullMonthCash],["누적 실입금 · 원장 계약","원장에 표시한 각 계약의 최초 기록부터 선택 월말까지 일자가 확인된 실제 납부액 합계",ledgerResult.totals.cumulativePaid],["월말 누적 실입금 · 전체","전체 완료·선납부 회차의 최초 기록부터 선택 월말까지 실제 납부액 확인분 · 계약 연결 미확인 포함",fullCumulativeCash],["미수 잔금","총 수임료 − 누적 실입금 · 입금일/실납부액 미확인 계약은 잔금 미확정",ledgerResult.totals.uncertainBalanceCases?"확인 필요":ledgerResult.rows.reduce((sum,row)=>sum+(row.balanceKnown?Math.max(0,row.balance):0),0)],["월말 이후 입금","누적 실입금·잔금에서 제외 (계약금액·사건 상태는 현재 기록)","제외"],["계약 1건당 순이익","(수임액 - DB 구매비 - 인건비) ÷ 계약건수",costKnown?contractNet:"비용 확인 필요"],["현금 영업이익","회수매출 - DB 구매비 - 인건비 - 납부수수료 - 고정운영비",costKnown?cashProfit:"비용 확인 필요"],["접수 DB 수임전환율 · 참고","취하·0원 제외 수임에 연결된 DB ÷ 선택 기간 유입 DB × 100",pct(converted,rangeLeads.length)],["DB당 구매비","DB 구매비 ÷ 유입 DB",costKnown?moneyPer(acquisitionCost,rangeLeads.length):"비용 확인 필요"],["수임당 구매비","DB 구매비 ÷ 계약 전환 DB",costKnown?moneyPer(acquisitionCost,converted):"비용 확인 필요"],["DB 생산성","수임매출 ÷ 배정 DB",moneyPer(contractSales,rangeLeads.length)],["회수율","실제 입금 ÷ 수임액 × 100",collectionRate],["평균 할인율","계약 당시 기준 기록이 있는 사건의 기준 수임료 대비 할인액 비율",standardKnown?discountRate:"확인 불가"]],formats:["text","text","number1"],widths:[26,56,20]}],
     },
     {
       name:"07 정산입력",title:"정산 입력값 · 원가 기준",subtitle:"데이터집계 계산에 사용된 관리자 설정을 함께 내려받아 회의 숫자의 근거를 확인할 수 있습니다.",

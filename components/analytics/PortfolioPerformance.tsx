@@ -77,7 +77,7 @@ export default function PortfolioPerformance({ onOpenFirm }: PortfolioPerformanc
 
 const QUALITY_LABELS: Record<keyof PerformanceQuality, string> = {
   orphanPayments: "사건 연결이 없는 입금", orphanCases: "고객 연결이 없는 사건", unlinkedConvertedLeads: "고객·사건 연결 확인이 필요한 전환 DB",
-  undatedCompletedPayments: "입금일 없는 완료 회차", invalidLeadDates: "유입일 확인이 필요한 DB", invalidCaseDates: "계약일 확인이 필요한 사건",
+  undatedCompletedPayments: "입금일 없는 완료·선납부 회차", invalidLeadDates: "유입일 확인이 필요한 DB", invalidCaseDates: "계약일 확인이 필요한 사건",
   duplicateLeads: "중복 DB ID", duplicateCases: "중복 사건 ID", duplicateClients: "중복 고객 ID", duplicateInstallments: "중복 분납 ID",
   legacyPaidCases: "기존 누적 납부액을 참조한 사건", paidTotalMismatches: "분납과 누적 납부액이 다른 사건",
 };
@@ -159,7 +159,7 @@ export function PortfolioPerformanceView({ report, onOpenFirm }: { report: Portf
       <p>현재 선택된 {scopeText(report.scope)} {report.firmCount}개를 각각 집계한 뒤 합산합니다. 같은 사건 ID·직원 이름이 다른 로펌에 있어도 서로 합쳐 연결하지 않습니다. 직원과 변호사 상세 관리는 각 로펌에서 진행합니다.</p>
       <p>로펌당 평균은 합산 유입·수임·수임액·실입금을 각각 {report.firmCount}로 나눈 값입니다. 기간 실적이 없는 로펌과 해당 기간 이후 등록된 로펌도 현재 선택 범위에 속하면 포함합니다. 이전 기간({report.previousStart} ~ {report.previousEnd})에도 동일한 현재 로펌 집합을 사용합니다. 평균 건수는 소수 첫째 자리, 금액은 원 단위로 표시합니다.</p>
       <p>전체 DB 전환율은 <b>합산 고객전환 DB ÷ 합산 유입 DB</b>입니다. 별도의 로펌 평균 고객전환율은 유입 DB가 있는 {avg.conversionFirmCount}개 로펌의 전환율을 같은 비중으로 평균하며, 유입 0건 로펌은 이 비율의 분모에서 제외합니다. 전환은 유입일 기준 DB의 현재 고객전환 상태이며, 유효 수임은 선택 기간 계약일·양수 수임액·취하 제외 기준입니다.</p>
-      <p>기간 실입금은 완료 분납의 실제 납부액을 우선 사용하고, 없는 과거 회차만 예정금액을 사용합니다. 입금일 없는 완료 회차는 기간 입금에서 제외합니다. 현재 미수·연체·진행 현황은 과거 시점 비교 대상이 아닙니다. 이 화면의 수임·수납은 로펌 업무성과이며 플랫폼의 DB 판매금액과 구분됩니다.</p>
+      <p>기간 실입금은 완료·선납부 회차의 실제 납부액을 사용하고, 실제 납부액이 없는 과거 완료 회차만 예정금액을 사용합니다. 선납부는 입력된 실제 납부액만 반영합니다. 입금일 없는 완료·선납부 회차는 기간 입금에서 제외합니다. 현재 미수·연체·진행 현황은 과거 시점 비교 대상이 아닙니다. 이 화면의 수임·수납은 로펌 업무성과이며 플랫폼의 DB 판매금액과 구분됩니다.</p>
       {qualityRows.length > 0 && <p className="text-amber-800">{qualityRows.map(key => `${QUALITY_LABELS[key]} ${numberText(report.quality[key])}건`).join(" · ")}. 로펌 상세와 원본 데이터를 확인해주세요.</p>}
     </div></details>
   </div>;

@@ -136,6 +136,9 @@ test('writing-staff migration: actual existing RLS/permission/conversion trigger
    assert.deepEqual(await Promise.all(currentHelpers.map(async signature=>(await db.query('select pg_get_functiondef($1::regprocedure) definition',[signature])).rows[0].definition)),helperBefore);
   });
   await t.test('stage allowlist matches every TS track; null fallback only; malformed values denied',async()=>{
+   // The fixture above verifies the historical writer migration. Apply the
+   // later stage-only helper before comparing against the current TS stages.
+   await db.exec(functionSql('is_writing_lead_data','20261113095617_private_loan_connection_stage.sql'));
    const ts=require('typescript'); const Module=require('node:module');
    const mod=new Module(path.join(root,'lib/types.ts')); mod.filename=path.join(root,'lib/types.ts'); mod.paths=module.paths;
    mod._compile(ts.transpileModule(fs.readFileSync(mod.filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,mod.filename);

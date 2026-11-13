@@ -34,6 +34,7 @@ import type {
 import { STAFF_LIST } from "./types";
 import { manualLeadAssignee } from "./manual-lead-assignment";
 import { changedCustomerPhone } from "./customer-phone";
+import { installmentPaidAmount, validatePrepaymentRows } from "@/lib/installment-payment";
 import { defaultMinLivingCostTable, type MinLivingCostTable } from "./consultation";
 import { createClient, hasSupabaseEnv } from "./supabase/client";
 import type { PermissionKey, PermissionMap } from "./permissions";
@@ -1081,6 +1082,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSyncError("저장 실패 · 작성직원은 착수 이후 DB에 연결된 계약만 수정할 수 있습니다.");
         return false;
       }
+      const prepaymentError = validatePrepaymentRows(rows);
+      if (prepaymentError) {
+        setSyncError(prepaymentError);
+        return false;
+      }
       const oldRows = installments.filter((i) => i.caseId === caseId);
       const updated: Installment[] = rows.map((r, idx) => ({
         id: r.id ?? makeId(`${caseId}-INS`),
@@ -1094,15 +1100,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }));
       const keepIds = new Set(updated.map((i) => i.id));
       const removed = oldRows.filter((i) => !keepIds.has(i.id));
-      // 회차별 실납부금액을 우선 사용하고, 과거 완료 건은 예정금액을 실납부액으로 간주합니다.
-      const completedAmount = updated.reduce((sum, i) => sum + (i.status === "완료" ? Math.max(0, i.actualPaidAmount ?? i.amount) : 0), 0);
+      // 선납부는 실입금만, 과거 완료 회차는 기존 금액 대체 규칙을 사용합니다.
+      const receivedAmount = updated.reduce((sum, row) => sum + installmentPaidAmount(row), 0);
       const caseBefore = cases.find((c) => c.id === caseId);
       const caseNext = caseBefore
         ? {
             ...caseBefore,
             totalDebt: Math.max(0, finance?.totalDebt ?? caseBefore.totalDebt),
             contractAmount: Math.max(0, finance?.contractAmount ?? caseBefore.contractAmount),
-            paidAmount: completedAmount,
+            paidAmount: receivedAmount,
             installmentCount: Math.max(0, Math.trunc(finance?.installmentCount ?? updated.length)),
             paymentMethod: finance?.paymentMethod ?? caseBefore.paymentMethod,
           }

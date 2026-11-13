@@ -43,7 +43,11 @@ test('본인취소 is additive and immediately follows 불가 in both shared opt
     const original = require('node:child_process').execFileSync('git', ['show', 'db8f0b74d3de411103715767ec337363d3927d56:lib/types.ts'], { cwd: root, encoding: 'utf8' });
     const old = { exports: {} };
     vm.runInNewContext(ts.transpileModule(original, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { module: old, exports: old.exports });
-    assert.deepEqual(clone(types.DB_DETAIL_STAGE_OPTIONS.filter(value => value !== '본인취소')), clone(old.exports.DB_DETAIL_STAGE_OPTIONS));
+    // The later commencement-stage addition has its own actual UI/SQL tests.
+    // Remove exactly that one value; retain this historical order comparison.
+    assert.equal(types.DB_DETAIL_STAGE_OPTIONS.filter(value => value === '사채연결').length, 1);
+    const historicalOptions = types.DB_DETAIL_STAGE_OPTIONS.filter(value => value !== '사채연결');
+    assert.deepEqual(clone(historicalOptions.filter(value => value !== '본인취소')), clone(old.exports.DB_DETAIL_STAGE_OPTIONS));
     assert.deepEqual(clone(types.DB_LEAD_STATUSES), clone(old.exports.DB_LEAD_STATUSES));
     const selectors = stageSelects(h);
     assert.equal(selectors.length, 20, '10 rows each have a mobile and a desktop selector');

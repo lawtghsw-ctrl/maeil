@@ -6,14 +6,14 @@ import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useStore, type InstallmentDraft } from "@/lib/store";
 import type { CaseRecord, Client, InstallmentStatus, PaymentMethod } from "@/lib/types";
-import { PAYMENT_METHOD_NOTE } from "@/lib/types";
+import { INSTALLMENT_STATUS_OPTIONS, PAYMENT_METHOD_NOTE } from "@/lib/types";
+import { installmentPaidAmount, validatePrepaymentRows } from "@/lib/installment-payment";
 import CaseProgressCard from "@/components/cases/CaseProgressCard";
 import { CustomerPhoneEditor } from "@/components/cases/CustomerPhoneEditor";
 import { fmtWon } from "@/lib/format";
 import { CaseActionPanel, PriorityRepaymentGuideTable } from "@/components/cases/CaseActionModals";
 import { Button, Modal } from "@/components/ui/Primitives";
 
-const statuses: InstallmentStatus[] = ["예정", "완료", "연체", "실패"];
 const paymentMethods = Object.keys(PAYMENT_METHOD_NOTE) as PaymentMethod[];
 const input = "h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-800 outline-none focus:border-blue-500 disabled:bg-slate-100";
 
@@ -48,8 +48,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
     setChanged(false);setNotice("");
   },[caseId]); // 다른 계약으로 전환할 때 초기화; 저장 성공 후에는 별도 최신값 사용
 
-  // 완료 회차의 실입금액만 합산. 과거 완료 데이터는 예정금액으로 대체합니다.
-  const paidAmount = rows.reduce((sum, row) => sum + (row.status === "완료" ? Math.max(0, row.actualPaidAmount ?? row.amount) : 0), 0);
+  const paidAmount = rows.reduce((sum, row) => sum + installmentPaidAmount(row), 0);
   // 표의 표시 순서만 상환일 오름차순으로 정렬해 회차 ID와 기존 저장 데이터는 보존합니다.
   const sortedRows = rows.map((row, originalIndex) => ({ row, originalIndex }))
     .sort((a, b) => (a.row.dueDate || "9999-12-31").localeCompare(b.row.dueDate || "9999-12-31") || a.originalIndex - b.originalIndex);
@@ -62,6 +61,8 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
   function safeClose(){if(saving)return;if(changed&&!window.confirm("저장하지 않은 계약/분납 변경사항이 있습니다. 닫으시겠습니까?"))return;onClose();}
   async function save(){
     if(!record || saving || !permitted)return;
+    const prepaymentError=validatePrepaymentRows(rows);
+    if(prepaymentError){setNotice(prepaymentError);return;}
     if(rows.some(r=>r.amount>0&&!r.dueDate)){setNotice("납부금액이 있는 회차에는 납부예정일을 입력해주세요.");return;}
     setSaving(true);setNotice("");
     const success=await setCaseInstallments(record.id,rows.filter(r=>r.dueDate),{
@@ -93,7 +94,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
           </div>
           <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-200 lg:border-r">
             <label className="flex items-center justify-center bg-slate-100 px-2 text-xs font-bold text-slate-600">납부금액</label>
-            <div className="p-2"><div className={`${input} flex items-center justify-between bg-slate-100 font-bold text-slate-800`} aria-label="완료 회차 납부금액 합계" title="완료 처리된 회차의 실제 납부금액 합계"><span>{paidAmount.toLocaleString("ko-KR")}</span><span className="ml-2 text-slate-500">원</span></div></div>
+            <div className="p-2"><div className={`${input} flex items-center justify-between bg-slate-100 font-bold text-slate-800`} aria-label="납부금액 합계" title="완료·선납부 회차의 실제 납부금액 합계"><span>{paidAmount.toLocaleString("ko-KR")}</span><span className="ml-2 text-slate-500">원</span></div></div>
           </div>
           <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-200">
             <label className="flex items-center justify-center bg-slate-100 px-2 text-xs font-bold text-slate-600">결제방법</label>
@@ -117,7 +118,7 @@ export function CaseDetailPopup({caseId,onClose}: {caseId:string|null;onClose:()
             <td className="w-[80px] px-2 text-center">{displayIndex===0?"계약금":`${displayIndex}회차`}</td>
             <td className="px-2 py-1"><DateInput className={input} aria-label="상환 예정일" disabled={!permitted} value={row.dueDate} onValueChange={value=>editRow(i,{dueDate:value})}/></td>
             <td className="px-2 py-1"><MoneyInput value={row.amount} disabled={!permitted} onChange={v=>editRow(i,{amount:v})}/></td>
-            <td className="px-2 py-1"><select className={input} disabled={!permitted} value={row.status} onChange={e=>editRow(i,{status:e.target.value as InstallmentStatus})}>{statuses.map(s=><option key={s}>{s}</option>)}</select></td>
+            <td className="px-2 py-1"><select aria-label="납부상태" className={input} disabled={!permitted} value={row.status} onChange={e=>editRow(i,{status:e.target.value as InstallmentStatus})}>{INSTALLMENT_STATUS_OPTIONS.map(s=><option key={s}>{s}</option>)}</select></td>
             <td className="px-2 py-1"><MoneyInput value={row.actualPaidAmount??(row.status==="완료"?row.amount:0)} disabled={!permitted} onChange={v=>editRow(i,{actualPaidAmount:v})}/></td>
             <td className="px-2 py-1"><DateInput className={input} aria-label="실제 입금일" disabled={!permitted} value={row.paidDate??""} onValueChange={value=>editRow(i,{paidDate:value})}/></td>
             <td className="px-2 py-1 text-center"><button type="button" className="rounded border border-red-200 px-2 py-1.5 text-red-600 disabled:opacity-30" disabled={!permitted} onClick={()=>{setRows(v=>v.filter((_,j)=>i!==j));setChanged(true)}}><Trash2 size={14}/></button></td>

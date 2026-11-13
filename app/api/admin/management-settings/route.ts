@@ -3,6 +3,7 @@ import { writePlatformAudit, requirePlatformUser } from "@/lib/platform/server";
 import { firmVisibleSettings, mergeFirmSettings, assertSettingsRevision } from "@/lib/management-access";
 import { readFirmRows, readFirmSupply } from "@/lib/firm-reporting-server";
 import { actualPayment, isValidRetainer } from "@/lib/firm-reporting";
+import { isReceiptStatus } from "@/lib/installment-payment";
 import { inDateRange, laborCostForRange, paymentFeesForRange, fixedCostForRange } from "@/lib/management-core";
 import type { CaseRecord, Installment } from "@/lib/types";
 
@@ -98,7 +99,7 @@ export async function PATCH(request: NextRequest) {
       const ids = new Set(cases.map(row => row.id));
       const rangeCases = cases.filter(row => inDateRange(row.contractDate, start, end) && isValidRetainer(row));
       closing.closedBy = user.id;
-      closing.totals = { contractCount: rangeCases.length, contractSales: rangeCases.reduce((sum, row) => sum + row.contractAmount, 0), cashSales: installments.filter(row => ids.has(row.caseId) && row.status === "완료" && inDateRange(row.paidDate, start, end)).reduce((sum, row) => sum + actualPayment(row), 0), purchaseCost: supply.purchaseCost, laborCost: laborCostForRange(cases, installments, next, start, end), paymentFees: paymentFeesForRange(cases, installments, next, start, end), fixedCost: fixedCostForRange(next, start, end) };
+      closing.totals = { contractCount: rangeCases.length, contractSales: rangeCases.reduce((sum, row) => sum + row.contractAmount, 0), cashSales: installments.filter(row => ids.has(row.caseId) && isReceiptStatus(row.status) && inDateRange(row.paidDate, start, end)).reduce((sum, row) => sum + actualPayment(row), 0), purchaseCost: supply.purchaseCost, laborCost: laborCostForRange(cases, installments, next, start, end), paymentFees: paymentFeesForRange(cases, installments, next, start, end), fixedCost: fixedCostForRange(next, start, end) };
     }
     const payload = {
       law_firm_id: firmId,
